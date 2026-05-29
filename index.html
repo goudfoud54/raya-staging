@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raya — TEST</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f1e;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;color:#eee}
+.test{background:#b03a3a;color:#fff;padding:6px 16px;border-radius:20px;font-size:12px;font-weight:700;margin-bottom:24px}
+.logo{color:#c8a035;font-size:30px;font-weight:800;margin-bottom:6px}
+.logo span{display:block;font-size:13px;color:#555;font-weight:400;margin-top:4px}
+.modules{display:grid;grid-template-columns:1fr;gap:18px;max-width:320px;width:100%;margin-top:32px}
+.card{background:#1a1a2e;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:28px;text-align:center;text-decoration:none;color:#fff;transition:.2s}
+.card:hover{border-color:rgba(200,160,53,.4);transform:translateY(-2px)}
+.card .ic{font-size:30px;margin-bottom:10px}
+.card .nm{font-weight:700}
+.card .ds{color:#777;font-size:12px;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="test">ENVIRONNEMENT DE TEST</div>
+<div class="logo">Raya Group<span>Staging</span></div>
+<div class="modules">
+  <a class="card" href="salaries/">
+    <div class="ic">👥</div>
+    <div class="nm">Gestion Salariés</div>
+    <div class="ds">Fiches, dispos, contraintes</div>
+  </a>
+</div>
+</body>
+</html>
