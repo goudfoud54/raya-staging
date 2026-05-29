@@ -177,7 +177,8 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.5.1 · 29 mai';
+const VERSION='v0.6 · sortie + OCR amélioré';
+const MOIS_FR={janvier:1,février:2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,décembre:12,decembre:12};
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const CONTRAINTE_PRESETS=['pas_apres','pas_avant','pas_de_coupure','max_soirs_semaine','jours_off_consecutifs','indispo_jour','autre'];
@@ -316,6 +317,7 @@ function renderFiche(){
       </div>
     </div>
     <div class="h-actions">
+      ${(!isNew && s.actif!==false)?'<button class="btn ghost sm" onclick="sortirSalarie()">Sortir</button>':''}
       ${!isNew?'<button class="btn danger sm" onclick="delSalarie()">Supprimer</button>':''}
       <button class="btn" onclick="saveSalarie()">Enregistrer</button>
     </div>
@@ -355,14 +357,22 @@ function renderFiche(){
           <div class="fld"><label>Ville</label><input id="f_ville" value="${s.ville||''}"></div>
         </div>
       </div>
+      ${(!isNew && s.actif===false)?`
+      <div class="section" style="border-color:rgba(196,90,90,.3);background:rgba(196,90,90,.06)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div><div style="font-weight:600;color:var(--bad);font-size:14px">Salarié sorti${s.date_sortie?' le '+new Date(s.date_sortie).toLocaleDateString('fr-FR'):''}</div>
+          ${s.motif_sortie?'<div style="color:var(--muted);font-size:12px;margin-top:3px">Motif : '+s.motif_sortie+'</div>':''}</div>
+          <button class="btn ghost sm" onclick="reintegrerSalarie()">Réintégrer</button>
+        </div>
+      </div>`:''}
       <div class="section">
         <h3>Contrat & affectation</h3>
         <div class="grid2">
           <div class="fld"><label>Snack d'origine</label><select id="f_snack">${snackOpts}</select></div>
           <div class="fld"><label>Intitulé de poste</label><input id="f_poste" value="${s.poste_intitule||''}"></div>
-          <div class="fld"><label>Type de contrat</label><input id="f_contrat" value="${s.type_contrat||''}" placeholder="CDI, CDD, extra, alternant…"></div>
+          <div class="fld"><label>Type de contrat</label><input id="f_contrat" oninput="toggleSortie(this.value)" value="${s.type_contrat||''}" placeholder="CDI, CDD, extra, alternant…"></div>
           <div class="fld"><label>Date d'entrée</label><input type="date" id="f_entree" value="${s.date_entree||''}"></div>
-          <div class="fld"><label>Date de sortie</label><input type="date" id="f_sortie" value="${s.date_sortie||''}"></div>
+          <div class="fld" id="fldSortie" style="${(((s.type_contrat||'').toUpperCase().includes('CDD'))||s.actif===false||s.date_sortie)?'':'display:none'}"><label>Date de sortie</label><input type="date" id="f_sortie" value="${s.date_sortie||''}"></div>
           <div class="fld"><label>Couleur</label><input type="color" id="f_couleur" value="${s.couleur||'#888888'}"></div>
         </div>
         <div class="chkrow">
@@ -541,6 +551,37 @@ async function saveSalarie(){
   renderFiche();
 }
 
+function toggleSortie(v){
+  const show=(v||'').toUpperCase().includes('CDD') || currentFiche.actif===false || currentFiche.date_sortie;
+  const el=document.getElementById('fldSortie');
+  if(el) el.style.display=show?'block':'none';
+}
+
+async function sortirSalarie(){
+  if(!currentFiche.id)return;
+  const today=new Date().toISOString().slice(0,10);
+  const date=prompt('Date de sortie (AAAA-MM-JJ)',today);
+  if(!date)return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){toast('Format date invalide (AAAA-MM-JJ)');return;}
+  const motif=prompt('Motif de la sortie (démission, fin de CDD, licenciement, rupture conventionnelle, abandon de poste, fin de période d\'essai, retraite, autre…)');
+  if(motif===null)return;
+  const{error}=await sb.from('salaries').update({date_sortie:date,motif_sortie:motif||null,actif:false}).eq('id',currentFiche.id);
+  if(error){toast('Erreur: '+error.message);return;}
+  toast('Salarié sorti ✓');await loadAll();
+  currentFiche=S.salaries.find(x=>x.id===currentFiche.id);
+  renderFiche();
+}
+
+async function reintegrerSalarie(){
+  if(!currentFiche.id)return;
+  if(!confirm('Réintégrer ce salarié ? (la date et le motif de sortie seront effacés)'))return;
+  const{error}=await sb.from('salaries').update({date_sortie:null,motif_sortie:null,actif:true}).eq('id',currentFiche.id);
+  if(error){toast('Erreur: '+error.message);return;}
+  toast('Réintégré ✓');await loadAll();
+  currentFiche=S.salaries.find(x=>x.id===currentFiche.id);
+  renderFiche();
+}
+
 async function delSalarie(){
   if(!currentFiche.id)return;
   if(!confirm('Supprimer définitivement ce salarié et toutes ses données ?'))return;
@@ -599,54 +640,85 @@ async function delDoc(did,path){
 // ===== OCR / Pré-remplissage =====
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
+function dateFR(d,m,y){const dd=String(d).padStart(2,'0'),mm=String(m).padStart(2,'0');let yy=String(y);if(yy.length===2)yy=(parseInt(yy)>30?'19':'20')+yy;return `${yy}-${mm}-${dd}`;}
+
 function parseEmployeData(txt){
   const out={};
-  const t=txt.replace(/[ \t]+/g,' ');
-  const tFlat=t.replace(/\s+/g,' ');
+  const t=txt.replace(/[ \t]+/g,' ').replace(/ /g,' ');
+  const flat=t.replace(/\s+/g,' ');
 
-  // N° sécu : 15 chiffres
-  const secu=tFlat.match(/\b([12])[\s.]?(\d{2})[\s.]?(\d{2})[\s.]?(\d{2})[\s.]?(\d{3})[\s.]?(\d{3})[\s.]?(\d{2})\b/);
+  // === N° sécu ===
+  const secu=flat.match(/\b([12])[\s.\-]?(\d{2})[\s.\-]?(\d{2})[\s.\-]?(\d{2})[\s.\-]?(\d{3})[\s.\-]?(\d{3})[\s.\-]?(\d{2})\b/);
   if(secu) out.num_secu=secu.slice(1).join('');
 
-  // Email
-  const em=tFlat.match(/[\w.+-]+@[\w-]+\.[\w.-]+/i);
+  // === Email ===
+  const em=flat.match(/[\w.+-]+@[\w-]+\.[\w.-]+/i);
   if(em) out.email=em[0];
 
-  // Téléphone FR
-  const tel=tFlat.match(/(?:\+33[\s.\-]?|0)[1-9](?:[\s.\-]?\d{2}){4}/);
+  // === Téléphone FR ===
+  const tel=flat.match(/(?:\+33[\s.\-]?|0)[1-9](?:[\s.\-]?\d{2}){4}/);
   if(tel) out.telephone=tel[0].replace(/[.\-]/g,' ').replace(/\s+/g,' ').trim();
 
-  // Code postal + ville
-  const cpVille=tFlat.match(/\b(\d{5})\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-]+(?:\s+[A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-]+){0,3})\b/);
+  // === Code postal + ville ===
+  const cpVille=flat.match(/\b(\d{5})\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-]+(?:[\s\-][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-]+){0,3})\b/);
   if(cpVille){out.code_postal=cpVille[1];out.ville=cpVille[2].trim();}
 
-  // Date de naissance
-  const dob=tFlat.match(/(?:n[ée]\(?e?\)?\s+le|date de naissance\s*:?)\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
-  if(dob){const d=dob[1].padStart(2,'0'),m=dob[2].padStart(2,'0');let y=dob[3];if(y.length===2)y=(parseInt(y)>30?'19':'20')+y;out.date_naissance=`${y}-${m}-${d}`;}
+  // === Date de naissance ===
+  // Format DD/MM/YYYY ou DD.MM.YYYY ou DD-MM-YYYY
+  let dob=flat.match(/(?:n[ée]\(?e?\)?(?:\s+le)?|date\s*(?:de\s*)?naissance|naissance|date\s*nais)\s*:?\s*(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})/i);
+  if(dob){out.date_naissance=dateFR(dob[1],dob[2],dob[3]);}
+  else{
+    // Format "15 mars 1990"
+    const dobL=flat.match(/(?:n[ée]\(?e?\)?(?:\s+le)?|date\s*(?:de\s*)?naissance|naissance)\s*:?\s*(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(\d{4})/i);
+    if(dobL){out.date_naissance=dateFR(dobL[1],MOIS_FR[dobL[2].toLowerCase()],dobL[3]);}
+  }
 
-  // Date d'embauche
-  const dent=tFlat.match(/(?:date d['’]embauche|date d['’]entr[ée]e|prise de fonction|[àa] compter du|embauch[ée] le)\s*:?\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
-  if(dent){const d=dent[1].padStart(2,'0'),m=dent[2].padStart(2,'0');let y=dent[3];if(y.length===2)y='20'+y;out.date_entree=`${y}-${m}-${d}`;}
+  // === Date d'embauche / entrée / effet ===
+  let dent=flat.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|date\s+d['’]?\s*effet|date\s+de\s+d[ée]but|prise\s+de\s+fonction|[àa]\s+compter\s+du|embauch[ée]\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?)|engag[ée]?\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?))\s*:?\s*(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})/i);
+  if(dent){out.date_entree=dateFR(dent[1],dent[2],dent[3]);}
+  else{
+    const dentL=flat.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|prise\s+de\s+fonction|[àa]\s+compter\s+du)\s*:?\s*(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(\d{4})/i);
+    if(dentL){out.date_entree=dateFR(dentL[1],MOIS_FR[dentL[2].toLowerCase()],dentL[3]);}
+  }
 
-  // Nom et prénom (deux passages : "Nom :" puis "M./Mme ... NOM PRENOM")
-  let nomM=txt.match(/Nom(?:\s+de famille|\s+d[''’]usage)?\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇ\-' ]{1,40}?)(?=\s*(?:Pr[ée]nom|N[ée]\(?e?\)?\s|\n|$))/);
-  if(nomM) out.nom=nomM[1].trim();
-  let prenomM=txt.match(/Pr[ée]nom\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-' ]{1,40}?)(?=\s*(?:Nom|N[ée]\(?e?\)?\s|\n|Date|\s{2,}|$))/);
-  if(prenomM) out.prenom=prenomM[1].trim();
+  // === Nationalité ===
+  const nat=flat.match(/nationalit[ée]\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-]+)/i);
+  if(nat) out.nationalite=nat[1].trim().replace(/^./,c=>c.toUpperCase());
 
-  // Adresse (ligne après "Adresse :" ou "Demeurant")
-  const adr=txt.match(/(?:Adresse|Demeurant|Domicili[ée])\s*:?\s*([^\n]{5,90})/i);
+  // === Nom + Prénom ===
+  // 1) Patterns explicites "Nom : XXX" / "Prénom : YYY" (par ligne)
+  const nomLine=t.match(/Nom(?:\s+de\s+(?:naissance|famille)|\s+patronymique|\s+d['’]usage)?\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-' ]{1,40})/);
+  if(nomLine) out.nom=nomLine[1].trim().split(/\s{2,}/)[0];
+  const prenomLine=t.match(/Pr[ée]nom(?:s)?\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-' ]{1,40})/);
+  if(prenomLine) out.prenom=prenomLine[1].trim().split(/\s{2,}/)[0];
+
+  // 2) Pattern "Madame/Monsieur PRENOM NOM" ou "Madame/Monsieur NOM Prénom"
+  if(!out.nom || !out.prenom){
+    const civ=flat.match(/(?:Madame|Mme|Monsieur|M\.|Mr)\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-']{1,30})\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-']{1,30})/);
+    if(civ){
+      const a=civ[1].trim(),b=civ[2].trim();
+      const aUp=a===a.toUpperCase(), bUp=b===b.toUpperCase();
+      if(aUp && !bUp){out.nom=out.nom||a; out.prenom=out.prenom||b;}
+      else if(!aUp && bUp){out.prenom=out.prenom||a; out.nom=out.nom||b;}
+      else{out.prenom=out.prenom||a; out.nom=out.nom||b;}
+    }
+  }
+  // Format propre pour le prénom (Title Case)
+  if(out.prenom) out.prenom=out.prenom.toLowerCase().replace(/(^|[\s\-'])([a-zéèàâêôûïîç])/g,(_,p,c)=>p+c.toUpperCase());
+
+  // === Adresse ===
+  const adr=t.match(/(?:Adresse|Demeurant|Domicili[ée])\s*:?\s*([^\n]{5,90})/i);
   if(adr) out.adresse=adr[1].trim().replace(/\s{2,}/g,' ');
 
-  // Type de contrat
+  // === Type de contrat ===
   const contrats=[
     {re:/contrat\s+(?:de\s+travail\s+)?(?:à|a)\s+dur[ée]e\s+ind[ée]termin[ée]e|\bCDI\b/i,v:'CDI'},
     {re:/contrat\s+(?:de\s+travail\s+)?(?:à|a)\s+dur[ée]e\s+d[ée]termin[ée]e|\bCDD\b/i,v:'CDD'},
-    {re:/contrat\s+d[''’]apprentissage|alternance|apprenti/i,v:'alternant'},
+    {re:/contrat\s+d['’]apprentissage|\balternance\b|\bapprenti\b/i,v:'alternant'},
     {re:/contrat\s+de\s+professionnalisation/i,v:'professionnalisation'},
     {re:/\bextra\b/i,v:'extra'}
   ];
-  for(const c of contrats){if(c.re.test(tFlat)){out.type_contrat=c.v;break;}}
+  for(const c of contrats){if(c.re.test(flat)){out.type_contrat=c.v;break;}}
 
   return out;
 }
