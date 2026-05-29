@@ -145,7 +145,7 @@ button{cursor:pointer;border:none;background:none}
 <!-- LISTE -->
 <div id="listView" class="hidden">
   <div class="header">
-    <div class="brand">Raya <small>· Gestion Salariés</small></div>
+    <div class="brand">Raya <small>· Gestion Salariés · <span id="ver" style="font-size:10px;color:var(--muted)"></span></small></div>
     <div class="h-actions">
       <button class="btn" onclick="openFiche(null)">+ Nouveau salarié</button>
       <a href="../" class="btn ghost">Portail</a>
@@ -177,6 +177,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
+const VERSION='v0.5.1 · 29 mai';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const CONTRAINTE_PRESETS=['pas_apres','pas_avant','pas_de_coupure','max_soirs_semaine','jours_off_consecutifs','indispo_jour','autre'];
@@ -206,6 +207,7 @@ function unlock(){
 function showApp(){
   document.getElementById('lock').classList.add('hidden');
   document.getElementById('listView').classList.remove('hidden');
+  const v=document.getElementById('ver');if(v)v.textContent=VERSION;
   loadAll();
 }
 if(sessionStorage.getItem('sal_ok')==='1') showApp();
