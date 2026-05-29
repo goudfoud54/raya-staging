@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Raya — Gestion Salariés</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -326,7 +328,11 @@ function renderFiche(){
   if(currentTab==='infos'){
     body=`<div class="tab-body">
       <div class="section">
-        <h3>Identité</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px;flex-wrap:wrap">
+          <h3 style="margin-bottom:0">Identité</h3>
+          <button class="btn ghost sm" onclick="document.getElementById('ocr_file').click()" id="ocrBtn">📄 Pré-remplir depuis un document</button>
+        </div>
+        <input type="file" id="ocr_file" accept=".pdf,.png,.jpg,.jpeg" class="hidden" onchange="ocrExtract(event)">
         <div class="grid2">
           <div class="fld"><label>Nom *</label><input id="f_nom" value="${s.nom||''}"></div>
           <div class="fld"><label>Prénom</label><input id="f_prenom" value="${s.prenom||''}"></div>
@@ -586,6 +592,102 @@ async function delDoc(did,path){
   await sb.from('salarie_documents').delete().eq('id',did);
   const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
   renderFiche();render();toast('Supprimé');
+}
+
+// ===== OCR / Pré-remplissage =====
+if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+function parseEmployeData(txt){
+  const out={};
+  const t=txt.replace(/[ \t]+/g,' ');
+  const tFlat=t.replace(/\s+/g,' ');
+
+  // N° sécu : 15 chiffres
+  const secu=tFlat.match(/\b([12])[\s.]?(\d{2})[\s.]?(\d{2})[\s.]?(\d{2})[\s.]?(\d{3})[\s.]?(\d{3})[\s.]?(\d{2})\b/);
+  if(secu) out.num_secu=secu.slice(1).join('');
+
+  // Email
+  const em=tFlat.match(/[\w.+-]+@[\w-]+\.[\w.-]+/i);
+  if(em) out.email=em[0];
+
+  // Téléphone FR
+  const tel=tFlat.match(/(?:\+33[\s.\-]?|0)[1-9](?:[\s.\-]?\d{2}){4}/);
+  if(tel) out.telephone=tel[0].replace(/[.\-]/g,' ').replace(/\s+/g,' ').trim();
+
+  // Code postal + ville
+  const cpVille=tFlat.match(/\b(\d{5})\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-]+(?:\s+[A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-]+){0,3})\b/);
+  if(cpVille){out.code_postal=cpVille[1];out.ville=cpVille[2].trim();}
+
+  // Date de naissance
+  const dob=tFlat.match(/(?:n[ée]\(?e?\)?\s+le|date de naissance\s*:?)\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
+  if(dob){const d=dob[1].padStart(2,'0'),m=dob[2].padStart(2,'0');let y=dob[3];if(y.length===2)y=(parseInt(y)>30?'19':'20')+y;out.date_naissance=`${y}-${m}-${d}`;}
+
+  // Date d'embauche
+  const dent=tFlat.match(/(?:date d['’]embauche|date d['’]entr[ée]e|prise de fonction|[àa] compter du|embauch[ée] le)\s*:?\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
+  if(dent){const d=dent[1].padStart(2,'0'),m=dent[2].padStart(2,'0');let y=dent[3];if(y.length===2)y='20'+y;out.date_entree=`${y}-${m}-${d}`;}
+
+  // Nom et prénom (deux passages : "Nom :" puis "M./Mme ... NOM PRENOM")
+  let nomM=txt.match(/Nom(?:\s+de famille|\s+d[''’]usage)?\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇ\-' ]{1,40}?)(?=\s*(?:Pr[ée]nom|N[ée]\(?e?\)?\s|\n|$))/);
+  if(nomM) out.nom=nomM[1].trim();
+  let prenomM=txt.match(/Pr[ée]nom\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-' ]{1,40}?)(?=\s*(?:Nom|N[ée]\(?e?\)?\s|\n|Date|\s{2,}|$))/);
+  if(prenomM) out.prenom=prenomM[1].trim();
+
+  // Adresse (ligne après "Adresse :" ou "Demeurant")
+  const adr=txt.match(/(?:Adresse|Demeurant|Domicili[ée])\s*:?\s*([^\n]{5,90})/i);
+  if(adr) out.adresse=adr[1].trim().replace(/\s{2,}/g,' ');
+
+  // Type de contrat
+  const contrats=[
+    {re:/contrat\s+(?:de\s+travail\s+)?(?:à|a)\s+dur[ée]e\s+ind[ée]termin[ée]e|\bCDI\b/i,v:'CDI'},
+    {re:/contrat\s+(?:de\s+travail\s+)?(?:à|a)\s+dur[ée]e\s+d[ée]termin[ée]e|\bCDD\b/i,v:'CDD'},
+    {re:/contrat\s+d[''’]apprentissage|alternance|apprenti/i,v:'alternant'},
+    {re:/contrat\s+de\s+professionnalisation/i,v:'professionnalisation'},
+    {re:/\bextra\b/i,v:'extra'}
+  ];
+  for(const c of contrats){if(c.re.test(tFlat)){out.type_contrat=c.v;break;}}
+
+  return out;
+}
+
+async function ocrPdf(file){
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  const n=Math.min(pdf.numPages,3);
+  let text='';
+  for(let i=1;i<=n;i++){
+    const page=await pdf.getPage(i);
+    const viewport=page.getViewport({scale:2});
+    const canvas=document.createElement('canvas');
+    canvas.width=viewport.width;canvas.height=viewport.height;
+    await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+    const{data:{text:t}}=await Tesseract.recognize(canvas,'fra');
+    text+=t+'\n';
+  }
+  return text;
+}
+
+async function ocrExtract(ev){
+  const file=ev.target.files[0];if(!file)return;
+  const btn=document.getElementById('ocrBtn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Lecture en cours…';}
+  try{
+    let text='';
+    if(file.type==='application/pdf'){text=await ocrPdf(file);}
+    else{const{data:{text:t}}=await Tesseract.recognize(file,'fra');text=t;}
+    const found=parseEmployeData(text);
+    const map={nom:'f_nom',prenom:'f_prenom',date_naissance:'f_naiss',num_secu:'f_secu',
+      email:'f_email',telephone:'f_tel',adresse:'f_adr',code_postal:'f_cp',ville:'f_ville',
+      type_contrat:'f_contrat',date_entree:'f_entree'};
+    let n=0;const filled=[];
+    for(const[k,id]of Object.entries(map)){
+      const e=document.getElementById(id);
+      if(e && found[k]){e.value=found[k];e.style.borderColor='var(--ok)';n++;filled.push(k);}
+    }
+    if(n) toast(`${n} champ(s) détecté(s) : ${filled.join(', ')} — vérifie avant d'enregistrer`);
+    else toast('Aucun champ détecté — remplis manuellement');
+  }catch(err){toast('Erreur OCR : '+err.message);}
+  if(btn){btn.disabled=false;btn.textContent='📄 Pré-remplir depuis un document';}
+  ev.target.value='';
 }
 </script>
 </body>
