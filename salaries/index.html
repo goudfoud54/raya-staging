@@ -7,55 +7,124 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--gold:#c8a035;--dark:#0f0f1e;--card:#1a1a2e;--line:rgba(255,255,255,.08)}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--dark);color:#eee;min-height:100vh}
+:root{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;-webkit-font-smoothing:antialiased}
 a{color:var(--gold);text-decoration:none}
 .hidden{display:none!important}
-/* PIN */
-.lock{position:fixed;inset:0;background:var(--dark);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;z-index:100}
-.lock h1{color:var(--gold);font-size:26px}
-.lock input{padding:14px 18px;border-radius:12px;border:1px solid var(--line);background:#11111f;color:#fff;font-size:18px;text-align:center;width:240px}
-.btn{padding:11px 18px;border-radius:10px;border:none;background:var(--gold);color:#1a1a1a;font-weight:700;cursor:pointer;font-size:14px}
-.btn:hover{opacity:.9}
-.btn.ghost{background:rgba(255,255,255,.08);color:#fff}
-.btn.danger{background:#b03a3a;color:#fff}
-.btn.sm{padding:6px 10px;font-size:12px}
-/* layout */
-header{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--dark);z-index:10}
-.logo{color:var(--gold);font-size:20px;font-weight:800}
-.logo span{color:#666;font-size:12px;font-weight:400;display:block}
-.wrap{max-width:1100px;margin:0 auto;padding:20px}
-.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
-.toolbar input,.toolbar select{padding:9px 12px;border-radius:9px;border:1px solid var(--line);background:#11111f;color:#fff;font-size:13px}
-.count{color:#777;font-size:12px;margin-left:auto}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line)}
-th{color:#888;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
-tr:hover td{background:rgba(255,255,255,.03)}
-.dot{display:inline-block;width:12px;height:12px;border-radius:50%;border:1px solid rgba(255,255,255,.3);vertical-align:middle;margin-right:7px}
-.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
-.tag.cuisine{background:rgba(200,101,26,.2);color:#e8a06a}
-.tag.caisse{background:rgba(200,160,53,.2);color:#e0c46a}
-.tag.off{background:rgba(255,255,255,.07);color:#777}
-.muted{color:#777;font-size:12px}
-/* modal */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:30px 14px;overflow:auto;z-index:50}
-.modal{background:var(--card);border:1px solid var(--line);border-radius:16px;width:100%;max-width:640px;padding:24px}
-.modal h2{font-size:18px;margin-bottom:16px;color:#fff}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.fld{margin-bottom:12px}
-.fld label{display:block;font-size:12px;color:#999;margin-bottom:5px}
-.fld input,.fld select,.fld textarea{width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:#11111f;color:#fff;font-size:13px}
-.section{border-top:1px solid var(--line);margin-top:18px;padding-top:16px}
-.section h3{font-size:13px;color:var(--gold);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
-.chk{display:flex;align-items:center;gap:7px;font-size:13px}
-.chk input{width:auto}
-.subitem{display:flex;gap:8px;align-items:center;background:#11111f;border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin-bottom:7px;font-size:12px;flex-wrap:wrap}
-.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;border:1px solid var(--line);padding:12px 20px;border-radius:10px;font-size:13px;z-index:200;opacity:0;transition:.3s}
-.toast.show{opacity:1}
-@media(max-width:640px){.grid2{grid-template-columns:1fr}.count{width:100%;margin:0}}
+input,select,textarea,button{font-family:inherit;color:var(--text)}
+button{cursor:pointer;border:none;background:none}
+
+/* ── BUTTONS ── */
+.btn{padding:9px 16px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px;border:1px solid transparent;transition:.15s}
+.btn:hover{filter:brightness(1.07)}
+.btn.ghost{background:transparent;color:var(--text);border-color:var(--line-2)}
+.btn.ghost:hover{background:rgba(255,255,255,.04)}
+.btn.danger{background:transparent;color:var(--bad);border-color:rgba(196,90,90,.3)}
+.btn.danger:hover{background:rgba(196,90,90,.08)}
+.btn.sm{padding:6px 11px;font-size:12px}
+.btn.icon{padding:7px 9px}
+
+/* ── LOCK ── */
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;z-index:100}
+.lock .brand{color:var(--gold);font-size:22px;font-weight:700;letter-spacing:.5px}
+.lock .sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+.lock input{padding:13px 18px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:15px;text-align:center;width:260px;outline:none}
+.lock input:focus{border-color:var(--gold)}
+.lock .err{color:var(--bad);font-size:12px;height:16px}
+
+/* ── HEADER ── */
+.header{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0;z-index:20}
+.brand{color:var(--gold);font-weight:700;font-size:16px;letter-spacing:.3px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px;letter-spacing:0}
+.h-actions{display:flex;gap:8px;align-items:center}
+
+/* ── LIST ── */
+.wrap{max-width:1180px;margin:0 auto;padding:24px 28px 60px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+.toolbar input,.toolbar select{padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:13px;outline:none}
+.toolbar input:focus,.toolbar select:focus{border-color:var(--gold-dim)}
+.count{color:var(--muted);font-size:12px;margin-left:auto}
+.tbl{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.tbl th{text-align:left;padding:12px 16px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.015);border-bottom:1px solid var(--line)}
+.tbl td{padding:14px 16px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr.row{cursor:pointer;transition:background .12s}
+.tbl tr.row:hover{background:rgba(200,160,53,.04)}
+.namecell{display:flex;align-items:center;gap:12px}
+.avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#111;font-size:13px;flex-shrink:0;background:#444}
+.fullname{font-weight:600;color:var(--text)}
+.subline{color:var(--muted);font-size:11.5px;margin-top:1px}
+.chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600;letter-spacing:.02em}
+.chip.cuisine{background:rgba(232,160,106,.13);color:#e8a06a}
+.chip.caisse{background:rgba(224,196,106,.13);color:#e0c46a}
+.chip.multi{background:rgba(155,140,255,.13);color:#bca7ff}
+.chip.off{background:rgba(255,255,255,.05);color:var(--muted)}
+.chip.ok{background:rgba(63,184,127,.13);color:var(--ok)}
+.chip.warn{background:rgba(224,169,58,.13);color:var(--warn)}
+.chip.bad{background:rgba(196,90,90,.13);color:var(--bad)}
+
+/* ── FICHE ── */
+.fiche{position:fixed;inset:0;background:var(--bg);z-index:50;overflow:auto;display:flex;flex-direction:column}
+.fiche-head{display:flex;align-items:center;gap:18px;padding:16px 28px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:1}
+.fiche-head .back{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;padding:7px 10px;border-radius:8px}
+.fiche-head .back:hover{background:rgba(255,255,255,.04);color:var(--text)}
+.fiche-name{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
+.fiche-name .avatar{width:42px;height:42px;font-size:16px}
+.fiche-name .nm{font-size:18px;font-weight:600;color:var(--text)}
+.fiche-name .meta{color:var(--muted);font-size:12px;margin-top:2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tabs{display:flex;gap:2px;padding:0 28px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:75px;z-index:1}
+.tab{padding:14px 18px;font-size:13px;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+.tab-body{max-width:880px;margin:0 auto;padding:28px;width:100%}
+
+/* ── SECTION CARDS ── */
+.section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:18px}
+.section h3{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:16px;font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px 18px}
+.fld label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:6px;font-weight:500}
+.fld input,.fld select,.fld textarea{width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);font-size:13px;outline:none;transition:.12s}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:var(--gold-dim)}
+.fld input[type=color]{padding:3px;height:38px;cursor:pointer}
+.chkrow{display:flex;gap:18px;flex-wrap:wrap;margin-top:6px}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer}
+.chk input{width:auto;cursor:pointer}
+
+/* ── DOCS ── */
+.req-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.req{background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:14px 16px;display:flex;align-items:flex-start;gap:12px;cursor:pointer;transition:.12s}
+.req:hover{border-color:var(--gold-dim)}
+.req .ic{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.req.ok .ic{background:rgba(63,184,127,.15);color:var(--ok)}
+.req.miss .ic{background:rgba(224,169,58,.13);color:var(--warn)}
+.req .lbl{font-weight:600;font-size:13px}
+.req .st{font-size:11px;color:var(--muted);margin-top:2px}
+.req.ok .st{color:var(--ok)}
+.req.miss .st{color:var(--warn)}
+.doc-list{margin-top:14px}
+.doc{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
+.doc .typ{padding:2px 8px;border-radius:6px;background:rgba(200,160,53,.13);color:var(--gold);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.doc .nm{font-weight:500;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.doc .nm:hover{color:var(--gold)}
+.doc .sz{color:var(--muted);font-size:11px}
+
+/* ── DISPO / CONTRAINTE ── */
+.subitem{display:flex;align-items:center;gap:10px;padding:9px 13px;background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:7px;font-size:12.5px;flex-wrap:wrap}
+.add-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:14px;border-top:1px dashed var(--line-2)}
+.add-row select,.add-row input{padding:7px 10px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);font-size:12px;outline:none}
+
+/* ── TOAST ── */
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f1f2b;border:1px solid var(--line-2);padding:11px 20px;border-radius:10px;font-size:13px;z-index:200;opacity:0;transition:.25s;box-shadow:0 8px 28px rgba(0,0,0,.4)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+
+@media(max-width:680px){
+  .wrap{padding:16px}.header,.fiche-head,.tabs{padding-left:16px;padding-right:16px}
+  .grid2,.grid3{grid-template-columns:1fr}
+  .tab-body{padding:18px 16px}
+  .tbl td:nth-child(4),.tbl th:nth-child(4){display:none}
+}
 </style>
 </head>
 <body>
@@ -63,39 +132,41 @@ tr:hover td{background:rgba(255,255,255,.03)}
 
 <!-- VERROU -->
 <div class="lock" id="lock">
-  <h1>Gestion Salariés</h1>
-  <div class="muted">Accès réservé · entre ton mot de passe</div>
+  <div class="brand">Gestion Salariés</div>
+  <div class="sub">Accès réservé</div>
   <input type="password" id="pw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')unlock()">
   <button class="btn" onclick="unlock()">Entrer</button>
-  <div id="pwerr" style="color:#e07a7a;font-size:13px;height:16px"></div>
-  <a href="../" style="font-size:12px;color:#666;margin-top:10px">← Retour au portail</a>
+  <div class="err" id="pwerr"></div>
+  <a href="../" style="font-size:12px;color:var(--muted);margin-top:6px">← Retour au portail</a>
 </div>
 
-<!-- APP -->
-<div id="app" class="hidden">
-  <header>
-    <div class="logo">Raya <span>Gestion Salariés</span></div>
-    <div style="display:flex;gap:10px">
-      <button class="btn" onclick="openEdit(null)">+ Salarié</button>
-      <a href="../" class="btn ghost" style="display:inline-block">Portail</a>
+<!-- LISTE -->
+<div id="listView" class="hidden">
+  <div class="header">
+    <div class="brand">Raya <small>· Gestion Salariés</small></div>
+    <div class="h-actions">
+      <button class="btn" onclick="openFiche(null)">+ Nouveau salarié</button>
+      <a href="../" class="btn ghost">Portail</a>
     </div>
-  </header>
+  </div>
   <div class="wrap">
     <div class="toolbar">
-      <input id="search" placeholder="Rechercher un nom…" oninput="render()">
+      <input id="search" placeholder="Rechercher…" oninput="render()">
       <select id="fSnack" onchange="render()"><option value="">Tous les snacks</option></select>
       <select id="fRole" onchange="render()"><option value="">Tous les rôles</option><option value="cuisine">Cuisine</option><option value="caisse">Caisse</option></select>
       <select id="fActif" onchange="render()"><option value="1">Actifs</option><option value="">Tous</option><option value="0">Inactifs</option></select>
       <span class="count" id="count"></span>
     </div>
-    <table>
-      <thead><tr><th>Salarié</th><th>Snack</th><th>Rôles</th><th>Contrat</th><th>Heures</th><th>Dispos / Contraintes</th><th></th></tr></thead>
+    <table class="tbl">
+      <thead><tr><th>Salarié</th><th>Snack</th><th>Rôles</th><th>Contrat</th><th>Documents</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
   </div>
 </div>
 
-<div id="modalHost"></div>
+<!-- FICHE -->
+<div id="ficheView" class="hidden"></div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -107,8 +178,22 @@ const ADMIN_PW='Rayan1301';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const CONTRAINTE_PRESETS=['pas_apres','pas_avant','pas_de_coupure','max_soirs_semaine','jours_off_consecutifs','indispo_jour','autre'];
-const DOC_TYPES=['contrat','avenant','bulletin','cni','justif_dom','autre'];
+const DOC_REQUIRED=[
+  {key:'contrat',     label:'Contrat de travail',      ic:'📄'},
+  {key:'dpae',        label:'DPAE',                    ic:'📋'},
+  {key:'cni',         label:'Carte d\'identité',       ic:'🆔'},
+  {key:'carte_vitale',label:'Carte vitale',            ic:'💳'},
+  {key:'justif_dom',  label:'Justif. de domicile',     ic:'🏠'}
+];
+const DOC_OPTIONAL=[
+  {key:'avenant',label:'Avenant'},
+  {key:'bulletin',label:'Bulletin de paie'},
+  {key:'rib',label:'RIB'},
+  {key:'autre',label:'Autre'}
+];
+const ALL_DOC_TYPES=[...DOC_REQUIRED,...DOC_OPTIONAL];
 let S={restos:[],salaries:[],roles:[],dispos:[],contraintes:[],paires:[],docs:[]};
+let currentFiche=null, currentTab='infos';
 
 // ===== AUTH =====
 function unlock(){
@@ -118,7 +203,7 @@ function unlock(){
 }
 function showApp(){
   document.getElementById('lock').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('listView').classList.remove('hidden');
   loadAll();
 }
 if(sessionStorage.getItem('sal_ok')==='1') showApp();
@@ -139,162 +224,345 @@ async function loadAll(){
     sb.from('salarie_documents').select('*').order('created_at',{ascending:false})
   ]);
   S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];
-  // remplir filtres snack
   const fS=document.getElementById('fSnack');
   fS.innerHTML='<option value="">Tous les snacks</option>'+S.restos.map(x=>`<option value="${x.id}">${x.nom}</option>`).join('')+'<option value="MULTI">MULTI</option>';
   render();
 }
-const snackName=id=>{const r=S.restos.find(x=>x.id===id);return r?r.nom:'—';};
+const snackName=id=>{const r=S.restos.find(x=>x.id===id);return r?r.nom.replace('Raya ',''):'—';};
 const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.role))];
 const disposOf=sid=>S.dispos.filter(x=>x.salarie_id===sid);
 const contrOf=sid=>S.contraintes.filter(x=>x.salarie_id===sid);
 const docsOf=sid=>S.docs.filter(x=>x.salarie_id===sid);
+const initials=s=>((s.prenom||'').charAt(0)+(s.nom||'').charAt(0)).toUpperCase()||(s.nom||'?').charAt(0).toUpperCase();
+const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ');
 
-// ===== RENDER LISTE =====
+// ===== RENDER LIST =====
 function render(){
   const q=(document.getElementById('search').value||'').toLowerCase();
   const fSn=document.getElementById('fSnack').value, fRo=document.getElementById('fRole').value, fAc=document.getElementById('fActif').value;
   let list=S.salaries.filter(s=>{
-    if(q && !(s.nom||'').toLowerCase().includes(q)) return false;
+    const fn=fullName(s).toLowerCase();
+    if(q && !fn.includes(q)&&!(s.nom||'').toLowerCase().includes(q)) return false;
     if(fSn==='MULTI'){if(!s.est_multi)return false;} else if(fSn){if(s.snack_origine_id!==fSn)return false;}
     if(fRo && !rolesOf(s.id).includes(fRo)) return false;
     if(fAc==='1' && !s.actif) return false;
     if(fAc==='0' && s.actif) return false;
     return true;
   });
-  document.getElementById('count').textContent=list.length+' salarié(s)';
+  document.getElementById('count').textContent=list.length+' salarié'+(list.length>1?'s':'');
   document.getElementById('tbody').innerHTML=list.map(s=>{
-    const rls=rolesOf(s.id).map(r=>`<span class="tag ${r}">${r}</span>`).join(' ')||'<span class="tag off">—</span>';
-    const nd=disposOf(s.id).length, nc=contrOf(s.id).filter(c=>c.active).length;
-    const h=(s.heures_min||s.heures_max)?`${s.heures_min??'?'}–${s.heures_max??'?'}h`:'<span class="muted">—</span>';
-    return `<tr>
-      <td><span class="dot" style="background:${s.couleur||'#444'}"></span><b>${s.nom}${s.prenom?' '+s.prenom:''}</b>${s.est_mineur?' <span class="muted">(mineur)</span>':''}${!s.actif?' <span class="tag off">inactif</span>':''}${s.email?'<div class="muted">'+s.email+(s.telephone?' · '+s.telephone:'')+'</div>':(s.telephone?'<div class="muted">'+s.telephone+'</div>':'')}</td>
-      <td>${s.est_multi?'<span class="tag caisse">MULTI</span>':snackName(s.snack_origine_id)}</td>
+    const rls=rolesOf(s.id).map(r=>`<span class="chip ${r}">${r}</span>`).join(' ')||'<span class="chip off">—</span>';
+    const docTypes=docsOf(s.id).map(d=>d.type);
+    const reqOK=DOC_REQUIRED.filter(rd=>docTypes.includes(rd.key)).length;
+    const reqTot=DOC_REQUIRED.length;
+    const docCls=reqOK===reqTot?'ok':(reqOK===0?'bad':'warn');
+    const contrat=(s.type_contrat||'<span style="color:var(--muted)">—</span>')+
+      ((s.heures_min||s.heures_max)?` <span style="color:var(--muted)">· ${s.heures_min??'?'}–${s.heures_max??'?'}h</span>`:'');
+    const sub=[];
+    if(s.email) sub.push(s.email);
+    if(s.telephone) sub.push(s.telephone);
+    return `<tr class="row" onclick="openFiche('${s.id}')">
+      <td><div class="namecell"><div class="avatar" style="background:${s.couleur||'#444'}">${initials(s)}</div>
+        <div><div class="fullname">${fullName(s)||s.nom}${s.est_mineur?' <span class="chip off">mineur</span>':''}${!s.actif?' <span class="chip off">inactif</span>':''}</div>
+        ${sub.length?'<div class="subline">'+sub.join(' · ')+'</div>':''}</div></div></td>
+      <td>${s.est_multi?'<span class="chip multi">MULTI</span>':snackName(s.snack_origine_id)}</td>
       <td>${rls}</td>
-      <td>${s.type_contrat||'<span class="muted">—</span>'}</td>
-      <td>${h}</td>
-      <td class="muted">${nd} dispo · ${nc} contr.</td>
-      <td><button class="btn ghost sm" onclick="openEdit('${s.id}')">Éditer</button></td>
+      <td>${contrat}</td>
+      <td><span class="chip ${docCls}">${reqOK}/${reqTot} obligatoires</span></td>
     </tr>`;
-  }).join('')||'<tr><td colspan="7" class="muted" style="padding:30px;text-align:center">Aucun salarié</td></tr>';
+  }).join('')||'<tr><td colspan="5" style="padding:36px;text-align:center;color:var(--muted)">Aucun salarié</td></tr>';
 }
 
-// ===== MODAL EDIT =====
-function openEdit(id){
-  const s=id?S.salaries.find(x=>x.id===id):{};
-  const isNew=!id;
-  const snackOpts='<option value="">— (MULTI / aucun) —</option>'+S.restos.map(r=>`<option value="${r.id}" ${s.snack_origine_id===r.id?'selected':''}>${r.nom}</option>`).join('');
-  const rls=id?rolesOf(id):[];
-  document.getElementById('modalHost').innerHTML=`
-  <div class="modal-bg" onclick="if(event.target===this)closeModal()">
-   <div class="modal">
-    <h2>${isNew?'Nouveau salarié':'Éditer · '+s.nom}</h2>
-    <div class="grid2">
-      <div class="fld"><label>Nom *</label><input id="f_nom" value="${s.nom||''}"></div>
-      <div class="fld"><label>Prénom</label><input id="f_prenom" value="${s.prenom||''}"></div>
-      <div class="fld"><label>Snack d'origine</label><select id="f_snack">${snackOpts}</select></div>
-      <div class="fld"><label>Couleur</label><input type="color" id="f_couleur" value="${s.couleur||'#888888'}"></div>
-      <div class="fld"><label>Type de contrat</label><input id="f_contrat" value="${s.type_contrat||''}" placeholder="CDI, CDD, extra, alternant…"></div>
-      <div class="fld"><label>Plafond heures hebdo</label><input type="number" id="f_plafond" value="${s.plafond_heures??48}"></div>
-      <div class="fld"><label>Heures min / semaine</label><input type="number" id="f_hmin" value="${s.heures_min??''}"></div>
-      <div class="fld"><label>Heures max / semaine</label><input type="number" id="f_hmax" value="${s.heures_max??''}"></div>
-    </div>
-    <div class="row">
-      <label class="chk"><input type="checkbox" id="f_multi" ${s.est_multi?'checked':''}> Multi-snacks</label>
-      <label class="chk"><input type="checkbox" id="f_mineur" ${s.est_mineur?'checked':''}> Mineur</label>
-      <label class="chk"><input type="checkbox" id="f_actif" ${(s.actif??true)?'checked':''}> Actif</label>
-    </div>
-    <div class="fld"><label>Notes</label><textarea id="f_notes" rows="2">${s.notes||''}</textarea></div>
-    <div class="row" style="margin-top:6px">
-      <span class="muted">Rôles :</span>
-      <label class="chk"><input type="checkbox" id="f_r_cuisine" ${rls.includes('cuisine')?'checked':''}> Cuisine</label>
-      <label class="chk"><input type="checkbox" id="f_r_caisse" ${rls.includes('caisse')?'checked':''}> Caisse</label>
-    </div>
+// ===== FICHE =====
+function openFiche(id){
+  currentFiche=id?{...S.salaries.find(x=>x.id===id)}:{actif:true,plafond_heures:48};
+  currentTab='infos';
+  document.getElementById('listView').classList.add('hidden');
+  const v=document.getElementById('ficheView');
+  v.classList.remove('hidden');
+  renderFiche();
+}
+function closeFiche(){
+  document.getElementById('ficheView').classList.add('hidden');
+  document.getElementById('listView').classList.remove('hidden');
+  currentFiche=null;
+}
+function setTab(t){currentTab=t;renderFiche();}
 
-    <div class="section">
-      <h3>Social / Administratif</h3>
-      <div class="grid2">
-        <div class="fld"><label>Date de naissance</label><input type="date" id="f_naiss" value="${s.date_naissance||''}"></div>
-        <div class="fld"><label>Nationalité</label><input id="f_nat" value="${s.nationalite||''}"></div>
-        <div class="fld"><label>N° Sécurité sociale</label><input id="f_secu" value="${s.num_secu||''}"></div>
-        <div class="fld"><label>Matricule</label><input id="f_matricule" value="${s.matricule||''}"></div>
-        <div class="fld"><label>Email</label><input type="email" id="f_email" value="${s.email||''}"></div>
-        <div class="fld"><label>Téléphone</label><input id="f_tel" value="${s.telephone||''}"></div>
-        <div class="fld"><label>Adresse</label><input id="f_adr" value="${s.adresse||''}"></div>
-        <div class="fld"><label>Code postal</label><input id="f_cp" value="${s.code_postal||''}"></div>
-        <div class="fld"><label>Ville</label><input id="f_ville" value="${s.ville||''}"></div>
-        <div class="fld"><label>Intitulé de poste</label><input id="f_poste" value="${s.poste_intitule||''}"></div>
-        <div class="fld"><label>Date d'entrée</label><input type="date" id="f_entree" value="${s.date_entree||''}"></div>
-        <div class="fld"><label>Date de sortie</label><input type="date" id="f_sortie" value="${s.date_sortie||''}"></div>
-      </div>
-    </div>
+function renderFiche(){
+  const s=currentFiche;
+  const isNew=!s.id;
+  const snackOpts='<option value="">— Aucun / MULTI —</option>'+S.restos.map(r=>`<option value="${r.id}" ${s.snack_origine_id===r.id?'selected':''}>${r.nom}</option>`).join('');
+  const rls=s.id?rolesOf(s.id):[];
+  const docTypes=s.id?docsOf(s.id).map(d=>d.type):[];
+  const reqOK=DOC_REQUIRED.filter(rd=>docTypes.includes(rd.key)).length;
 
-    ${id?`
-    <div class="section">
-      <h3>Disponibilités / Indisponibilités</h3>
-      <div id="dispoList"></div>
-      <div class="row">
-        <select id="nd_type"><option value="recurrente">Récurrente</option><option value="ponctuelle">Ponctuelle</option></select>
-        <select id="nd_jour">${JOURS.map((j,i)=>`<option value="${i}">${j}</option>`).join('')}</select>
-        <input id="nd_date" type="date" class="hidden">
-        <input id="nd_hd" type="time" title="début"><input id="nd_hf" type="time" title="fin">
-        <select id="nd_statut"><option value="indispo">Indispo</option><option value="dispo_limitee">Dispo limitée</option></select>
-        <input id="nd_motif" placeholder="motif (école…)" style="width:120px">
-        <button class="btn sm" onclick="addDispo('${id}')">+ Ajouter</button>
+  const head=`
+  <div class="fiche-head">
+    <button class="back" onclick="closeFiche()">← Liste</button>
+    <div class="fiche-name">
+      <div class="avatar" style="background:${s.couleur||'#444'}">${initials(s)||'?'}</div>
+      <div>
+        <div class="nm">${isNew?'Nouveau salarié':(fullName(s)||s.nom)}</div>
+        <div class="meta">
+          ${s.est_multi?'<span class="chip multi">MULTI</span>':(s.snack_origine_id?'<span>'+snackName(s.snack_origine_id)+'</span>':'')}
+          ${rls.map(r=>`<span class="chip ${r}">${r}</span>`).join(' ')}
+          ${!isNew?'<span style="color:var(--muted)">'+reqOK+'/'+DOC_REQUIRED.length+' docs obligatoires</span>':''}
+        </div>
       </div>
     </div>
-    <div class="section">
-      <h3>Contraintes individuelles</h3>
-      <div id="contrList"></div>
-      <div class="row">
-        <select id="nc_cle">${CONTRAINTE_PRESETS.map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
-        <input id="nc_val" placeholder="valeur (ex 19:00, true, 1)" style="width:160px">
-        <button class="btn sm" onclick="addContrainte('${id}')">+ Ajouter</button>
-      </div>
+    <div class="h-actions">
+      ${!isNew?'<button class="btn danger sm" onclick="delSalarie()">Supprimer</button>':''}
+      <button class="btn" onclick="saveSalarie()">Enregistrer</button>
     </div>
-    <div class="section">
-      <h3>Documents</h3>
-      <div id="docList"></div>
-      <div class="row">
-        <select id="nf_type">${DOC_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
-        <input id="nf_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx" style="flex:1">
-        <button class="btn sm" onclick="uploadDoc('${id}')">+ Uploader</button>
-      </div>
-      <div class="muted" style="font-size:11px">Max 10 Mo · PDF, images, Word</div>
-    </div>`:'<div class="muted section">Enregistre d\'abord le salarié pour ajouter dispos, contraintes et documents.</div>'}
-
-    <div class="modal-actions">
-      ${id?`<button class="btn danger" onclick="delSalarie('${id}')">Supprimer</button>`:''}
-      <button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn" onclick="saveSalarie('${id||''}')">Enregistrer</button>
-    </div>
-   </div>
+  </div>
+  <div class="tabs">
+    <button class="tab ${currentTab==='infos'?'active':''}" onclick="setTab('infos')">Informations</button>
+    <button class="tab ${currentTab==='planning'?'active':''}" onclick="setTab('planning')">Planning</button>
+    <button class="tab ${currentTab==='docs'?'active':''}" onclick="setTab('docs')">Documents</button>
   </div>`;
-  if(id){renderDispoList(id);renderContrList(id);renderDocList(id);}
-  const ndt=document.getElementById('nd_type');
-  if(ndt)ndt.onchange=()=>{const p=ndt.value==='ponctuelle';document.getElementById('nd_date').classList.toggle('hidden',!p);document.getElementById('nd_jour').classList.toggle('hidden',p);};
-}
-function closeModal(){document.getElementById('modalHost').innerHTML='';}
 
-function renderDispoList(id){
+  let body='';
+  if(currentTab==='infos'){
+    body=`<div class="tab-body">
+      <div class="section">
+        <h3>Identité</h3>
+        <div class="grid2">
+          <div class="fld"><label>Nom *</label><input id="f_nom" value="${s.nom||''}"></div>
+          <div class="fld"><label>Prénom</label><input id="f_prenom" value="${s.prenom||''}"></div>
+          <div class="fld"><label>Date de naissance</label><input type="date" id="f_naiss" value="${s.date_naissance||''}"></div>
+          <div class="fld"><label>Nationalité</label><input id="f_nat" value="${s.nationalite||''}"></div>
+          <div class="fld"><label>N° Sécurité sociale</label><input id="f_secu" value="${s.num_secu||''}"></div>
+          <div class="fld"><label>Matricule interne</label><input id="f_matricule" value="${s.matricule||''}"></div>
+        </div>
+        <div class="chkrow"><label class="chk"><input type="checkbox" id="f_mineur" ${s.est_mineur?'checked':''}> Mineur</label></div>
+      </div>
+      <div class="section">
+        <h3>Contact</h3>
+        <div class="grid2">
+          <div class="fld"><label>Email</label><input type="email" id="f_email" value="${s.email||''}"></div>
+          <div class="fld"><label>Téléphone</label><input id="f_tel" value="${s.telephone||''}"></div>
+          <div class="fld" style="grid-column:1/-1"><label>Adresse</label><input id="f_adr" value="${s.adresse||''}"></div>
+          <div class="fld"><label>Code postal</label><input id="f_cp" value="${s.code_postal||''}"></div>
+          <div class="fld"><label>Ville</label><input id="f_ville" value="${s.ville||''}"></div>
+        </div>
+      </div>
+      <div class="section">
+        <h3>Contrat & affectation</h3>
+        <div class="grid2">
+          <div class="fld"><label>Snack d'origine</label><select id="f_snack">${snackOpts}</select></div>
+          <div class="fld"><label>Intitulé de poste</label><input id="f_poste" value="${s.poste_intitule||''}"></div>
+          <div class="fld"><label>Type de contrat</label><input id="f_contrat" value="${s.type_contrat||''}" placeholder="CDI, CDD, extra, alternant…"></div>
+          <div class="fld"><label>Date d'entrée</label><input type="date" id="f_entree" value="${s.date_entree||''}"></div>
+          <div class="fld"><label>Date de sortie</label><input type="date" id="f_sortie" value="${s.date_sortie||''}"></div>
+          <div class="fld"><label>Couleur</label><input type="color" id="f_couleur" value="${s.couleur||'#888888'}"></div>
+        </div>
+        <div class="chkrow">
+          <label class="chk"><input type="checkbox" id="f_multi" ${s.est_multi?'checked':''}> Multi-snacks</label>
+          <label class="chk"><input type="checkbox" id="f_actif" ${(s.actif??true)?'checked':''}> Salarié actif</label>
+        </div>
+      </div>
+      <div class="section">
+        <h3>Notes</h3>
+        <div class="fld"><textarea id="f_notes" rows="3" placeholder="Notes internes…">${s.notes||''}</textarea></div>
+      </div>
+    </div>`;
+  }
+  else if(currentTab==='planning'){
+    body=`<div class="tab-body">
+      ${!s.id?'<div class="section" style="text-align:center;color:var(--muted)">Enregistre d\'abord la fiche pour gérer le planning.</div>':`
+      <div class="section">
+        <h3>Volume horaire & rôles</h3>
+        <div class="grid3">
+          <div class="fld"><label>Heures min / semaine</label><input type="number" id="f_hmin" value="${s.heures_min??''}"></div>
+          <div class="fld"><label>Heures max / semaine</label><input type="number" id="f_hmax" value="${s.heures_max??''}"></div>
+          <div class="fld"><label>Plafond légal hebdo</label><input type="number" id="f_plafond" value="${s.plafond_heures??48}"></div>
+        </div>
+        <div class="chkrow" style="margin-top:10px">
+          <label class="chk"><input type="checkbox" id="f_r_cuisine" ${rls.includes('cuisine')?'checked':''}> Peut tenir la cuisine</label>
+          <label class="chk"><input type="checkbox" id="f_r_caisse" ${rls.includes('caisse')?'checked':''}> Peut tenir la caisse</label>
+        </div>
+      </div>
+      <div class="section">
+        <h3>Disponibilités / Indisponibilités</h3>
+        <div id="dispoList"></div>
+        <div class="add-row">
+          <select id="nd_type"><option value="recurrente">Récurrente</option><option value="ponctuelle">Ponctuelle</option></select>
+          <select id="nd_jour">${JOURS.map((j,i)=>`<option value="${i}">${j}</option>`).join('')}</select>
+          <input id="nd_date" type="date" class="hidden">
+          <input id="nd_hd" type="time" title="début"><input id="nd_hf" type="time" title="fin">
+          <select id="nd_statut"><option value="indispo">Indispo</option><option value="dispo_limitee">Dispo limitée</option></select>
+          <input id="nd_motif" placeholder="motif (école…)" style="width:140px">
+          <button class="btn sm" onclick="addDispo()">+ Ajouter</button>
+        </div>
+      </div>
+      <div class="section">
+        <h3>Contraintes individuelles</h3>
+        <div id="contrList"></div>
+        <div class="add-row">
+          <select id="nc_cle">${CONTRAINTE_PRESETS.map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
+          <input id="nc_val" placeholder="valeur (ex 19:00, true, 1)" style="width:180px">
+          <button class="btn sm" onclick="addContrainte()">+ Ajouter</button>
+        </div>
+      </div>`}
+    </div>`;
+  }
+  else if(currentTab==='docs'){
+    if(!s.id){
+      body=`<div class="tab-body"><div class="section" style="text-align:center;color:var(--muted)">Enregistre d'abord la fiche pour gérer les documents.</div></div>`;
+    } else {
+      const docs=docsOf(s.id);
+      body=`<div class="tab-body">
+        <div class="section">
+          <h3>Documents obligatoires</h3>
+          <div class="req-grid">
+            ${DOC_REQUIRED.map(rd=>{
+              const has=docs.find(d=>d.type===rd.key);
+              return `<div class="req ${has?'ok':'miss'}" onclick="triggerUpload('${rd.key}')">
+                <div class="ic">${has?'✓':rd.ic}</div>
+                <div><div class="lbl">${rd.label}</div>
+                <div class="st">${has?'Présent · cliquer pour remplacer':'Manquant · cliquer pour ajouter'}</div></div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+        <div class="section">
+          <h3>Ajouter un document</h3>
+          <div class="add-row">
+            <select id="nf_type">${ALL_DOC_TYPES.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select>
+            <input id="nf_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx" style="flex:1">
+            <button class="btn sm" onclick="uploadDoc()">Uploader</button>
+          </div>
+          <div style="color:var(--muted);font-size:11px;margin-top:6px">Max 10 Mo · PDF, images, Word</div>
+        </div>
+        <div class="section">
+          <h3>Tous les documents (${docs.length})</h3>
+          <div class="doc-list">
+            ${docs.length?docs.map(d=>`<div class="doc">
+              <span class="typ">${d.type}</span>
+              <span class="nm" onclick="dlDoc('${d.path}')">${d.nom}</span>
+              <span class="sz">${fmtSize(d.taille)}</span>
+              <button class="btn danger sm" onclick="delDoc('${d.id}','${d.path.replace(/'/g,"\\'")}')">×</button>
+            </div>`).join(''):'<div style="color:var(--muted);font-size:13px">Aucun document encore.</div>'}
+          </div>
+        </div>
+      </div>`;
+    }
+  }
+  document.getElementById('ficheView').innerHTML=head+body;
+
+  if(currentTab==='planning' && s.id){
+    renderDispoList();renderContrList();
+    const ndt=document.getElementById('nd_type');
+    if(ndt)ndt.onchange=()=>{const p=ndt.value==='ponctuelle';document.getElementById('nd_date').classList.toggle('hidden',!p);document.getElementById('nd_jour').classList.toggle('hidden',p);};
+  }
+}
+
+// triggerUpload sur clic d'une carte "doc requis"
+function triggerUpload(key){
+  setTab('docs');
+  setTimeout(()=>{
+    const sel=document.getElementById('nf_type'); if(sel)sel.value=key;
+    const f=document.getElementById('nf_file'); if(f)f.click();
+  },50);
+}
+
+function fmtSize(n){if(!n)return'';if(n<1024)return n+' o';if(n<1048576)return(n/1024).toFixed(0)+' Ko';return(n/1048576).toFixed(1)+' Mo';}
+
+function renderDispoList(){
+  const id=currentFiche.id;
   document.getElementById('dispoList').innerHTML=disposOf(id).map(d=>{
     const when=d.type==='ponctuelle'?(d.date_specifique||''):JOURS[d.jour_semaine]||'';
     const plage=(d.heure_debut||d.heure_fin)?`${(d.heure_debut||'').slice(0,5)}–${(d.heure_fin||'').slice(0,5)}`:'journée';
-    return `<div class="subitem"><b>${when}</b> · ${plage} · ${d.statut} ${d.motif?'· '+d.motif:''}<button class="btn danger sm" style="margin-left:auto" onclick="delDispo('${d.id}','${id}')">×</button></div>`;
-  }).join('')||'<div class="muted">Aucune</div>';
+    return `<div class="subitem"><b>${when}</b> · ${plage} · ${d.statut} ${d.motif?'· '+d.motif:''}<button class="btn danger sm" style="margin-left:auto" onclick="delDispo('${d.id}')">×</button></div>`;
+  }).join('')||'<div style="color:var(--muted);font-size:13px">Aucune disponibilité enregistrée</div>';
 }
-function renderContrList(id){
+function renderContrList(){
+  const id=currentFiche.id;
   document.getElementById('contrList').innerHTML=contrOf(id).map(c=>
-    `<div class="subitem"><b>${c.cle}</b> = ${c.valeur||''} ${c.active?'':'(inactive)'}<button class="btn danger sm" style="margin-left:auto" onclick="delContrainte('${c.id}','${id}')">×</button></div>`
-  ).join('')||'<div class="muted">Aucune</div>';
+    `<div class="subitem"><b>${c.cle}</b> = ${c.valeur||''} ${c.active?'':'<span style="color:var(--muted)">(inactive)</span>'}<button class="btn danger sm" style="margin-left:auto" onclick="delContrainte('${c.id}')">×</button></div>`
+  ).join('')||'<div style="color:var(--muted);font-size:13px">Aucune contrainte enregistrée</div>';
 }
-function fmtSize(n){if(!n)return'';if(n<1024)return n+' o';if(n<1048576)return(n/1024).toFixed(0)+' Ko';return(n/1048576).toFixed(1)+' Mo';}
-function renderDocList(id){
-  document.getElementById('docList').innerHTML=docsOf(id).map(d=>
-    `<div class="subitem"><span style="background:rgba(200,160,53,.2);color:#e0c46a;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${d.type}</span> <b style="cursor:pointer;text-decoration:underline" onclick="dlDoc('${d.path}')">${d.nom}</b> <span class="muted">${fmtSize(d.taille)}</span><button class="btn danger sm" style="margin-left:auto" onclick="delDoc('${d.id}','${d.path}','${id}')">×</button></div>`
-  ).join('')||'<div class="muted">Aucun document</div>';
+
+// ===== CRUD =====
+function val(id,trim=true){const e=document.getElementById(id);if(!e)return null;const v=trim?e.value.trim():e.value;return v===''?null:v;}
+function num(id){const v=val(id,false);return v==null?null:parseFloat(v);}
+
+async function saveSalarie(){
+  // Map: champ DB -> id input ; on n'ajoute au payload QUE ce qui est dans le DOM courant.
+  const TXT={nom:'f_nom',prenom:'f_prenom',type_contrat:'f_contrat',notes:'f_notes',
+    nationalite:'f_nat',num_secu:'f_secu',matricule:'f_matricule',email:'f_email',
+    telephone:'f_tel',adresse:'f_adr',code_postal:'f_cp',ville:'f_ville',poste_intitule:'f_poste'};
+  const DATE={date_naissance:'f_naiss',date_entree:'f_entree',date_sortie:'f_sortie'};
+  const NUM={plafond_heures:'f_plafond',heures_min:'f_hmin',heures_max:'f_hmax'};
+  const CHK={est_multi:'f_multi',est_mineur:'f_mineur',actif:'f_actif'};
+  const SEL={snack_origine_id:'f_snack'};
+  const COL={couleur:'f_couleur'};
+  const payload={};
+  for(const[k,id]of Object.entries(TXT)){const e=document.getElementById(id);if(e)payload[k]=e.value.trim()||null;}
+  for(const[k,id]of Object.entries(DATE)){const e=document.getElementById(id);if(e)payload[k]=e.value||null;}
+  for(const[k,id]of Object.entries(NUM)){const e=document.getElementById(id);if(e)payload[k]=e.value!==''?parseFloat(e.value):null;}
+  for(const[k,id]of Object.entries(CHK)){const e=document.getElementById(id);if(e)payload[k]=e.checked;}
+  for(const[k,id]of Object.entries(SEL)){const e=document.getElementById(id);if(e)payload[k]=e.value||null;}
+  for(const[k,id]of Object.entries(COL)){const e=document.getElementById(id);if(e)payload[k]=e.value;}
+
+  // Création : besoin du nom au minimum
+  if(!currentFiche.id){
+    if(!payload.nom){toast('Va dans Informations et renseigne au moins le nom');setTab('infos');return;}
+  }
+
+  let sid=currentFiche.id;
+  if(sid){
+    if(Object.keys(payload).length===0){/* rien à update côté salaries */}
+    else{const{error}=await sb.from('salaries').update(payload).eq('id',sid);if(error){toast('Erreur: '+error.message);return;}}
+  } else {
+    const{data,error}=await sb.from('salaries').insert(payload).select().single();
+    if(error){toast('Erreur: '+error.message);return;}
+    sid=data.id;currentFiche.id=sid;
+  }
+
+  // rôles (si checkboxes présentes)
+  const rc=document.getElementById('f_r_cuisine'), rk=document.getElementById('f_r_caisse');
+  if(rc||rk){
+    const want=[];if(rc?.checked)want.push('cuisine');if(rk?.checked)want.push('caisse');
+    await sb.from('salarie_roles').delete().eq('salarie_id',sid).is('restaurant_id',null);
+    if(want.length)await sb.from('salarie_roles').insert(want.map(r=>({salarie_id:sid,role:r})));
+  }
+  toast('Enregistré ✓');await loadAll();
+  currentFiche=S.salaries.find(x=>x.id===sid);
+  renderFiche();
 }
-async function uploadDoc(id){
+
+async function delSalarie(){
+  if(!currentFiche.id)return;
+  if(!confirm('Supprimer définitivement ce salarié et toutes ses données ?'))return;
+  const{error}=await sb.from('salaries').delete().eq('id',currentFiche.id);
+  if(error){toast('Erreur: '+error.message);return;}
+  toast('Supprimé');await loadAll();closeFiche();
+}
+
+async function addDispo(){
+  const id=currentFiche.id;
+  const type=document.getElementById('nd_type').value;
+  const row={salarie_id:id,type,statut:document.getElementById('nd_statut').value,
+    motif:val('nd_motif'),heure_debut:val('nd_hd',false),heure_fin:val('nd_hf',false)};
+  if(type==='ponctuelle')row.date_specifique=val('nd_date',false);
+  else row.jour_semaine=parseInt(document.getElementById('nd_jour').value);
+  const{error}=await sb.from('salarie_dispos').insert(row);
+  if(error){toast('Erreur: '+error.message);return;}
+  const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();toast('Ajoutée');
+}
+async function delDispo(did){await sb.from('salarie_dispos').delete().eq('id',did);const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
+async function addContrainte(){
+  const id=currentFiche.id;
+  const{error}=await sb.from('salarie_contraintes').insert({salarie_id:id,cle:document.getElementById('nc_cle').value,valeur:val('nc_val'),active:true});
+  if(error){toast('Erreur: '+error.message);return;}
+  const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();toast('Ajoutée');
+}
+async function delContrainte(cid){await sb.from('salarie_contraintes').delete().eq('id',cid);const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();}
+
+async function uploadDoc(){
+  const id=currentFiche.id;
   const f=document.getElementById('nf_file').files[0];
   if(!f){toast('Choisis un fichier');return;}
   if(f.size>10485760){toast('Fichier > 10 Mo');return;}
@@ -305,84 +573,20 @@ async function uploadDoc(id){
   const{error}=await sb.from('salarie_documents').insert({salarie_id:id,type,nom:f.name,path,taille:f.size,content_type:f.type});
   if(error){toast('DB: '+error.message);return;}
   const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
-  renderDocList(id);render();document.getElementById('nf_file').value='';toast('Uploadé ✓');
+  renderFiche();render();toast('Uploadé ✓');
 }
 async function dlDoc(path){
   const{data,error}=await sb.storage.from('salaries-docs').createSignedUrl(path,300);
   if(error){toast('Erreur: '+error.message);return;}
   window.open(data.signedUrl,'_blank');
 }
-async function delDoc(did,path,id){
+async function delDoc(did,path){
   if(!confirm('Supprimer ce document ?'))return;
   await sb.storage.from('salaries-docs').remove([path]);
   await sb.from('salarie_documents').delete().eq('id',did);
   const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
-  renderDocList(id);render();toast('Supprimé');
+  renderFiche();render();toast('Supprimé');
 }
-
-// ===== CRUD =====
-async function saveSalarie(id){
-  const nom=document.getElementById('f_nom').value.trim();
-  if(!nom){toast('Le nom est obligatoire');return;}
-  const payload={
-    nom, prenom:document.getElementById('f_prenom').value.trim()||null,
-    snack_origine_id:document.getElementById('f_snack').value||null,
-    couleur:document.getElementById('f_couleur').value,
-    type_contrat:document.getElementById('f_contrat').value.trim()||null,
-    plafond_heures:parseFloat(document.getElementById('f_plafond').value)||null,
-    heures_min:document.getElementById('f_hmin').value!==''?parseFloat(document.getElementById('f_hmin').value):null,
-    heures_max:document.getElementById('f_hmax').value!==''?parseFloat(document.getElementById('f_hmax').value):null,
-    est_multi:document.getElementById('f_multi').checked,
-    est_mineur:document.getElementById('f_mineur').checked,
-    actif:document.getElementById('f_actif').checked,
-    notes:document.getElementById('f_notes').value.trim()||null,
-    date_naissance:document.getElementById('f_naiss').value||null,
-    nationalite:document.getElementById('f_nat').value.trim()||null,
-    num_secu:document.getElementById('f_secu').value.trim()||null,
-    matricule:document.getElementById('f_matricule').value.trim()||null,
-    email:document.getElementById('f_email').value.trim()||null,
-    telephone:document.getElementById('f_tel').value.trim()||null,
-    adresse:document.getElementById('f_adr').value.trim()||null,
-    code_postal:document.getElementById('f_cp').value.trim()||null,
-    ville:document.getElementById('f_ville').value.trim()||null,
-    poste_intitule:document.getElementById('f_poste').value.trim()||null,
-    date_entree:document.getElementById('f_entree').value||null,
-    date_sortie:document.getElementById('f_sortie').value||null
-  };
-  let sid=id;
-  if(id){const{error}=await sb.from('salaries').update(payload).eq('id',id);if(error){toast('Erreur: '+error.message);return;}}
-  else{const{data,error}=await sb.from('salaries').insert(payload).select().single();if(error){toast('Erreur: '+error.message);return;}sid=data.id;}
-  // rôles
-  const want=[];if(document.getElementById('f_r_cuisine').checked)want.push('cuisine');if(document.getElementById('f_r_caisse').checked)want.push('caisse');
-  await sb.from('salarie_roles').delete().eq('salarie_id',sid).is('restaurant_id',null);
-  if(want.length)await sb.from('salarie_roles').insert(want.map(r=>({salarie_id:sid,role:r})));
-  toast('Enregistré ✓');closeModal();await loadAll();
-}
-async function delSalarie(id){
-  if(!confirm('Supprimer définitivement ce salarié et ses données associées ?'))return;
-  const{error}=await sb.from('salaries').delete().eq('id',id);
-  if(error){toast('Erreur: '+error.message);return;}
-  toast('Supprimé');closeModal();await loadAll();
-}
-async function addDispo(id){
-  const type=document.getElementById('nd_type').value;
-  const row={salarie_id:id,type,statut:document.getElementById('nd_statut').value,
-    motif:document.getElementById('nd_motif').value.trim()||null,
-    heure_debut:document.getElementById('nd_hd').value||null,heure_fin:document.getElementById('nd_hf').value||null};
-  if(type==='ponctuelle')row.date_specifique=document.getElementById('nd_date').value||null;
-  else row.jour_semaine=parseInt(document.getElementById('nd_jour').value);
-  const{error}=await sb.from('salarie_dispos').insert(row);
-  if(error){toast('Erreur: '+error.message);return;}
-  const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList(id);render();toast('Dispo ajoutée');
-}
-async function delDispo(did,id){await sb.from('salarie_dispos').delete().eq('id',did);const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList(id);render();}
-async function addContrainte(id){
-  const cle=document.getElementById('nc_cle').value;
-  const{error}=await sb.from('salarie_contraintes').insert({salarie_id:id,cle,valeur:document.getElementById('nc_val').value.trim()||null,active:true});
-  if(error){toast('Erreur: '+error.message);return;}
-  const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList(id);render();toast('Contrainte ajoutée');
-}
-async function delContrainte(cid,id){await sb.from('salarie_contraintes').delete().eq('id',cid);const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList(id);render();}
 </script>
 </body>
 </html>
