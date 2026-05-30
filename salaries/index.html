@@ -147,6 +147,7 @@ button{cursor:pointer;border:none;background:none}
   <div class="header">
     <div class="brand">Raya <small>· Gestion Salariés · <span id="ver" style="font-size:10px;color:var(--muted)"></span></small></div>
     <div class="h-actions">
+      <button class="btn ghost" onclick="exportPointagesCSV()">Export pointages</button>
       <button class="btn" onclick="openFiche(null)">+ Nouveau salarié</button>
       <a href="../" class="btn ghost">Portail</a>
     </div>
@@ -177,7 +178,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.7 · code badgeuse';
+const VERSION='v0.8 · badgeuse intégrée';
 const MOIS_FR={janvier:1,février:2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,décembre:12,decembre:12};
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -196,7 +197,7 @@ const DOC_OPTIONAL=[
   {key:'autre',label:'Autre'}
 ];
 const ALL_DOC_TYPES=[...DOC_REQUIRED,...DOC_OPTIONAL];
-let S={restos:[],salaries:[],roles:[],dispos:[],contraintes:[],paires:[],docs:[]};
+let S={restos:[],salaries:[],roles:[],dispos:[],contraintes:[],paires:[],docs:[],pts:[]};
 let currentFiche=null, currentTab='infos';
 
 // ===== AUTH =====
@@ -219,16 +220,17 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 
 // ===== LOAD =====
 async function loadAll(){
-  const [r,s,ro,d,c,p,dx]=await Promise.all([
+  const [r,s,ro,d,c,p,dx,pt]=await Promise.all([
     sb.from('restaurants').select('*').eq('actif',true).order('nom'),
     sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
     sb.from('salarie_dispos').select('*'),
     sb.from('salarie_contraintes').select('*'),
     sb.from('salarie_paires').select('*'),
-    sb.from('salarie_documents').select('*').order('created_at',{ascending:false})
+    sb.from('salarie_documents').select('*').order('created_at',{ascending:false}),
+    sb.from('pointages').select('*').gte('ts',new Date(Date.now()-90*86400000).toISOString()).order('ts',{ascending:false})
   ]);
-  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];
+  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.data||[];
   const fS=document.getElementById('fSnack');
   fS.innerHTML='<option value="">Tous les snacks</option>'+S.restos.map(x=>`<option value="${x.id}">${x.nom}</option>`).join('')+'<option value="MULTI">MULTI</option>';
   render();
@@ -238,6 +240,48 @@ const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.ro
 const disposOf=sid=>S.dispos.filter(x=>x.salarie_id===sid);
 const contrOf=sid=>S.contraintes.filter(x=>x.salarie_id===sid);
 const docsOf=sid=>S.docs.filter(x=>x.salarie_id===sid);
+const ptsOf=sid=>S.pts.filter(x=>x.salarie_id===sid);
+function generatePin(){
+  const used=new Set(S.salaries.map(s=>s.pin_badgeuse).filter(Boolean));
+  for(let i=0;i<2000;i++){const p=String(Math.floor(Math.random()*10000)).padStart(4,'0');if(!used.has(p))return p;}
+  return null;
+}
+async function setPinAndSave(id){
+  const pin=generatePin();if(!pin){toast('Aucun code libre');return;}
+  const{error}=await sb.from('salaries').update({pin_badgeuse:pin}).eq('id',id);
+  if(error){toast('Erreur: '+error.message);return;}
+  toast('Code généré : '+pin);await loadAll();currentFiche=S.salaries.find(x=>x.id===id);renderFiche();
+}
+async function exportPointagesCSV(){
+  const today=new Date().toISOString().slice(0,10);
+  const from=prompt('Date début (AAAA-MM-JJ)',new Date(Date.now()-30*86400000).toISOString().slice(0,10));
+  if(!from)return;
+  const to=prompt('Date fin (AAAA-MM-JJ)',today);
+  if(!to)return;
+  const{data,error}=await sb.from('pointages').select('*').gte('ts',from+'T00:00:00').lte('ts',to+'T23:59:59').order('ts');
+  if(error){toast('Erreur: '+error.message);return;}
+  const TYPL={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pause_fin:'Pause fin'};
+  const head='Date,Heure,Salarie,Snack,Type\n';
+  const rows=(data||[]).map(p=>{
+    const s=S.salaries.find(x=>x.id===p.salarie_id)||{};
+    const r=S.restos.find(x=>x.id===p.restaurant_id)||{};
+    const d=new Date(p.ts);
+    const nm=fullName(s)||s.nom||'?';
+    return `${d.toLocaleDateString('fr-FR')},${d.toLocaleTimeString('fr-FR')},"${nm}","${r.nom||''}",${TYPL[p.type]||p.type}`;
+  }).join('\n');
+  const blob=new Blob(['﻿'+head+rows],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`pointages_${from}_${to}.csv`;a.click();
+  toast(`Exporté : ${(data||[]).length} pointages`);
+}
+function hoursOfDay(arr){
+  const ev=arr.slice().sort((a,b)=>a.ts.localeCompare(b.ts)).map(p=>({t:p.type,d:new Date(p.ts)}));
+  const first=ev.find(x=>x.t==='arrivee');
+  const last=[...ev].reverse().find(x=>x.t==='sortie');
+  if(!first||!last)return null;
+  let pause=0;
+  for(let i=0;i<ev.length-1;i++)if(ev[i].t==='pause_debut'&&ev[i+1].t==='pause_fin')pause+=(ev[i+1].d-ev[i].d);
+  return Math.max(0,(last.d-first.d-pause)/3600000);
+}
 const initials=s=>((s.prenom||'').charAt(0)+(s.nom||'').charAt(0)).toUpperCase()||(s.nom||'?').charAt(0).toUpperCase();
 const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ');
 
@@ -325,6 +369,7 @@ function renderFiche(){
   <div class="tabs">
     <button class="tab ${currentTab==='infos'?'active':''}" onclick="setTab('infos')">Informations</button>
     <button class="tab ${currentTab==='planning'?'active':''}" onclick="setTab('planning')">Planning</button>
+    <button class="tab ${currentTab==='badgeuse'?'active':''}" onclick="setTab('badgeuse')">Badgeuse</button>
     <button class="tab ${currentTab==='docs'?'active':''}" onclick="setTab('docs')">Documents</button>
   </div>`;
 
@@ -344,7 +389,7 @@ function renderFiche(){
           <div class="fld"><label>Nationalité</label><input id="f_nat" value="${s.nationalite||''}"></div>
           <div class="fld"><label>N° Sécurité sociale</label><input id="f_secu" value="${s.num_secu||''}"></div>
           <div class="fld"><label>Matricule interne</label><input id="f_matricule" value="${s.matricule||''}"></div>
-          <div class="fld"><label>Code badgeuse (4 chiffres)</label><input id="f_pin" maxlength="4" pattern="[0-9]{4}" value="${s.pin_badgeuse||''}" placeholder="ex: 1234"></div>
+          <div class="fld"><label>Code badgeuse (auto)</label><div style="display:flex;gap:6px"><input id="f_pin" maxlength="4" pattern="[0-9]{4}" value="${s.pin_badgeuse||''}" placeholder="auto" style="flex:1">${s.id?`<button class="btn ghost sm" onclick="setPinAndSave('${s.id}')" type="button" title="Générer un nouveau code">🎲</button>`:''}</div></div>
         </div>
         <div class="chkrow"><label class="chk"><input type="checkbox" id="f_mineur" ${s.est_mineur?'checked':''}> Mineur</label></div>
       </div>
@@ -425,6 +470,42 @@ function renderFiche(){
         </div>
       </div>`}
     </div>`;
+  }
+  else if(currentTab==='badgeuse'){
+    if(!s.id){body=`<div class="tab-body"><div class="section" style="text-align:center;color:var(--muted)">Enregistre d'abord la fiche.</div></div>`;}
+    else{
+      const pts=ptsOf(s.id);
+      const byDate={};pts.forEach(p=>{const d=p.ts.slice(0,10);(byDate[d]=byDate[d]||[]).push(p);});
+      const dates=Object.keys(byDate).sort().reverse().slice(0,30);
+      const TLBL={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pause_fin:'Reprise'};
+      const totH=dates.reduce((a,d)=>a+(hoursOfDay(byDate[d])||0),0);
+      body=`<div class="tab-body">
+        <div class="section">
+          <h3>Code badgeuse</h3>
+          <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+            <div style="font-size:28px;font-weight:700;font-family:monospace;letter-spacing:8px;background:var(--surface);padding:14px 22px;border-radius:10px;border:1px solid var(--line-2);color:var(--gold)">${s.pin_badgeuse||'— — — —'}</div>
+            <button class="btn ghost sm" onclick="setPinAndSave('${s.id}')">${s.pin_badgeuse?'Régénérer':'Générer un code'}</button>
+            <div style="color:var(--muted);font-size:12px;flex:1;min-width:200px">Communique ce code au salarié. Il l'utilise sur la badgeuse pour pointer.</div>
+          </div>
+        </div>
+        <div class="section">
+          <h3>Historique des pointages · 30 derniers jours · ${totH.toFixed(1)}h total</h3>
+          ${dates.length?dates.map(d=>{
+            const h=hoursOfDay(byDate[d]);
+            return `<div style="margin-bottom:16px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)">
+                <b style="text-transform:capitalize">${new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'short'})}</b>
+                ${h!==null?`<span style="color:var(--ok);font-weight:600;font-size:13px">${h.toFixed(2)}h travaillées</span>`:'<span style="color:var(--muted);font-size:12px">incomplet</span>'}
+              </div>
+              ${byDate[d].slice().sort((a,b)=>a.ts.localeCompare(b.ts)).map(p=>`<div style="display:flex;gap:14px;padding:5px 0;font-size:13px;align-items:center">
+                <span style="color:var(--muted);font-family:monospace;width:54px">${new Date(p.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>
+                <span class="chip ${p.type==='arrivee'?'ok':(p.type==='sortie'?'warn':'multi')}">${TLBL[p.type]||p.type}</span>
+              </div>`).join('')}
+            </div>`;
+          }).join(''):'<div style="color:var(--muted)">Aucun pointage enregistré.</div>'}
+        </div>
+      </div>`;
+    }
   }
   else if(currentTab==='docs'){
     if(!s.id){
@@ -536,6 +617,7 @@ async function saveSalarie(){
     if(Object.keys(payload).length===0){/* rien à update côté salaries */}
     else{const{error}=await sb.from('salaries').update(payload).eq('id',sid);if(error){toast('Erreur: '+error.message);return;}}
   } else {
+    if(!payload.pin_badgeuse) payload.pin_badgeuse=generatePin();
     const{data,error}=await sb.from('salaries').insert(payload).select().single();
     if(error){toast('Erreur: '+error.message);return;}
     sid=data.id;currentFiche.id=sid;

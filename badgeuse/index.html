@@ -234,7 +234,7 @@ function renderGrid(){
 function openPin(sid){
   curSal=SALARIES.find(x=>x.id===sid);
   if(!curSal)return;
-  if(!curSal.pin_badgeuse){alert(`${fullName(curSal)} n'a pas de code badgeuse. Admin → Gestion Salariés.`);return;}
+  if(!curSal.pin_badgeuse){alert(`${fullName(curSal)} n'a pas de code badgeuse. Génère son code dans Gestion Salariés (onglet Badgeuse).`);return;}
   pinBuf='';renderDots();
   document.getElementById('pin-who').textContent=fullName(curSal);
   document.getElementById('pin-err').textContent='';
