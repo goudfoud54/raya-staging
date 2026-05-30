@@ -7,7 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--midi:rgba(200,160,53,.06);--soir:rgba(91,156,255,.05)}
+:root{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--midi:rgba(200,160,53,.06);--soir:rgba(91,156,255,.05);--zoom:1}
 html,body{height:100%}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased}
 a{color:var(--gold);text-decoration:none}
@@ -53,8 +53,8 @@ button{cursor:pointer;border:none;background:none}
 
 /* GRID */
 .grid-wrap{padding:16px 24px;overflow-x:auto}
-table.plan{border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:1500px;font-size:11.5px}
-table.plan th,table.plan td{padding:5px 7px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;vertical-align:middle;white-space:nowrap}
+table.plan{border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:calc(1500px * var(--zoom));font-size:calc(11.5px * var(--zoom))}
+table.plan th,table.plan td{padding:calc(5px * var(--zoom)) calc(7px * var(--zoom));border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;vertical-align:middle;white-space:nowrap}
 table.plan th{background:rgba(255,255,255,.02);color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;z-index:5}
 table.plan th.dayhead{font-size:12px;color:var(--text);background:rgba(255,255,255,.04)}
 table.plan th.midi{background:var(--midi)}
@@ -63,7 +63,8 @@ table.plan td.salname{text-align:left;font-weight:600;background:var(--card);pos
 table.plan th.salhead{position:sticky;left:0;z-index:6;background:rgba(255,255,255,.02);min-width:130px;border-right:2px solid var(--line-2)}
 table.plan td.midi{background:var(--midi)}
 table.plan td.soir{background:var(--soir)}
-table.plan td input{width:54px;padding:2px 4px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:11px;font-family:monospace;text-align:center;outline:none}
+table.plan td input{width:calc(54px * var(--zoom));padding:2px 4px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:calc(11px * var(--zoom));font-family:monospace;text-align:center;outline:none}
+table.plan td input::placeholder{color:rgba(255,255,255,.12)}
 table.plan td input:hover{border-color:var(--line-2)}
 table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 .role-c{color:#e8a06a;font-size:9px;margin-left:5px;font-weight:700}
@@ -101,6 +102,11 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button onclick="navWeek(1)">›</button>
         <button onclick="goToday()" title="Aujourd'hui">●</button>
       </div>
+      <div class="weeknav" title="Zoom">
+        <button onclick="setZoom(zoom-0.1)">−</button>
+        <span class="wk" id="zLabel" style="min-width:50px;font-size:11px">100 %</span>
+        <button onclick="setZoom(zoom+0.1)">+</button>
+      </div>
       <span class="save-state" id="ss"></span>
       <a href="../" class="btn ghost">Portail</a>
     </div>
@@ -118,15 +124,18 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.1 · 29 mai';
+const VERSION='v0.2 · zoom + cellules vides + R';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
 let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[]};
 let SNACK=null, MONDAY=null;
+let zoom=parseFloat(localStorage.getItem('pl_zoom')||'1');
+function setZoom(z){zoom=Math.max(0.7,Math.min(1.6,Math.round(z*10)/10));localStorage.setItem('pl_zoom',zoom);document.documentElement.style.setProperty('--zoom',zoom);const l=document.getElementById('zLabel');if(l)l.textContent=Math.round(zoom*100)+' %';}
+function normTime(v){if(!v)return '';v=String(v).trim().replace(/[^0-9:hH]/g,'').replace(/[hH]/,':');let m=v.match(/^(\d{1,2}):(\d{2})$/);if(m){const h=+m[1],mn=+m[2];if(h<24&&mn<60)return String(h).padStart(2,'0')+':'+String(mn).padStart(2,'0');}m=v.match(/^(\d{1,2})$/);if(m){const h=+m[1];if(h<24)return String(h).padStart(2,'0')+':00';}return null;}
 
 function unlock(){if(document.getElementById('pw').value===ADMIN_PW){sessionStorage.setItem('pl_ok','1');showApp();}else document.getElementById('pwerr').textContent='Incorrect';}
-function showApp(){document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('ver').textContent=VERSION;init();}
+function showApp(){document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('ver').textContent=VERSION;setZoom(zoom);init();}
 if(sessionStorage.getItem('pl_ok')==='1')showApp();
 
 function getMonday(d){d=new Date(d);const day=d.getDay();const diff=day===0?-6:1-day;d.setDate(d.getDate()+diff);d.setHours(0,0,0,0);return d;}
@@ -189,7 +198,7 @@ function renderEffectifs(){
     const svcHTML=['midi','soir'].map(svc=>{
       const t=targetFor(i,svc);
       const cls=(n,tgt)=>n===tgt?'cnt-ok':(n<tgt?'cnt-under':'cnt-over');
-      return `<div class="eff-svc"><span class="lbl">${svc==='midi'?'Midi':'Soir'}</span><span class="cnt"><span class="${cls(counts[svc].cuisine,t.cuisine)}" title="Cuisine">${counts[svc].cuisine}/${t.cuisine}C</span><span class="${cls(counts[svc].caisse,t.caisse)}" title="Caisse">${counts[svc].caisse}/${t.caisse}K</span></span></div>`;
+      return `<div class="eff-svc"><span class="lbl">${svc==='midi'?'Midi':'Soir'}</span><span class="cnt"><span class="${cls(counts[svc].cuisine,t.cuisine)}" title="Cuisine">${counts[svc].cuisine}/${t.cuisine}C</span><span class="${cls(counts[svc].caisse,t.caisse)}" title="Réception">${counts[svc].caisse}/${t.caisse}R</span></span></div>`;
     }).join('');
     return `<div class="eff-day"><h4>${j} <span style="font-weight:400;color:var(--muted)">${dateOfDay(i).getDate()}</span></h4>${svcHTML}</div>`;
   }).join('');
@@ -212,15 +221,16 @@ function renderTable(){
   let tbody='<tbody>';
   list.forEach(s=>{
     const role=roleMain(s.id)||'';
-    const roleTag=role==='cuisine'?'<span class="role-c">C</span>':(role==='caisse'?'<span class="role-k">K</span>':'');
+    const roleTag=role==='cuisine'?'<span class="role-c">C</span>':(role==='caisse'?'<span class="role-k">R</span>':'');
     tbody+=`<tr><td class="salname"><span class="dot" style="background:${s.couleur||'#444'}"></span>${fullName(s)}${roleTag}</td>`;
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
       ['midi','soir'].forEach(svc=>{
         const cr=getCreneau(s.id,date,svc)||{};
         const cls=svc;
-        tbody+=`<td class="${cls}"><input type="time" value="${(cr.heure_debut||'').slice(0,5)}" onchange="saveCell('${s.id}','${date}','${svc}','deb',this.value)"></td>`;
-        tbody+=`<td class="${cls}"><input type="time" value="${(cr.heure_fin||'').slice(0,5)}" onchange="saveCell('${s.id}','${date}','${svc}','fin',this.value)"></td>`;
+        const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
+        tbody+=`<td class="${cls}"><input type="text" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
+        tbody+=`<td class="${cls}"><input type="text" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
       });
     });
     tbody+='</tr>';
@@ -232,10 +242,14 @@ function renderTable(){
 
 function setSS(state,msg){const el=document.getElementById('ss');el.className='save-state '+state;el.textContent=msg;}
 
-async function saveCell(sid,date,svc,which,val){
+async function saveCell(sid,date,svc,which,el){
+  const raw=el.value;
+  const v=normTime(raw);
+  if(v===null){setSS('err','Format invalide (HH:MM)');el.value='';return;}
+  el.value=v;
   setSS('busy','Enregistrement…');
   const cr=getCreneau(sid,date,svc)||{salarie_id:sid,restaurant_id:SNACK.id,date,service:svc,role:roleMain(sid)||'cuisine'};
-  if(which==='deb') cr.heure_debut=val||null; else cr.heure_fin=val||null;
+  if(which==='deb') cr.heure_debut=v||null; else cr.heure_fin=v||null;
   // Si vide des 2 côtés → suppression
   if(!cr.heure_debut && !cr.heure_fin){
     if(cr.id){
@@ -297,6 +311,50 @@ function renderChecks(){
     if(days.size>=7){offOk=false;noOff.push(s.nom);}
   });
   checks.push({lbl:`≥ 1 jour off${noOff.length?' ('+noOff.join(', ')+')':''}`,ok:offOk});
+
+  // helpers durées
+  const toMin=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
+  const dur=(deb,fin)=>{let a=toMin(deb),b=toMin(fin);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
+
+  // 5. Plafond heures hebdo par salarié
+  let plafondOk=true;const overload=[];
+  list.forEach(s=>{
+    const plaf=(s.plafond_heures||48)*60;
+    const total=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+dur(c.heure_debut,c.heure_fin),0);
+    if(total>plaf){plafondOk=false;overload.push(`${s.nom} ${Math.round(total/60*10)/10}h`);}
+  });
+  checks.push({lbl:`Plafond heures hebdo${overload.length?' ('+overload.join(', ')+')':''}`,ok:plafondOk});
+
+  // 6. Amplitude max 12h consécutives par jour
+  let ampliOk=true;const ampOver=[];
+  const bySD={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD[k]=bySD[k]||[];bySD[k].push(c);});
+  Object.entries(bySD).forEach(([k,arr])=>{
+    const deb=arr.map(c=>toMin(c.heure_debut)).filter(x=>x!=null);
+    const fin=arr.map(c=>{let f=toMin(c.heure_fin),d=toMin(c.heure_debut);if(f!=null&&d!=null&&f<=d)f+=24*60;return f;}).filter(x=>x!=null);
+    if(!deb.length||!fin.length)return;
+    const ampl=Math.max(...fin)-Math.min(...deb);
+    if(ampl>12*60){ampliOk=false;const sid=k.split('|')[0];const s=S.salaries.find(x=>x.id===sid);ampOver.push((s?.nom||'?')+' '+Math.round(ampl/60*10)/10+'h');}
+  });
+  checks.push({lbl:`Amplitude ≤ 12h${ampOver.length?' ('+ampOver.join(', ')+')':''}`,ok:ampliOk});
+
+  // 7. Fin à 2h → pas de service matin le lendemain
+  let fin2hOk=true;const fin2hKO=[];
+  Object.entries(bySD).forEach(([k,arr])=>{
+    const soir=arr.find(c=>c.service==='soir' && c.heure_fin);
+    if(!soir)return;
+    const fm=toMin(soir.heure_fin); const deb=toMin(soir.heure_debut);
+    const finReel = (fm!=null&&deb!=null&&fm<=deb) ? fm : fm; // 2h00 = 120, déjà ok
+    if(fm!=null && fm>=0 && fm<=180){
+      // fin avant 3h du matin → lendemain matin interdit
+      const[sid,date]=k.split('|');
+      const next=new Date(date);next.setDate(next.getDate()+1);const nd=fmtDate(next);
+      const nextMidi=S.creneaux.find(c=>c.salarie_id===sid && c.date===nd && c.service==='midi' && c.heure_debut);
+      if(nextMidi && toMin(nextMidi.heure_debut)<15*60){
+        fin2hOk=false;const s=S.salaries.find(x=>x.id===sid);fin2hKO.push(s?.nom||'?');
+      }
+    }
+  });
+  checks.push({lbl:`Fin 2h → pas matin J+1${fin2hKO.length?' ('+[...new Set(fin2hKO)].join(', ')+')':''}`,ok:fin2hOk});
 
   document.getElementById('checks').querySelector('#checks, .chk-list')||0;
   document.getElementById('checks').innerHTML='<h3>Vérifications</h3><div class="chk-list">'+
