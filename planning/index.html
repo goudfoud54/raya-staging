@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raya — Planning</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--midi:rgba(200,160,53,.06);--soir:rgba(91,156,255,.05)}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased}
+a{color:var(--gold);text-decoration:none}
+.hidden{display:none!important}
+input,select,button{font-family:inherit;color:var(--text)}
+button{cursor:pointer;border:none;background:none}
+.btn{padding:8px 14px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:12px;border:1px solid transparent}
+.btn.ghost{background:transparent;color:var(--text);border-color:var(--line-2)}
+.btn.ghost:hover{background:rgba(255,255,255,.04)}
+.btn.sm{padding:5px 9px;font-size:11px}
+
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;z-index:100}
+.lock h1{color:var(--gold);font-size:22px}
+.lock input{padding:13px 18px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:15px;text-align:center;width:260px;outline:none}
+.err{color:var(--bad);font-size:12px;min-height:16px}
+
+/* HEADER */
+.header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0;z-index:20;flex-wrap:wrap;gap:12px}
+.brand{color:var(--gold);font-weight:700;font-size:16px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+.h-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.h-actions select{padding:7px 11px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);font-size:13px;outline:none}
+.weeknav{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:4px}
+.weeknav button{padding:5px 10px;color:var(--text);font-size:14px}
+.weeknav .wk{padding:4px 10px;font-weight:600;font-size:12px;color:var(--gold);min-width:180px;text-align:center}
+.save-state{font-size:11px;color:var(--muted)}
+.save-state.ok{color:var(--ok)}
+.save-state.busy{color:var(--warn)}
+.save-state.err{color:var(--bad)}
+
+/* EFFECTIFS BAR */
+.eff-wrap{padding:14px 24px;border-bottom:1px solid var(--line);background:var(--card);overflow-x:auto}
+.eff-grid{display:grid;grid-template-columns:repeat(7,minmax(150px,1fr));gap:8px;min-width:1100px}
+.eff-day{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.eff-day h4{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;font-weight:600}
+.eff-svc{display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:11.5px;gap:6px}
+.eff-svc .lbl{color:var(--muted);min-width:32px}
+.eff-svc .cnt{display:flex;gap:4px;font-family:monospace}
+.eff-svc .cnt span{padding:1px 5px;border-radius:4px;font-weight:600;font-size:11px}
+.cnt-ok{background:rgba(63,184,127,.18);color:var(--ok)}
+.cnt-under{background:rgba(224,169,58,.18);color:var(--warn)}
+.cnt-over{background:rgba(196,90,90,.18);color:var(--bad)}
+
+/* GRID */
+.grid-wrap{padding:16px 24px;overflow-x:auto}
+table.plan{border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:1500px;font-size:11.5px}
+table.plan th,table.plan td{padding:5px 7px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;vertical-align:middle;white-space:nowrap}
+table.plan th{background:rgba(255,255,255,.02);color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;z-index:5}
+table.plan th.dayhead{font-size:12px;color:var(--text);background:rgba(255,255,255,.04)}
+table.plan th.midi{background:var(--midi)}
+table.plan th.soir{background:var(--soir)}
+table.plan td.salname{text-align:left;font-weight:600;background:var(--card);position:sticky;left:0;z-index:4;min-width:130px;border-right:2px solid var(--line-2)}
+table.plan th.salhead{position:sticky;left:0;z-index:6;background:rgba(255,255,255,.02);min-width:130px;border-right:2px solid var(--line-2)}
+table.plan td.midi{background:var(--midi)}
+table.plan td.soir{background:var(--soir)}
+table.plan td input{width:54px;padding:2px 4px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:11px;font-family:monospace;text-align:center;outline:none}
+table.plan td input:hover{border-color:var(--line-2)}
+table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
+.role-c{color:#e8a06a;font-size:9px;margin-left:5px;font-weight:700}
+.role-k{color:#e0c46a;font-size:9px;margin-left:5px;font-weight:700}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+
+/* CHECKS */
+.checks{padding:10px 24px;border-top:1px solid var(--line);background:var(--card)}
+.checks h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;font-weight:600}
+.chk-list{display:flex;gap:10px;flex-wrap:wrap}
+.chk{padding:5px 11px;border-radius:6px;font-size:11.5px;display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line)}
+.chk.ok{border-color:rgba(63,184,127,.3);color:var(--ok)}
+.chk.ko{border-color:rgba(196,90,90,.4);color:var(--bad)}
+</style>
+</head>
+<body>
+<div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
+
+<div id="lock" class="lock">
+  <h1>Planning</h1>
+  <input type="password" id="pw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')unlock()">
+  <button class="btn" onclick="unlock()">Entrer</button>
+  <div class="err" id="pwerr"></div>
+  <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
+</div>
+
+<div id="app" class="hidden">
+  <div class="header">
+    <div class="brand">Raya <small>· Planning · <span id="ver" style="font-size:10px;color:var(--muted)"></span></small></div>
+    <div class="h-actions">
+      <select id="snackSel" onchange="onSnackChange()"></select>
+      <div class="weeknav">
+        <button onclick="navWeek(-1)">‹</button>
+        <span class="wk" id="wkLabel">—</span>
+        <button onclick="navWeek(1)">›</button>
+        <button onclick="goToday()" title="Aujourd'hui">●</button>
+      </div>
+      <span class="save-state" id="ss"></span>
+      <a href="../" class="btn ghost">Portail</a>
+    </div>
+  </div>
+
+  <div class="eff-wrap"><div class="eff-grid" id="effGrid"></div></div>
+
+  <div class="grid-wrap"><table class="plan" id="planTbl"></table></div>
+
+  <div class="checks"><h3>Vérifications</h3><div class="chk-list" id="checks"></div></div>
+</div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+const ADMIN_PW='Rayan1301';
+const VERSION='v0.1 · 29 mai';
+
+const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
+let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[]};
+let SNACK=null, MONDAY=null;
+
+function unlock(){if(document.getElementById('pw').value===ADMIN_PW){sessionStorage.setItem('pl_ok','1');showApp();}else document.getElementById('pwerr').textContent='Incorrect';}
+function showApp(){document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('ver').textContent=VERSION;init();}
+if(sessionStorage.getItem('pl_ok')==='1')showApp();
+
+function getMonday(d){d=new Date(d);const day=d.getDay();const diff=day===0?-6:1-day;d.setDate(d.getDate()+diff);d.setHours(0,0,0,0);return d;}
+function fmtDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function dateOfDay(i){const d=new Date(MONDAY);d.setDate(d.getDate()+i);return d;}
+function wkRangeLabel(){const e=new Date(MONDAY);e.setDate(e.getDate()+6);return `Sem. ${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})} → ${e.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})}`;}
+
+async function init(){
+  MONDAY=getMonday(new Date());
+  const{data:restos}=await sb.from('restaurants').select('*').eq('actif',true).order('nom');
+  S.restos=restos||[];
+  const gc=S.restos.find(r=>r.nom.toLowerCase().includes('grand cœur')||r.nom.toLowerCase().includes('grand coeur'));
+  SNACK=gc||S.restos[0]||null;
+  document.getElementById('snackSel').innerHTML=S.restos.map(r=>`<option value="${r.id}" ${r.id===SNACK?.id?'selected':''}>${r.nom}</option>`).join('');
+  await loadWeek();
+}
+
+async function loadWeek(){
+  const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
+  const[s,ro,d,cr,crAll]=await Promise.all([
+    sb.from('salaries').select('*').eq('actif',true).order('nom'),
+    sb.from('salarie_roles').select('*'),
+    sb.from('salarie_dispos').select('*'),
+    sb.from('planning_creneaux').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to),
+    sb.from('planning_creneaux').select('*').gte('date',from).lt('date',to) // toutes snacks pour détection doublons
+  ]);
+  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];
+  render();
+}
+
+const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.role))];
+const roleMain=sid=>{const r=rolesOf(sid);return r[0]||null;};
+const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
+
+function targetFor(dayIndex,service){
+  const isGC=SNACK.nom.toLowerCase().includes('grand');
+  if(isGC){
+    if(service==='midi') return dayIndex===6?{cuisine:0,caisse:0}:{cuisine:4,caisse:2};
+    // soir
+    if(dayIndex<=3) return {cuisine:4,caisse:3}; // Lu-Je
+    if(dayIndex<=5) return {cuisine:5,caisse:3}; // Ve-Sa
+    return {cuisine:3,caisse:1}; // Di
+  }
+  // Lobau / Carnot
+  if(service==='midi') return dayIndex===6?{cuisine:0,caisse:0}:{cuisine:3,caisse:1};
+  if(dayIndex<=3) return {cuisine:3,caisse:1};
+  if(dayIndex<=5) return {cuisine:4,caisse:2};
+  return {cuisine:3,caisse:1};
+}
+
+function getCreneau(sid,date,svc){return S.creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);}
+
+function renderEffectifs(){
+  const html=JOURS.map((j,i)=>{
+    const date=fmtDate(dateOfDay(i));
+    const counts={midi:{cuisine:0,caisse:0},soir:{cuisine:0,caisse:0}};
+    S.creneaux.filter(c=>c.date===date && c.heure_debut).forEach(c=>{
+      if(counts[c.service] && counts[c.service][c.role]!=null) counts[c.service][c.role]++;
+    });
+    const svcHTML=['midi','soir'].map(svc=>{
+      const t=targetFor(i,svc);
+      const cls=(n,tgt)=>n===tgt?'cnt-ok':(n<tgt?'cnt-under':'cnt-over');
+      return `<div class="eff-svc"><span class="lbl">${svc==='midi'?'Midi':'Soir'}</span><span class="cnt"><span class="${cls(counts[svc].cuisine,t.cuisine)}" title="Cuisine">${counts[svc].cuisine}/${t.cuisine}C</span><span class="${cls(counts[svc].caisse,t.caisse)}" title="Caisse">${counts[svc].caisse}/${t.caisse}K</span></span></div>`;
+    }).join('');
+    return `<div class="eff-day"><h4>${j} <span style="font-weight:400;color:var(--muted)">${dateOfDay(i).getDate()}</span></h4>${svcHTML}</div>`;
+  }).join('');
+  document.getElementById('effGrid').innerHTML=html;
+}
+
+function renderTable(){
+  // salariés à afficher : du snack OU multi OU déjà créneau cette semaine
+  const sidsWithCreneau=new Set(S.creneaux.map(c=>c.salarie_id));
+  const list=S.salaries.filter(s=>s.snack_origine_id===SNACK.id || s.est_multi || sidsWithCreneau.has(s.id))
+    .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return(ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
+
+  // header
+  let thead='<thead><tr><th class="salhead">Salarié</th>';
+  JOURS_SH.forEach((j,i)=>{thead+=`<th colspan="4" class="dayhead">${j} <span style="color:var(--muted);font-weight:400">${dateOfDay(i).getDate()}</span></th>`;});
+  thead+='</tr><tr><th class="salhead"></th>';
+  JOURS_SH.forEach(()=>{thead+='<th class="midi">M dbt</th><th class="midi">M fin</th><th class="soir">S dbt</th><th class="soir">S fin</th>';});
+  thead+='</tr></thead>';
+
+  let tbody='<tbody>';
+  list.forEach(s=>{
+    const role=roleMain(s.id)||'';
+    const roleTag=role==='cuisine'?'<span class="role-c">C</span>':(role==='caisse'?'<span class="role-k">K</span>':'');
+    tbody+=`<tr><td class="salname"><span class="dot" style="background:${s.couleur||'#444'}"></span>${fullName(s)}${roleTag}</td>`;
+    JOURS_SH.forEach((_,i)=>{
+      const date=fmtDate(dateOfDay(i));
+      ['midi','soir'].forEach(svc=>{
+        const cr=getCreneau(s.id,date,svc)||{};
+        const cls=svc;
+        tbody+=`<td class="${cls}"><input type="time" value="${(cr.heure_debut||'').slice(0,5)}" onchange="saveCell('${s.id}','${date}','${svc}','deb',this.value)"></td>`;
+        tbody+=`<td class="${cls}"><input type="time" value="${(cr.heure_fin||'').slice(0,5)}" onchange="saveCell('${s.id}','${date}','${svc}','fin',this.value)"></td>`;
+      });
+    });
+    tbody+='</tr>';
+  });
+  if(!list.length) tbody+='<tr><td colspan="29" style="text-align:center;padding:30px;color:var(--muted)">Aucun salarié pour ce snack</td></tr>';
+  tbody+='</tbody>';
+  document.getElementById('planTbl').innerHTML=thead+tbody;
+}
+
+function setSS(state,msg){const el=document.getElementById('ss');el.className='save-state '+state;el.textContent=msg;}
+
+async function saveCell(sid,date,svc,which,val){
+  setSS('busy','Enregistrement…');
+  const cr=getCreneau(sid,date,svc)||{salarie_id:sid,restaurant_id:SNACK.id,date,service:svc,role:roleMain(sid)||'cuisine'};
+  if(which==='deb') cr.heure_debut=val||null; else cr.heure_fin=val||null;
+  // Si vide des 2 côtés → suppression
+  if(!cr.heure_debut && !cr.heure_fin){
+    if(cr.id){
+      const{error}=await sb.from('planning_creneaux').delete().eq('id',cr.id);
+      if(error){setSS('err','Erreur: '+error.message);return;}
+    }
+    S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));
+    setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();return;
+  }
+  // upsert
+  const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin};
+  const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+  if(error){setSS('err','Erreur: '+error.message);return;}
+  S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));
+  S.creneaux.push(data);
+  setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();
+}
+
+function renderChecks(){
+  const checks=[];
+  // 1. Effectifs OK
+  let effOk=true;
+  for(let i=0;i<7;i++)for(const svc of ['midi','soir']){
+    const t=targetFor(i,svc);const date=fmtDate(dateOfDay(i));
+    const cuisineN=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='cuisine'&&c.heure_debut).length;
+    const caisseN=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='caisse'&&c.heure_debut).length;
+    if(cuisineN!==t.cuisine||caisseN!==t.caisse) effOk=false;
+  }
+  checks.push({lbl:'Effectifs cibles',ok:effOk});
+
+  // 2. Pas de doublon inter-snack
+  const conflicts=new Set();
+  for(const c of S.allCreneauxWeek){
+    if(!c.heure_debut)continue;
+    const others=S.allCreneauxWeek.filter(x=>x.salarie_id===c.salarie_id && x.date===c.date && x.service===c.service && x.restaurant_id!==c.restaurant_id && x.heure_debut);
+    if(others.length) conflicts.add(c.salarie_id+c.date+c.service);
+  }
+  checks.push({lbl:`Pas de doublon inter-snack${conflicts.size?` (${conflicts.size})`:''}`,ok:conflicts.size===0});
+
+  // 3. Coupure ≥ 3h entre midi et soir (sur cette semaine, ce snack)
+  let coupOk=true;
+  const bySalDay={};
+  S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySalDay[k]=bySalDay[k]||{};bySalDay[k][c.service]=c;});
+  for(const [k,svcs] of Object.entries(bySalDay)){
+    if(svcs.midi?.heure_fin && svcs.soir?.heure_debut){
+      const fm=new Date('2000-01-01T'+svcs.midi.heure_fin);
+      const ds=new Date('2000-01-01T'+svcs.soir.heure_debut);
+      const diff=(ds-fm)/3600000;
+      if(diff>0 && diff<3) coupOk=false;
+    }
+  }
+  checks.push({lbl:'Coupure ≥ 3h',ok:coupOk});
+
+  // 4. Au moins 1 jour off par salarié (semaine en cours)
+  let offOk=true;const noOff=[];
+  const list=S.salaries.filter(s=>s.snack_origine_id===SNACK.id||s.est_multi);
+  list.forEach(s=>{
+    const days=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));
+    if(days.size>=7){offOk=false;noOff.push(s.nom);}
+  });
+  checks.push({lbl:`≥ 1 jour off${noOff.length?' ('+noOff.join(', ')+')':''}`,ok:offOk});
+
+  document.getElementById('checks').querySelector('#checks, .chk-list')||0;
+  document.getElementById('checks').innerHTML='<h3>Vérifications</h3><div class="chk-list">'+
+    checks.map(c=>`<div class="chk ${c.ok?'ok':'ko'}">${c.ok?'✓':'⚠'} ${c.lbl}</div>`).join('')+'</div>';
+}
+
+function render(){
+  document.getElementById('wkLabel').textContent=wkRangeLabel();
+  renderEffectifs();renderTable();renderChecks();
+  setSS('','');
+}
+
+function navWeek(n){MONDAY=new Date(MONDAY.getTime()+n*7*86400000);loadWeek();}
+function goToday(){MONDAY=getMonday(new Date());loadWeek();}
+function onSnackChange(){const id=document.getElementById('snackSel').value;SNACK=S.restos.find(r=>r.id===id);loadWeek();}
+</script>
+</body>
+</html>
