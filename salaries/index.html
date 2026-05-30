@@ -185,7 +185,11 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.9 · export amélioré';
+const VERSION='v0.10 · vue mensuelle';
+let selectedMonth=null;
+function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
+function ymOf(ts){return ts.slice(0,7);}
+function ymLabel(ym){const[y,m]=ym.split('-');return new Date(parseInt(y),parseInt(m)-1,1).toLocaleDateString('fr-FR',{month:'long',year:'numeric'}).replace(/^./,c=>c.toUpperCase());}
 const MOIS_FR={janvier:1,février:2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,décembre:12,decembre:12};
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -307,12 +311,16 @@ async function doExport(){
 
 async function exportSalarieCSV(){
   if(!currentFiche.id)return;
-  const{data,error}=await sb.from('pointages').select('*').eq('salarie_id',currentFiche.id).order('ts');
+  let q=sb.from('pointages').select('*').eq('salarie_id',currentFiche.id);
+  if(selectedMonth){q=q.gte('ts',selectedMonth+'-01T00:00:00').lt('ts',nextMonthISO(selectedMonth));}
+  const{data,error}=await q.order('ts');
   if(error){toast('Erreur: '+error.message);return;}
   const nm=(fullName(currentFiche)||currentFiche.nom||'salarie').replace(/[^a-zA-Z0-9_-]/g,'_');
-  downloadPointagesCSV(data||[],`pointages_${nm}`);
+  downloadPointagesCSV(data||[],`pointages_${nm}_${selectedMonth||'tout'}`);
   toast(`Exporté : ${(data||[]).length} pointages`);
 }
+function nextMonthISO(ym){const[y,m]=ym.split('-').map(Number);const d=new Date(y,m,1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01T00:00:00`;}
+function setMonth(m){selectedMonth=m;renderFiche();}
 
 function downloadPointagesCSV(rows,filename){
   const head='Date,Heure,Salarie,Snack,Type,Heures_jour\n';
@@ -329,7 +337,7 @@ function downloadPointagesCSV(rows,filename){
     const nm=fullName(s)||s.nom||'?';
     const key=p.ts.slice(0,10)+'|'+p.salarie_id;
     const showH=!firstRowOfDay.has(key);firstRowOfDay.add(key);
-    const h=showH&&hForDS[key]!=null?hForDS[key].toFixed(2):'';
+    const h=showH&&hForDS[key]!=null?fmtH(hForDS[key]):'';
     return `${d.toLocaleDateString('fr-FR')},${d.toLocaleTimeString('fr-FR')},"${nm}","${r.nom||''}",${TYPL_PT[p.type]||p.type},${h}`;
   }).join('\n');
   const blob=new Blob(['﻿'+head+csv],{type:'text/csv;charset=utf-8'});
@@ -537,10 +545,20 @@ function renderFiche(){
     if(!s.id){body=`<div class="tab-body"><div class="section" style="text-align:center;color:var(--muted)">Enregistre d'abord la fiche.</div></div>`;}
     else{
       const pts=ptsOf(s.id);
+      // mois disponibles (12 derniers à partir d'aujourd'hui)
+      const now=new Date();const months=[];
+      for(let i=0;i<12;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);}
+      if(!selectedMonth || !months.includes(selectedMonth)) selectedMonth=months[0];
+      // group all by date
       const byDate={};pts.forEach(p=>{const d=p.ts.slice(0,10);(byDate[d]=byDate[d]||[]).push(p);});
-      const dates=Object.keys(byDate).sort().reverse().slice(0,30);
+      // hours per month (pour les pills)
+      const hPerMonth={};months.forEach(m=>{hPerMonth[m]=0;});
+      Object.entries(byDate).forEach(([d,arr])=>{const m=d.slice(0,7);if(hPerMonth[m]!=null){const h=hoursOfDay(arr);if(h)hPerMonth[m]+=h;}});
+      // jours du mois sélectionné
+      const datesMonth=Object.keys(byDate).filter(d=>d.startsWith(selectedMonth)).sort().reverse();
+      const totMonth=datesMonth.reduce((a,d)=>a+(hoursOfDay(byDate[d])||0),0);
       const TLBL={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pause_fin:'Reprise'};
-      const totH=dates.reduce((a,d)=>a+(hoursOfDay(byDate[d])||0),0);
+
       body=`<div class="tab-body">
         <div class="section">
           <h3>Code badgeuse</h3>
@@ -551,23 +569,33 @@ function renderFiche(){
           </div>
         </div>
         <div class="section">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px;flex-wrap:wrap">
-            <h3 style="margin-bottom:0">Historique des pointages · 30 derniers jours · ${totH.toFixed(1)}h total</h3>
-            <button class="btn ghost sm" onclick="exportSalarieCSV()">📥 Exporter CSV (tout l'historique)</button>
+          <h3>Sélectionne un mois</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${months.map(m=>{
+              const lbl=ymLabel(m), h=hPerMonth[m];
+              const active=m===selectedMonth;
+              return `<button class="chip" style="cursor:pointer;font-size:12px;padding:8px 14px;border:1px solid ${active?'var(--gold)':'var(--line-2)'};background:${active?'rgba(200,160,53,.12)':'var(--surface)'};color:${active?'var(--gold)':'var(--text)'}" onclick="setMonth('${m}')">${lbl}${h>0?' · <b>'+fmtH(h)+'</b>':''}</button>`;
+            }).join('')}
           </div>
-          ${dates.length?dates.map(d=>{
+        </div>
+        <div class="section">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px;flex-wrap:wrap">
+            <h3 style="margin-bottom:0">${ymLabel(selectedMonth)} · <span style="color:var(--ok)">${fmtH(totMonth)}</span> travaillées · ${datesMonth.length} jour${datesMonth.length>1?'s':''}</h3>
+            <button class="btn ghost sm" onclick="exportSalarieCSV()">📥 Exporter ${ymLabel(selectedMonth)}</button>
+          </div>
+          ${datesMonth.length?datesMonth.map(d=>{
             const h=hoursOfDay(byDate[d]);
             return `<div style="margin-bottom:16px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)">
                 <b style="text-transform:capitalize">${new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'short'})}</b>
-                ${h!==null?`<span style="color:var(--ok);font-weight:600;font-size:13px">${h.toFixed(2)}h travaillées</span>`:'<span style="color:var(--muted);font-size:12px">incomplet</span>'}
+                ${h!==null?`<span style="color:var(--ok);font-weight:600;font-size:13px">${fmtH(h)} travaillées</span>`:'<span style="color:var(--muted);font-size:12px">incomplet</span>'}
               </div>
               ${byDate[d].slice().sort((a,b)=>a.ts.localeCompare(b.ts)).map(p=>`<div style="display:flex;gap:14px;padding:5px 0;font-size:13px;align-items:center">
                 <span style="color:var(--muted);font-family:monospace;width:54px">${new Date(p.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>
                 <span class="chip ${p.type==='arrivee'?'ok':(p.type==='sortie'?'warn':'multi')}">${TLBL[p.type]||p.type}</span>
               </div>`).join('')}
             </div>`;
-          }).join(''):'<div style="color:var(--muted)">Aucun pointage enregistré.</div>'}
+          }).join(''):'<div style="color:var(--muted)">Aucun pointage sur ce mois.</div>'}
         </div>
       </div>`;
     }
