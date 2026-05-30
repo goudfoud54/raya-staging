@@ -185,8 +185,8 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.10 · vue mensuelle';
-let selectedMonth=null;
+const VERSION='v0.11 · filtre snack badgeuse';
+let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
 function ymOf(ts){return ts.slice(0,7);}
 function ymLabel(ym){const[y,m]=ym.split('-');return new Date(parseInt(y),parseInt(m)-1,1).toLocaleDateString('fr-FR',{month:'long',year:'numeric'}).replace(/^./,c=>c.toUpperCase());}
@@ -313,6 +313,7 @@ async function exportSalarieCSV(){
   if(!currentFiche.id)return;
   let q=sb.from('pointages').select('*').eq('salarie_id',currentFiche.id);
   if(selectedMonth){q=q.gte('ts',selectedMonth+'-01T00:00:00').lt('ts',nextMonthISO(selectedMonth));}
+  if(selectedSnack){q=q.eq('restaurant_id',selectedSnack);}
   const{data,error}=await q.order('ts');
   if(error){toast('Erreur: '+error.message);return;}
   const nm=(fullName(currentFiche)||currentFiche.nom||'salarie').replace(/[^a-zA-Z0-9_-]/g,'_');
@@ -321,6 +322,7 @@ async function exportSalarieCSV(){
 }
 function nextMonthISO(ym){const[y,m]=ym.split('-').map(Number);const d=new Date(y,m,1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01T00:00:00`;}
 function setMonth(m){selectedMonth=m;renderFiche();}
+function setSnackFilter(rid){selectedSnack=rid;renderFiche();}
 
 function downloadPointagesCSV(rows,filename){
   const head='Date,Heure,Salarie,Snack,Type,Heures_jour\n';
@@ -544,17 +546,18 @@ function renderFiche(){
   else if(currentTab==='badgeuse'){
     if(!s.id){body=`<div class="tab-body"><div class="section" style="text-align:center;color:var(--muted)">Enregistre d'abord la fiche.</div></div>`;}
     else{
-      const pts=ptsOf(s.id);
+      const allPts=ptsOf(s.id);
+      const pts=selectedSnack?allPts.filter(p=>p.restaurant_id===selectedSnack):allPts;
       // mois disponibles (12 derniers à partir d'aujourd'hui)
       const now=new Date();const months=[];
       for(let i=0;i<12;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);}
       if(!selectedMonth || !months.includes(selectedMonth)) selectedMonth=months[0];
-      // group all by date
+      // snacks où le salarié a travaillé
+      const snacksWorked=[...new Set(allPts.map(p=>p.restaurant_id).filter(Boolean))];
+      // group filtered by date
       const byDate={};pts.forEach(p=>{const d=p.ts.slice(0,10);(byDate[d]=byDate[d]||[]).push(p);});
-      // hours per month (pour les pills)
       const hPerMonth={};months.forEach(m=>{hPerMonth[m]=0;});
       Object.entries(byDate).forEach(([d,arr])=>{const m=d.slice(0,7);if(hPerMonth[m]!=null){const h=hoursOfDay(arr);if(h)hPerMonth[m]+=h;}});
-      // jours du mois sélectionné
       const datesMonth=Object.keys(byDate).filter(d=>d.startsWith(selectedMonth)).sort().reverse();
       const totMonth=datesMonth.reduce((a,d)=>a+(hoursOfDay(byDate[d])||0),0);
       const TLBL={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pause_fin:'Reprise'};
@@ -577,6 +580,11 @@ function renderFiche(){
               return `<button class="chip" style="cursor:pointer;font-size:12px;padding:8px 14px;border:1px solid ${active?'var(--gold)':'var(--line-2)'};background:${active?'rgba(200,160,53,.12)':'var(--surface)'};color:${active?'var(--gold)':'var(--text)'}" onclick="setMonth('${m}')">${lbl}${h>0?' · <b>'+fmtH(h)+'</b>':''}</button>`;
             }).join('')}
           </div>
+          ${snacksWorked.length>1?`<h3 style="margin-top:18px">Filtrer par snack</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="chip" style="cursor:pointer;font-size:12px;padding:8px 14px;border:1px solid ${!selectedSnack?'var(--gold)':'var(--line-2)'};background:${!selectedSnack?'rgba(200,160,53,.12)':'var(--surface)'};color:${!selectedSnack?'var(--gold)':'var(--text)'}" onclick="setSnackFilter(null)">Tous les snacks</button>
+            ${snacksWorked.map(rid=>{const r=S.restos.find(x=>x.id===rid);if(!r)return'';const active=selectedSnack===rid;return `<button class="chip" style="cursor:pointer;font-size:12px;padding:8px 14px;border:1px solid ${active?'var(--gold)':'var(--line-2)'};background:${active?'rgba(200,160,53,.12)':'var(--surface)'};color:${active?'var(--gold)':'var(--text)'}" onclick="setSnackFilter('${rid}')">${r.nom.replace('Raya ','')}</button>`}).join('')}
+          </div>`:''}
         </div>
         <div class="section">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px;flex-wrap:wrap">
@@ -590,10 +598,11 @@ function renderFiche(){
                 <b style="text-transform:capitalize">${new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'short'})}</b>
                 ${h!==null?`<span style="color:var(--ok);font-weight:600;font-size:13px">${fmtH(h)} travaillées</span>`:'<span style="color:var(--muted);font-size:12px">incomplet</span>'}
               </div>
-              ${byDate[d].slice().sort((a,b)=>a.ts.localeCompare(b.ts)).map(p=>`<div style="display:flex;gap:14px;padding:5px 0;font-size:13px;align-items:center">
+              ${byDate[d].slice().sort((a,b)=>a.ts.localeCompare(b.ts)).map(p=>{const r=S.restos.find(x=>x.id===p.restaurant_id);return `<div style="display:flex;gap:14px;padding:5px 0;font-size:13px;align-items:center">
                 <span style="color:var(--muted);font-family:monospace;width:54px">${new Date(p.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>
                 <span class="chip ${p.type==='arrivee'?'ok':(p.type==='sortie'?'warn':'multi')}">${TLBL[p.type]||p.type}</span>
-              </div>`).join('')}
+                ${r?`<span style="color:var(--muted);font-size:11px">@ ${r.nom.replace('Raya ','')}</span>`:''}
+              </div>`}).join('')}
             </div>`;
           }).join(''):'<div style="color:var(--muted)">Aucun pointage sur ce mois.</div>'}
         </div>
