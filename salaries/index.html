@@ -117,6 +117,12 @@ button{cursor:pointer;border:none;background:none}
 .add-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:14px;border-top:1px dashed var(--line-2)}
 .add-row select,.add-row input{padding:7px 10px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);font-size:12px;outline:none}
 
+/* ── MODAL ── */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:30px 14px;overflow:auto;z-index:150}
+.modal{background:var(--card);border:1px solid var(--line-2);border-radius:14px;width:100%;max-width:480px;padding:24px}
+.modal h2{font-size:17px;margin-bottom:18px;color:var(--text)}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
+
 /* ── TOAST ── */
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f1f2b;border:1px solid var(--line-2);padding:11px 20px;border-radius:10px;font-size:13px;z-index:200;opacity:0;transition:.25s;box-shadow:0 8px 28px rgba(0,0,0,.4)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
@@ -147,7 +153,7 @@ button{cursor:pointer;border:none;background:none}
   <div class="header">
     <div class="brand">Raya <small>· Gestion Salariés · <span id="ver" style="font-size:10px;color:var(--muted)"></span></small></div>
     <div class="h-actions">
-      <button class="btn ghost" onclick="exportPointagesCSV()">Export pointages</button>
+      <button class="btn ghost" onclick="openExportModal()">Export pointages</button>
       <button class="btn" onclick="openFiche(null)">+ Nouveau salarié</button>
       <a href="../" class="btn ghost">Portail</a>
     </div>
@@ -170,6 +176,7 @@ button{cursor:pointer;border:none;background:none}
 <!-- FICHE -->
 <div id="ficheView" class="hidden"></div>
 
+<div id="modalHost"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -178,7 +185,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.8 · badgeuse intégrée';
+const VERSION='v0.9 · export amélioré';
 const MOIS_FR={janvier:1,février:2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,décembre:12,decembre:12};
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -252,26 +259,81 @@ async function setPinAndSave(id){
   if(error){toast('Erreur: '+error.message);return;}
   toast('Code généré : '+pin);await loadAll();currentFiche=S.salaries.find(x=>x.id===id);renderFiche();
 }
-async function exportPointagesCSV(){
-  const today=new Date().toISOString().slice(0,10);
-  const from=prompt('Date début (AAAA-MM-JJ)',new Date(Date.now()-30*86400000).toISOString().slice(0,10));
-  if(!from)return;
-  const to=prompt('Date fin (AAAA-MM-JJ)',today);
-  if(!to)return;
-  const{data,error}=await sb.from('pointages').select('*').gte('ts',from+'T00:00:00').lte('ts',to+'T23:59:59').order('ts');
+const TYPL_PT={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pause_fin:'Pause fin'};
+
+function openExportModal(){
+  const to=new Date().toISOString().slice(0,10);
+  const from=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+  document.getElementById('modalHost').innerHTML=`
+  <div class="modal-bg" onclick="if(event.target===this)closeExportModal()">
+    <div class="modal">
+      <h2>Exporter les pointages</h2>
+      <div class="grid2">
+        <div class="fld"><label>Du</label><input type="date" id="ex_from" value="${from}"></div>
+        <div class="fld"><label>Au</label><input type="date" id="ex_to" value="${to}"></div>
+      </div>
+      <div class="fld" style="margin-top:6px">
+        <label style="margin-bottom:10px">Snacks à inclure</label>
+        <div style="display:flex;flex-direction:column;gap:8px;background:var(--surface);padding:12px 14px;border-radius:8px;border:1px solid var(--line-2)">
+          ${S.restos.map(r=>`<label class="chk"><input type="checkbox" class="ex_resto" value="${r.id}" checked> ${r.nom}</label>`).join('')}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:10px">
+          <button class="btn ghost sm" type="button" onclick="document.querySelectorAll('.ex_resto').forEach(c=>c.checked=true)">Tout cocher</button>
+          <button class="btn ghost sm" type="button" onclick="document.querySelectorAll('.ex_resto').forEach(c=>c.checked=false)">Tout décocher</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeExportModal()">Annuler</button>
+        <button class="btn" onclick="doExport()">Exporter le CSV</button>
+      </div>
+    </div>
+  </div>`;
+}
+function closeExportModal(){document.getElementById('modalHost').innerHTML='';}
+
+async function doExport(){
+  const from=document.getElementById('ex_from').value;
+  const to=document.getElementById('ex_to').value;
+  if(!from||!to){toast('Choisis une période');return;}
+  const restos=[...document.querySelectorAll('.ex_resto:checked')].map(c=>c.value);
+  if(!restos.length){toast('Coche au moins un snack');return;}
+  let q=sb.from('pointages').select('*').gte('ts',from+'T00:00:00').lte('ts',to+'T23:59:59').in('restaurant_id',restos).order('ts');
+  const{data,error}=await q;
   if(error){toast('Erreur: '+error.message);return;}
-  const TYPL={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pause_fin:'Pause fin'};
-  const head='Date,Heure,Salarie,Snack,Type\n';
-  const rows=(data||[]).map(p=>{
+  downloadPointagesCSV(data||[],`pointages_${from}_${to}`);
+  closeExportModal();
+  toast(`Exporté : ${(data||[]).length} pointages`);
+}
+
+async function exportSalarieCSV(){
+  if(!currentFiche.id)return;
+  const{data,error}=await sb.from('pointages').select('*').eq('salarie_id',currentFiche.id).order('ts');
+  if(error){toast('Erreur: '+error.message);return;}
+  const nm=(fullName(currentFiche)||currentFiche.nom||'salarie').replace(/[^a-zA-Z0-9_-]/g,'_');
+  downloadPointagesCSV(data||[],`pointages_${nm}`);
+  toast(`Exporté : ${(data||[]).length} pointages`);
+}
+
+function downloadPointagesCSV(rows,filename){
+  const head='Date,Heure,Salarie,Snack,Type,Heures_jour\n';
+  // group by day+sal for hours
+  const byDS={};
+  rows.forEach(p=>{const k=p.ts.slice(0,10)+'|'+p.salarie_id;(byDS[k]=byDS[k]||[]).push(p);});
+  const hForDS={};
+  Object.entries(byDS).forEach(([k,arr])=>{hForDS[k]=hoursOfDay(arr);});
+  let firstRowOfDay=new Set();
+  const csv=rows.map(p=>{
     const s=S.salaries.find(x=>x.id===p.salarie_id)||{};
     const r=S.restos.find(x=>x.id===p.restaurant_id)||{};
     const d=new Date(p.ts);
     const nm=fullName(s)||s.nom||'?';
-    return `${d.toLocaleDateString('fr-FR')},${d.toLocaleTimeString('fr-FR')},"${nm}","${r.nom||''}",${TYPL[p.type]||p.type}`;
+    const key=p.ts.slice(0,10)+'|'+p.salarie_id;
+    const showH=!firstRowOfDay.has(key);firstRowOfDay.add(key);
+    const h=showH&&hForDS[key]!=null?hForDS[key].toFixed(2):'';
+    return `${d.toLocaleDateString('fr-FR')},${d.toLocaleTimeString('fr-FR')},"${nm}","${r.nom||''}",${TYPL_PT[p.type]||p.type},${h}`;
   }).join('\n');
-  const blob=new Blob(['﻿'+head+rows],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`pointages_${from}_${to}.csv`;a.click();
-  toast(`Exporté : ${(data||[]).length} pointages`);
+  const blob=new Blob(['﻿'+head+csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${filename}.csv`;a.click();
 }
 function hoursOfDay(arr){
   const ev=arr.slice().sort((a,b)=>a.ts.localeCompare(b.ts)).map(p=>({t:p.type,d:new Date(p.ts)}));
@@ -489,7 +551,10 @@ function renderFiche(){
           </div>
         </div>
         <div class="section">
-          <h3>Historique des pointages · 30 derniers jours · ${totH.toFixed(1)}h total</h3>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px;flex-wrap:wrap">
+            <h3 style="margin-bottom:0">Historique des pointages · 30 derniers jours · ${totH.toFixed(1)}h total</h3>
+            <button class="btn ghost sm" onclick="exportSalarieCSV()">📥 Exporter CSV (tout l'historique)</button>
+          </div>
           ${dates.length?dates.map(d=>{
             const h=hoursOfDay(byDate[d]);
             return `<div style="margin-bottom:16px">
