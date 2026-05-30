@@ -177,7 +177,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.6 · sortie + OCR amélioré';
+const VERSION='v0.7 · code badgeuse';
 const MOIS_FR={janvier:1,février:2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,décembre:12,decembre:12};
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -344,6 +344,7 @@ function renderFiche(){
           <div class="fld"><label>Nationalité</label><input id="f_nat" value="${s.nationalite||''}"></div>
           <div class="fld"><label>N° Sécurité sociale</label><input id="f_secu" value="${s.num_secu||''}"></div>
           <div class="fld"><label>Matricule interne</label><input id="f_matricule" value="${s.matricule||''}"></div>
+          <div class="fld"><label>Code badgeuse (4 chiffres)</label><input id="f_pin" maxlength="4" pattern="[0-9]{4}" value="${s.pin_badgeuse||''}" placeholder="ex: 1234"></div>
         </div>
         <div class="chkrow"><label class="chk"><input type="checkbox" id="f_mineur" ${s.est_mineur?'checked':''}> Mineur</label></div>
       </div>
@@ -510,7 +511,8 @@ async function saveSalarie(){
   // Map: champ DB -> id input ; on n'ajoute au payload QUE ce qui est dans le DOM courant.
   const TXT={nom:'f_nom',prenom:'f_prenom',type_contrat:'f_contrat',notes:'f_notes',
     nationalite:'f_nat',num_secu:'f_secu',matricule:'f_matricule',email:'f_email',
-    telephone:'f_tel',adresse:'f_adr',code_postal:'f_cp',ville:'f_ville',poste_intitule:'f_poste'};
+    telephone:'f_tel',adresse:'f_adr',code_postal:'f_cp',ville:'f_ville',poste_intitule:'f_poste',
+    pin_badgeuse:'f_pin'};
   const DATE={date_naissance:'f_naiss',date_entree:'f_entree',date_sortie:'f_sortie'};
   const NUM={plafond_heures:'f_plafond',heures_min:'f_hmin',heures_max:'f_hmax'};
   const CHK={est_multi:'f_multi',est_mineur:'f_mineur',actif:'f_actif'};
