@@ -153,6 +153,7 @@ button{cursor:pointer;border:none;background:none}
   <div class="header">
     <div class="brand">Raya <small>· Gestion Salariés · <span id="ver" style="font-size:10px;color:var(--muted)"></span></small></div>
     <div class="h-actions">
+      <button class="btn ghost" id="demandesBtn" onclick="openDemandes()" style="position:relative">🔔 Demandes <span id="demandesBadge" style="display:none;background:var(--bad);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:4px;font-weight:700"></span></button>
       <button class="btn ghost" onclick="openExportModal()">Export pointages</button>
       <button class="btn" onclick="openFiche(null)">+ Nouveau salarié</button>
       <a href="../" class="btn ghost">Portail</a>
@@ -185,7 +186,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.11 · filtre snack badgeuse';
+const VERSION='v0.12 · validation demandes indispos';
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
 function ymOf(ts){return ts.slice(0,7);}
@@ -242,6 +243,10 @@ async function loadAll(){
     sb.from('pointages').select('*').gte('ts',new Date(Date.now()-90*86400000).toISOString()).order('ts',{ascending:false})
   ]);
   S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.data||[];
+  // Compteur demandes en attente
+  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').length;
+  const b=document.getElementById('demandesBadge');
+  if(b){if(pending){b.textContent=pending;b.style.display='inline-block';}else{b.style.display='none';}}
   const fS=document.getElementById('fSnack');
   fS.innerHTML='<option value="">Tous les snacks</option>'+S.restos.map(x=>`<option value="${x.id}">${x.nom}</option>`).join('')+'<option value="MULTI">MULTI</option>';
   render();
@@ -323,6 +328,44 @@ async function exportSalarieCSV(){
 function nextMonthISO(ym){const[y,m]=ym.split('-').map(Number);const d=new Date(y,m,1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01T00:00:00`;}
 function setMonth(m){selectedMonth=m;renderFiche();}
 function setSnackFilter(rid){selectedSnack=rid;renderFiche();}
+
+// ===== DEMANDES INDISPOS =====
+function openDemandes(){
+  const JOURS_LBL=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
+  const fmt=d=>{if(d.type==='recurrente')return 'Tous les '+JOURS_LBL[d.jour_semaine].toLowerCase()+'s';if(d.date_specifique)return new Date(d.date_specifique).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});return '—';};
+  const plage=d=>(d.heure_debut||d.heure_fin)?((d.heure_debut||'').slice(0,5)+' → '+(d.heure_fin||'').slice(0,5)):'journée entière';
+  let html=`<h2>Demandes d'indisponibilité</h2>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:14px">${pending.length} demande(s) en attente de validation</div>`;
+  if(!pending.length){
+    html+='<div style="text-align:center;padding:30px;color:var(--ok);font-weight:600">✓ Aucune demande en attente</div>';
+  } else {
+    html+='<div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;overflow:hidden">';
+    pending.forEach((d,i)=>{
+      html+=`<div style="padding:14px 16px;${i>0?'border-top:1px solid var(--line)':''}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <div><div style="font-weight:600;font-size:13.5px">${nameOf(d.salarie_id)}</div>
+          <div style="color:var(--muted);font-size:11.5px;margin-top:2px">${fmt(d)} · ${plage(d)}</div>
+          ${d.motif?'<div style="color:var(--muted);font-size:12px;margin-top:4px;font-style:italic">'+d.motif+'</div>':''}</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn ghost sm" style="color:var(--bad);border-color:rgba(196,90,90,.4)" onclick="decideDispo('${d.id}','refusee')">Refuser</button>
+            <button class="btn sm" onclick="decideDispo('${d.id}','validee')">Valider</button>
+          </div>
+        </div>
+      </div>`;
+    });
+    html+='</div>';
+  }
+  html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>';
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:600px">${html}</div></div>`;
+}
+async function decideDispo(id,decision){
+  const{error}=await sb.from('salarie_dispos').update({statut_demande:decision,decided_at:new Date().toISOString()}).eq('id',id);
+  if(error){toast('Erreur: '+error.message);return;}
+  toast(decision==='validee'?'Demande validée ✓':'Demande refusée');
+  await loadAll();openDemandes();
+}
 
 function downloadPointagesCSV(rows,filename){
   const head='Date,Heure,Salarie,Snack,Type,Heures_jour\n';

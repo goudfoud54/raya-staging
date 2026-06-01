@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raya — Mes indisponibilités</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+.hidden{display:none!important}
+button{cursor:pointer;border:none;background:none;color:var(--text);font-family:inherit}
+.btn{padding:10px 16px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px;border:none}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
+.btn.danger{background:transparent;color:var(--bad);border:1px solid rgba(196,90,90,.3)}
+.btn.sm{padding:6px 11px;font-size:12px}
+
+.wrap{max-width:680px;margin:0 auto;padding:24px 20px 60px}
+.header{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid var(--line)}
+.brand{color:var(--gold);font-weight:700;font-size:17px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px}
+
+/* PICKER */
+.picker{padding:20px}
+.picker h2{font-size:17px;font-weight:600;margin-bottom:14px;text-align:center}
+.picker .sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:24px}
+.salgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.salcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 14px;text-align:center;cursor:pointer;transition:.12s;display:flex;flex-direction:column;align-items:center;gap:10px}
+.salcard:hover{border-color:var(--gold);transform:translateY(-2px)}
+.av{width:50px;height:50px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#111;font-size:16px}
+.salname{font-weight:600;font-size:13.5px}
+
+/* PIN modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;gap:16px;padding:20px}
+.modal h3{font-size:17px;font-weight:600}
+.modal .sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:6px}
+.pin-dots{display:flex;gap:14px;margin:14px 0}
+.pd{width:18px;height:18px;border-radius:50%;border:2px solid var(--line-2)}
+.pd.on{background:var(--gold);border-color:var(--gold)}
+.pin-err{color:var(--bad);font-size:13px;height:18px}
+.pad{display:grid;grid-template-columns:repeat(3,84px);gap:10px}
+.pad button{width:84px;height:64px;border-radius:12px;background:var(--surface);border:1px solid var(--line-2);font-size:22px;font-weight:600;color:var(--text)}
+.pad button:active{background:var(--gold);color:#111}
+.pad button.cx{background:transparent;border-color:transparent;font-size:13px}
+
+/* APP */
+.section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+.section h3{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;font-weight:600}
+.item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--line);font-size:13px}
+.item:first-of-type{border-top:none}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600}
+.tag.attente{background:rgba(224,169,58,.15);color:var(--warn)}
+.tag.validee{background:rgba(63,184,127,.15);color:var(--ok)}
+.tag.refusee{background:rgba(196,90,90,.15);color:var(--bad)}
+.fld{margin-bottom:12px}
+.fld label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;font-weight:500}
+.fld input,.fld select,.fld textarea{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;outline:none}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:var(--gold)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;border:1px solid var(--line-2);padding:11px 22px;border-radius:10px;font-size:13px;z-index:200;opacity:0;transition:.25s}
+.toast.show{opacity:1}
+@media(max-width:480px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
+
+<div class="header">
+  <div class="brand">Raya <small>· Mes indisponibilités</small></div>
+  <button class="btn ghost sm" id="logoutBtn" onclick="logout()" style="display:none">Quitter</button>
+</div>
+
+<!-- ÉTAPE 1 : choisir son nom -->
+<div id="picker" class="picker">
+  <h2>Qui es-tu ?</h2>
+  <div class="sub">Tape sur ton prénom pour t'identifier</div>
+  <div class="salgrid" id="salgrid"></div>
+</div>
+
+<!-- PIN modal -->
+<div id="pin" class="modal hidden">
+  <h3 id="pinWho">—</h3>
+  <div class="sub">Tape ton code à 4 chiffres</div>
+  <div class="pin-dots" id="pin-dots"><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div></div>
+  <div class="pin-err" id="pin-err"></div>
+  <div class="pad">
+    <button onclick="pinKey('1')">1</button><button onclick="pinKey('2')">2</button><button onclick="pinKey('3')">3</button>
+    <button onclick="pinKey('4')">4</button><button onclick="pinKey('5')">5</button><button onclick="pinKey('6')">6</button>
+    <button onclick="pinKey('7')">7</button><button onclick="pinKey('8')">8</button><button onclick="pinKey('9')">9</button>
+    <button class="cx" onclick="closePin()">Annuler</button><button onclick="pinKey('0')">0</button><button onclick="pinKey('B')">⌫</button>
+  </div>
+</div>
+
+<!-- APP : page perso du salarié -->
+<div id="app" class="hidden">
+  <div class="wrap">
+    <div class="section">
+      <h3>Faire une demande d'indisponibilité</h3>
+      <div class="grid2">
+        <div class="fld"><label>Date</label><input type="date" id="f_date"></div>
+        <div class="fld"><label>OU jour récurrent</label><select id="f_jour"><option value="">— Une seule date —</option><option value="0">Tous les lundis</option><option value="1">Tous les mardis</option><option value="2">Tous les mercredis</option><option value="3">Tous les jeudis</option><option value="4">Tous les vendredis</option><option value="5">Tous les samedis</option><option value="6">Tous les dimanches</option></select></div>
+      </div>
+      <div class="grid2">
+        <div class="fld"><label>Heure début (optionnel)</label><input type="time" id="f_hd"></div>
+        <div class="fld"><label>Heure fin (optionnel)</label><input type="time" id="f_hf"></div>
+      </div>
+      <div class="fld"><label>Motif (optionnel)</label><input id="f_motif" placeholder="Ex : RDV médical, école, congé personnel…"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+        <button class="btn" onclick="submitDispo()">Envoyer la demande</button>
+      </div>
+      <div style="color:var(--muted);font-size:11.5px;margin-top:10px;line-height:1.5">💡 Laisse les heures vides si tu n'es pas dispo toute la journée. Ta demande sera examinée par le gérant.</div>
+    </div>
+
+    <div class="section">
+      <h3>Mes demandes</h3>
+      <div id="myList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+const VERSION='v0.1';
+const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+let SALARIES=[],ME=null,curSal=null,pinBuf='';
+let tt;
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2400);}
+
+const initials=s=>((s.prenom||'').charAt(0)+(s.nom||'').charAt(0)).toUpperCase()||'?';
+const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
+
+async function init(){
+  const{data}=await sb.from('salaries').select('id,nom,prenom,couleur,pin_badgeuse').eq('actif',true).order('prenom');
+  SALARIES=(data||[]).filter(s=>s.pin_badgeuse);
+  document.getElementById('salgrid').innerHTML=SALARIES.map(s=>`<button class="salcard" onclick="openPin('${s.id}')"><div class="av" style="background:${s.couleur||'#444'}">${initials(s)}</div><div class="salname">${fullName(s)}</div></button>`).join('')||'<div style="text-align:center;color:var(--muted);padding:30px">Aucun salarié avec un code badgeuse. Demande à ton gérant.</div>';
+}
+function openPin(sid){curSal=SALARIES.find(x=>x.id===sid);if(!curSal)return;pinBuf='';renderDots();document.getElementById('pinWho').textContent=fullName(curSal);document.getElementById('pin-err').textContent='';document.getElementById('pin').classList.remove('hidden');}
+function closePin(){document.getElementById('pin').classList.add('hidden');curSal=null;pinBuf='';}
+function renderDots(){document.querySelectorAll('#pin-dots .pd').forEach((d,i)=>d.classList.toggle('on',i<pinBuf.length));}
+function pinKey(k){if(k==='B'){pinBuf=pinBuf.slice(0,-1);renderDots();return;}if(pinBuf.length>=4)return;pinBuf+=k;renderDots();if(pinBuf.length===4)checkPin();}
+function checkPin(){
+  if(pinBuf===curSal.pin_badgeuse){ME=curSal;closePin();showApp();}
+  else{document.getElementById('pin-err').textContent='Code incorrect';pinBuf='';setTimeout(renderDots,400);}
+}
+function logout(){ME=null;document.getElementById('app').classList.add('hidden');document.getElementById('picker').classList.remove('hidden');document.getElementById('logoutBtn').style.display='none';}
+async function showApp(){
+  document.getElementById('picker').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('logoutBtn').style.display='inline-block';
+  document.getElementById('f_date').value='';document.getElementById('f_jour').value='';document.getElementById('f_hd').value='';document.getElementById('f_hf').value='';document.getElementById('f_motif').value='';
+  loadMine();
+}
+
+async function loadMine(){
+  const{data}=await sb.from('salarie_dispos').select('*').eq('salarie_id',ME.id).order('created_at',{ascending:false}).limit(30);
+  const list=data||[];
+  const fmt=d=>{if(d.type==='recurrente')return 'Tous les '+JOURS[d.jour_semaine].toLowerCase()+'s';if(d.date_specifique)return new Date(d.date_specifique).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'});return '—';};
+  const plage=d=>(d.heure_debut||d.heure_fin)?((d.heure_debut||'').slice(0,5)+'→'+(d.heure_fin||'').slice(0,5)):'journée entière';
+  document.getElementById('myList').innerHTML=list.length?list.map(d=>{
+    const st=d.statut_demande||'validee';
+    const canDel=st==='en_attente';
+    return `<div class="item">
+      <div><b>${fmt(d)}</b> · ${plage(d)}${d.motif?'<div style="color:var(--muted);font-size:11.5px;margin-top:2px">'+d.motif+'</div>':''}</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="tag ${st}">${st==='en_attente'?'En attente':st==='validee'?'Validée':'Refusée'}</span>
+        ${canDel?`<button class="btn danger sm" onclick="delMine('${d.id}')">×</button>`:''}
+      </div>
+    </div>`;
+  }).join(''):'<div style="color:var(--muted);font-size:12.5px;text-align:center;padding:14px">Aucune demande pour l\'instant.</div>';
+}
+
+async function submitDispo(){
+  const date=document.getElementById('f_date').value;
+  const jour=document.getElementById('f_jour').value;
+  const hd=document.getElementById('f_hd').value;
+  const hf=document.getElementById('f_hf').value;
+  const motif=document.getElementById('f_motif').value.trim();
+  if(!date && !jour){toast('Choisis une date ou un jour récurrent');return;}
+  if(date && jour){toast('Choisis soit une date soit un jour récurrent, pas les deux');return;}
+  const row={salarie_id:ME.id,statut:'indispo',statut_demande:'en_attente',motif:motif||null,heure_debut:hd||null,heure_fin:hf||null};
+  if(date){row.type='ponctuelle';row.date_specifique=date;}
+  else{row.type='recurrente';row.jour_semaine=parseInt(jour);}
+  const{error}=await sb.from('salarie_dispos').insert(row);
+  if(error){toast('Erreur : '+error.message);return;}
+  toast('Demande envoyée ✓ En attente de validation');
+  document.getElementById('f_date').value='';document.getElementById('f_jour').value='';document.getElementById('f_hd').value='';document.getElementById('f_hf').value='';document.getElementById('f_motif').value='';
+  loadMine();
+}
+async function delMine(id){
+  if(!confirm('Annuler cette demande ?'))return;
+  await sb.from('salarie_dispos').delete().eq('id',id).eq('salarie_id',ME.id);
+  loadMine();
+}
+init();
+</script>
+</body>
+</html>

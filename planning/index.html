@@ -1051,7 +1051,7 @@ async function autoFillCore(dayIndices){
             if(usedSids.has(s.id))return false;
             if(S.creneaux.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc))return false;
             if(S.allCreneauxWeek.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc&&c.restaurant_id!==SNACK.id))return false;
-            const ind=S.dispos.find(d=>d.salarie_id===s.id&&d.statut==='indispo'&&((d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date)));
+            const ind=S.dispos.find(d=>d.salarie_id===s.id&&d.statut==='indispo'&&(d.statut_demande||'validee')==='validee'&&((d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date)));
             if(ind)return false;
             const plaf=s.plafond_heures||48;if(hoursWeek(s.id)>=plaf)return false;
             return true;
