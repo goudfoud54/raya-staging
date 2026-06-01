@@ -65,6 +65,8 @@ table.plan td.midi{background:var(--midi)}
 table.plan td.soir{background:var(--soir)}
 table.plan td input{width:calc(54px * var(--zoom));padding:2px 4px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:calc(11px * var(--zoom));font-family:monospace;text-align:center;outline:none}
 table.plan td input::placeholder{color:rgba(255,255,255,.12)}
+table.plan td.conflict{box-shadow:inset 0 0 0 1.5px var(--bad);background:rgba(196,90,90,.08)!important}
+table.plan td.conflict input{color:var(--bad);font-weight:700}
 table.plan td input:hover{border-color:var(--line-2)}
 table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 .role-c{color:#e8a06a;font-size:9px;margin-left:5px;font-weight:700}
@@ -90,6 +92,8 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
   <div class="err" id="pwerr"></div>
   <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
 </div>
+
+<datalist id="t-list"></datalist>
 
 <div id="app" class="hidden">
   <div class="header">
@@ -124,18 +128,57 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.2 · zoom + cellules vides + R';
+const VERSION='v0.3 · datalist + conflits stricts';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
 let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[]};
 let SNACK=null, MONDAY=null;
+let CONFLICTS=new Set();
+
+function _toMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
+function _overlap(a,b){
+  let a1=_toMin(a.heure_debut),a2=a.heure_fin?_toMin(a.heure_fin):null;
+  let b1=_toMin(b.heure_debut),b2=b.heure_fin?_toMin(b.heure_fin):null;
+  if(a1==null||b1==null)return false;
+  if(a2==null) a2=a1+30; if(b2==null) b2=b1+30;
+  if(a2<=a1) a2+=24*60; if(b2<=b1) b2+=24*60;
+  return a1<b2 && b1<a2;
+}
+function computeConflicts(){
+  CONFLICTS.clear();
+  for(const c of S.allCreneauxWeek){
+    if(!c.heure_debut)continue;
+    const others=S.allCreneauxWeek.filter(x=>x.salarie_id===c.salarie_id && x.date===c.date && x.restaurant_id!==c.restaurant_id && x.heure_debut);
+    for(const o of others){
+      if(_overlap(c,o)){ CONFLICTS.add(`${c.salarie_id}|${c.date}|${c.service}`); break; }
+    }
+  }
+}
+function updateConflictsUI(){
+  computeConflicts();
+  document.querySelectorAll('table.plan td[data-k]').forEach(td=>{
+    td.classList.toggle('conflict', CONFLICTS.has(td.dataset.k));
+  });
+}
+function describeConflict(sid,date){
+  // pour message d'alerte
+  const others=S.allCreneauxWeek.filter(x=>x.salarie_id===sid && x.date===date && x.restaurant_id!==SNACK.id && x.heure_debut);
+  return others.map(o=>{const r=S.restos.find(x=>x.id===o.restaurant_id);return (r?.nom||'?').replace('Raya ','')+' '+o.service+' '+(o.heure_debut||'').slice(0,5)+'→'+(o.heure_fin||'').slice(0,5);}).join(' · ');
+}
 let zoom=parseFloat(localStorage.getItem('pl_zoom')||'1');
 function setZoom(z){zoom=Math.max(0.7,Math.min(1.6,Math.round(z*10)/10));localStorage.setItem('pl_zoom',zoom);document.documentElement.style.setProperty('--zoom',zoom);const l=document.getElementById('zLabel');if(l)l.textContent=Math.round(zoom*100)+' %';}
 function normTime(v){if(!v)return '';v=String(v).trim().replace(/[^0-9:hH]/g,'').replace(/[hH]/,':');let m=v.match(/^(\d{1,2}):(\d{2})$/);if(m){const h=+m[1],mn=+m[2];if(h<24&&mn<60)return String(h).padStart(2,'0')+':'+String(mn).padStart(2,'0');}m=v.match(/^(\d{1,2})$/);if(m){const h=+m[1];if(h<24)return String(h).padStart(2,'0')+':00';}return null;}
 
 function unlock(){if(document.getElementById('pw').value===ADMIN_PW){sessionStorage.setItem('pl_ok','1');showApp();}else document.getElementById('pwerr').textContent='Incorrect';}
-function showApp(){document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('ver').textContent=VERSION;setZoom(zoom);init();}
+function showApp(){document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('ver').textContent=VERSION;setZoom(zoom);buildTimeList();init();}
+function buildTimeList(){
+  const opts=[];
+  // 9h - 23h30 (créneaux midi+soir habituels), puis 00h - 03h (fermetures tardives)
+  for(let h=9;h<24;h++){opts.push(`${String(h).padStart(2,'0')}:00`);opts.push(`${String(h).padStart(2,'0')}:30`);}
+  for(let h=0;h<4;h++){opts.push(`${String(h).padStart(2,'0')}:00`);opts.push(`${String(h).padStart(2,'0')}:30`);}
+  document.getElementById('t-list').innerHTML=opts.map(t=>`<option value="${t}">`).join('');
+}
 if(sessionStorage.getItem('pl_ok')==='1')showApp();
 
 function getMonday(d){d=new Date(d);const day=d.getDay();const diff=day===0?-6:1-day;d.setDate(d.getDate()+diff);d.setHours(0,0,0,0);return d;}
@@ -229,8 +272,10 @@ function renderTable(){
         const cr=getCreneau(s.id,date,svc)||{};
         const cls=svc;
         const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
-        tbody+=`<td class="${cls}"><input type="text" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
-        tbody+=`<td class="${cls}"><input type="text" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
+        const cellKey=`${s.id}|${date}|${svc}`;
+        const isConf=CONFLICTS.has(cellKey);
+        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
+        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
       });
     });
     tbody+='</tr>';
@@ -263,9 +308,15 @@ async function saveCell(sid,date,svc,which,el){
   const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin};
   const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
   if(error){setSS('err','Erreur: '+error.message);return;}
-  S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));
-  S.creneaux.push(data);
-  setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();
+  S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));S.creneaux.push(data);
+  S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
+  setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();
+  // Alerte si conflit avec un autre snack
+  if(CONFLICTS.has(`${sid}|${date}|${svc}`)){
+    const sal=S.salaries.find(x=>x.id===sid);
+    const det=describeConflict(sid,date);
+    alert(`⚠ Conflit inter-snack\n\n${[sal?.prenom,sal?.nom].filter(Boolean).join(' ')} est déjà sur :\n${det}\n\nLes cellules en conflit sont marquées en rouge.`);
+  }
 }
 
 function renderChecks(){
@@ -363,6 +414,7 @@ function renderChecks(){
 
 function render(){
   document.getElementById('wkLabel').textContent=wkRangeLabel();
+  computeConflicts();
   renderEffectifs();renderTable();renderChecks();
   setSS('','');
 }
