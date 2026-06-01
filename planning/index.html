@@ -118,6 +118,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button onclick="setZoom(zoom+0.1)">+</button>
       </div>
       <span class="save-state" id="ss"></span>
+      <button class="btn ghost" onclick="openReglages()">⚙ Réglages</button>
       <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
       <input type="file" id="xlsxFile" accept=".xlsx,.xlsm" style="display:none" onchange="handleImport(event)">
       <button class="btn ghost" onclick="openPdfModal()">📄 Export PDF</button>
@@ -162,11 +163,12 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.8 · sélection + copier/coller';
+const VERSION='v0.9 · réglages + fix vérifs';
+let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
-let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[]};
+let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[],effectifs:[],regles:[]};
 let SNACK=null, MONDAY=null;
 let CONFLICTS=new Set();
 
@@ -232,31 +234,40 @@ async function init(){
 
 async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
-  const[s,ro,d,cr,crAll]=await Promise.all([
+  const[s,ro,d,cr,crAll,eff,reg]=await Promise.all([
     sb.from('salaries').select('*').eq('actif',true).order('nom'),
     sb.from('salarie_roles').select('*'),
     sb.from('salarie_dispos').select('*'),
     sb.from('planning_creneaux').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to),
-    sb.from('planning_creneaux').select('*').gte('date',from).lt('date',to) // toutes snacks pour détection doublons
+    sb.from('planning_creneaux').select('*').gte('date',from).lt('date',to),
+    sb.from('planning_effectifs').select('*'),
+    sb.from('planning_regles').select('*')
   ]);
-  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];
+  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];
   render();
 }
+function dayJourType(i){if(i<=2)return 'Lu-Me';if(i===3)return 'Je';if(i===4)return 'Ve';if(i===5)return 'Sa';return 'Di';}
 
 const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.role))];
 const roleMain=sid=>{const r=rolesOf(sid);return r[0]||null;};
 const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
 
 function targetFor(dayIndex,service){
+  // 1) Préférer les effectifs configurés en base pour ce snack
+  const jt=dayJourType(dayIndex);
+  const fromDb=S.effectifs.filter(e=>e.restaurant_id===SNACK.id && e.jour_type===jt && e.service===service);
+  if(fromDb.length){
+    const t={cuisine:0,caisse:0};fromDb.forEach(e=>{if(t[e.role]!=null)t[e.role]=e.nb_cible;});
+    return t;
+  }
+  // 2) Sinon defaults hardcodés
   const isGC=SNACK.nom.toLowerCase().includes('grand');
   if(isGC){
     if(service==='midi') return dayIndex===6?{cuisine:0,caisse:0}:{cuisine:4,caisse:2};
-    // soir
-    if(dayIndex<=3) return {cuisine:4,caisse:3}; // Lu-Je
-    if(dayIndex<=5) return {cuisine:5,caisse:3}; // Ve-Sa
-    return {cuisine:3,caisse:1}; // Di
+    if(dayIndex<=3) return {cuisine:4,caisse:3};
+    if(dayIndex<=5) return {cuisine:5,caisse:3};
+    return {cuisine:3,caisse:1};
   }
-  // Lobau / Carnot
   if(service==='midi') return dayIndex===6?{cuisine:0,caisse:0}:{cuisine:3,caisse:1};
   if(dayIndex<=3) return {cuisine:3,caisse:1};
   if(dayIndex<=5) return {cuisine:4,caisse:2};
@@ -351,8 +362,8 @@ async function saveCell(sid,date,svc,which,el){
   S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));S.creneaux.push(data);
   S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
   setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();
-  // Alerte si conflit avec un autre snack
-  if(CONFLICTS.has(`${sid}|${date}|${svc}`)){
+  // Alerte si conflit avec un autre snack (sauf si popups désactivés)
+  if(POPUP_ALERTS && CONFLICTS.has(`${sid}|${date}|${svc}`)){
     const sal=S.salaries.find(x=>x.id===sid);
     const det=describeConflict(sid,date);
     alert(`⚠ Conflit inter-snack\n\n${[sal?.prenom,sal?.nom].filter(Boolean).join(' ')} est déjà sur :\n${det}\n\nLes cellules en conflit sont marquées en rouge.`);
@@ -440,8 +451,8 @@ function renderChecks(){
 
   // 7. Fin 2h → pas matin
   const fin2=[];
-  Object.entries(bySD2).forEach(([k,arr])=>{
-    const soir=arr.find(c=>c.service==='soir' && c.heure_fin);if(!soir)return;
+  Object.entries(bySD2).forEach(([k,svcs])=>{
+    const soir=svcs.soir;if(!soir||!soir.heure_fin)return;
     const fm=toMin(soir.heure_fin);
     if(fm!=null && fm>=0 && fm<=180){
       const[sid,date]=k.split('|');const nd=fmtDate(new Date(new Date(date).getTime()+86400000));
@@ -481,6 +492,71 @@ function render(){
 function navWeek(n){MONDAY=new Date(MONDAY.getTime()+n*7*86400000);loadWeek();}
 function goToday(){MONDAY=getMonday(new Date());loadWeek();}
 function onSnackChange(){const id=document.getElementById('snackSel').value;SNACK=S.restos.find(r=>r.id===id);loadWeek();}
+
+// ===== RÉGLAGES =====
+const JOUR_TYPES=['Lu-Me','Je','Ve','Sa','Di'];
+function openReglages(){
+  let html=`<h3 style="margin-bottom:6px">Réglages</h3><div style="color:var(--muted);font-size:12px;margin-bottom:14px">Snack : <b style="color:var(--gold)">${SNACK.nom}</b></div>`;
+
+  // Effectifs cibles
+  html+=`<div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:8px">Effectifs cibles (par type de jour)</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--surface);border:1px solid var(--line-2);border-radius:8px;overflow:hidden">
+      <thead><tr style="background:rgba(255,255,255,.03)"><th style="padding:6px 8px;text-align:left;font-weight:600;color:var(--muted)">Jour</th><th style="padding:6px 8px">Midi C</th><th style="padding:6px 8px">Midi R</th><th style="padding:6px 8px">Soir C</th><th style="padding:6px 8px">Soir R</th></tr></thead><tbody>`;
+  JOUR_TYPES.forEach(jt=>{
+    const get=(svc,role)=>{const t=targetForJT(jt,svc);return t[role];};
+    html+=`<tr><td style="padding:6px 8px;font-weight:600">${jt}</td>`;
+    for(const[svc,role]of[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']]){
+      html+=`<td style="padding:4px 6px"><input type="number" min="0" max="20" value="${get(svc,role)}" data-jt="${jt}" data-svc="${svc}" data-role="${role}" onblur="saveEffectif(this)" style="width:50px;padding:4px 6px;border-radius:5px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);text-align:center;font-size:12px"></td>`;
+    }
+    html+='</tr>';
+  });
+  html+='</tbody></table></div>';
+
+  // Règles
+  html+=`<div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:8px">Règles de vérification</div>
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:10px;max-height:200px;overflow:auto">`;
+  S.regles.forEach(r=>{
+    html+=`<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12.5px">
+      <label style="display:flex;align-items:center;gap:6px;flex:1"><input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${r.id}','active',this.checked)"> <span>${r.libelle||r.cle}</span></label>
+      ${r.valeur!=null?`<input type="text" value="${r.valeur||''}" data-id="${r.id}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:80px;padding:4px 6px;border-radius:5px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:12px">`:''}
+    </div>`;
+  });
+  if(!S.regles.length) html+='<div style="color:var(--muted);font-size:12px">Aucune règle en base. Les vérifications utilisent des valeurs par défaut.</div>';
+  html+='</div></div>';
+
+  // Comportement alertes
+  html+=`<div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:8px">Alertes</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" ${POPUP_ALERTS?'checked':''} onchange="setPopupAlerts(this.checked)"> Afficher une popup quand un conflit inter-snack est détecté</label>
+  </div>`;
+
+  html+=`<div class="actions"><button class="btn" onclick="document.getElementById('pdfModal').innerHTML='';render()">Fermer</button></div>`;
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this){document.getElementById('pdfModal').innerHTML='';render();}"><div class="pdf-modal" style="max-width:640px;max-height:88vh;overflow:auto">${html}</div></div>`;
+}
+function targetForJT(jt,svc){
+  const fromDb=S.effectifs.filter(e=>e.restaurant_id===SNACK.id && e.jour_type===jt && e.service===svc);
+  if(fromDb.length){const t={cuisine:0,caisse:0};fromDb.forEach(e=>{if(t[e.role]!=null)t[e.role]=e.nb_cible;});return t;}
+  const i={'Lu-Me':0,'Je':3,'Ve':4,'Sa':5,'Di':6}[jt];
+  return targetFor(i,svc);
+}
+async function saveEffectif(inp){
+  const jt=inp.dataset.jt,svc=inp.dataset.svc,role=inp.dataset.role,nb=parseInt(inp.value)||0;
+  const existing=S.effectifs.find(e=>e.restaurant_id===SNACK.id&&e.jour_type===jt&&e.service===svc&&e.role===role);
+  if(existing){
+    const{error}=await sb.from('planning_effectifs').update({nb_cible:nb}).eq('id',existing.id);
+    if(error){alert('Erreur: '+error.message);return;}existing.nb_cible=nb;
+  } else {
+    const{data,error}=await sb.from('planning_effectifs').insert({restaurant_id:SNACK.id,jour_type:jt,service:svc,role,nb_cible:nb}).select().single();
+    if(error){alert('Erreur: '+error.message);return;}S.effectifs.push(data);
+  }
+  setSS('ok','Effectif sauvegardé');
+}
+async function saveRegle(id,field,val){
+  const{error}=await sb.from('planning_regles').update({[field]:val}).eq('id',id);
+  if(error){alert('Erreur: '+error.message);return;}
+  const r=S.regles.find(x=>x.id===id);if(r)r[field]=val;
+  setSS('ok','Règle sauvegardée');
+}
+function setPopupAlerts(v){POPUP_ALERTS=v;localStorage.setItem('pl_popups',v?'1':'0');}
 
 // ===== SÉLECTION & COPIER/COLLER =====
 let SELECTION={anchor:null,end:null,dragStart:null};
