@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Raya — Planning</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--midi:rgba(200,160,53,.06);--soir:rgba(91,156,255,.05);--zoom:1}
@@ -112,6 +113,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button onclick="setZoom(zoom+0.1)">+</button>
       </div>
       <span class="save-state" id="ss"></span>
+      <button class="btn ghost" onclick="openPdfModal()">📄 Export PDF</button>
       <a href="../" class="btn ghost">Portail</a>
     </div>
   </div>
@@ -123,12 +125,37 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
   <div class="checks"><h3>Vérifications</h3><div class="chk-list" id="checks"></div></div>
 </div>
 
+<div id="pdfModal"></div>
+<div id="pdfHost" style="position:fixed;left:-99999px;top:0;background:#fff;color:#000;width:1400px"></div>
+
+<style>
+.pdf-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:200}
+.pdf-modal{background:var(--card);border:1px solid var(--line-2);border-radius:12px;padding:22px;min-width:340px;max-width:460px}
+.pdf-modal h3{font-size:16px;margin-bottom:14px}
+.pdf-modal .snacks{display:flex;flex-direction:column;gap:8px;background:var(--surface);padding:12px;border-radius:8px;border:1px solid var(--line-2);margin-bottom:14px}
+.pdf-modal label{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+.pdf-modal .actions{display:flex;gap:10px;justify-content:flex-end}
+/* Print grid (light theme) */
+.pg{padding:24px;font-family:-apple-system,Arial,sans-serif;color:#111;page-break-after:always}
+.pg:last-child{page-break-after:auto}
+.pg h1{font-size:18px;margin-bottom:4px;color:#000}
+.pg h2{font-size:13px;color:#666;font-weight:400;margin-bottom:14px}
+.pg table{width:100%;border-collapse:collapse;font-size:10.5px}
+.pg th,.pg td{border:1px solid #ccc;padding:4px 5px;text-align:center}
+.pg th{background:#eee;font-weight:600;font-size:9.5px;text-transform:uppercase;letter-spacing:.03em;color:#444}
+.pg td.salname{text-align:left;font-weight:600;background:#fafafa;min-width:130px}
+.pg td.midi{background:#fff7e0}
+.pg td.soir{background:#e6efff}
+.pg .role{font-size:9px;color:#888;margin-left:5px}
+.pg .legend{font-size:9.5px;color:#666;margin-top:12px}
+</style>
+
 <script>
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.3 · datalist + conflits stricts';
+const VERSION='v0.4 · export PDF';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
@@ -422,6 +449,87 @@ function render(){
 function navWeek(n){MONDAY=new Date(MONDAY.getTime()+n*7*86400000);loadWeek();}
 function goToday(){MONDAY=getMonday(new Date());loadWeek();}
 function onSnackChange(){const id=document.getElementById('snackSel').value;SNACK=S.restos.find(r=>r.id===id);loadWeek();}
+
+// ===== EXPORT PDF =====
+function isoWeek(d){const t=new Date(d);t.setHours(0,0,0,0);t.setDate(t.getDate()+3-(t.getDay()+6)%7);const w1=new Date(t.getFullYear(),0,4);return 1+Math.round(((t-w1)/86400000-3+(w1.getDay()+6)%7)/7);}
+function monthLabel(d){return d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'}).replace(/^./,c=>c.toUpperCase());}
+function shortSnack(nom){return (nom||'').replace('Raya ','').trim();}
+
+function openPdfModal(){
+  const opts=S.restos.map(r=>`<label><input type="checkbox" class="pdfck" value="${r.id}" ${r.id===SNACK?.id?'checked':''}> ${r.nom}</label>`).join('');
+  document.getElementById('pdfModal').innerHTML=`
+  <div class="pdf-bg" onclick="if(event.target===this)closePdfModal()">
+    <div class="pdf-modal">
+      <h3>Export PDF — Sem. ${isoWeek(MONDAY)} · ${monthLabel(MONDAY)}</h3>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:10px">Coche le ou les snacks à exporter :</div>
+      <div class="snacks">${opts}</div>
+      <div class="actions">
+        <button class="btn ghost" onclick="closePdfModal()">Annuler</button>
+        <button class="btn" onclick="runPdf()">Générer le PDF</button>
+      </div>
+    </div>
+  </div>`;
+}
+function closePdfModal(){document.getElementById('pdfModal').innerHTML='';}
+
+async function runPdf(){
+  const ids=[...document.querySelectorAll('.pdfck:checked')].map(c=>c.value);
+  if(!ids.length){alert('Sélectionne au moins un snack');return;}
+  closePdfModal();setSS('busy','Génération PDF…');
+
+  const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
+  // Toutes les créneaux des snacks demandés
+  const{data:allCr}=await sb.from('planning_creneaux').select('*').in('restaurant_id',ids).gte('date',from).lt('date',to);
+  const creneauxByResto={};(allCr||[]).forEach(c=>{(creneauxByResto[c.restaurant_id]=creneauxByResto[c.restaurant_id]||[]).push(c);});
+
+  const host=document.getElementById('pdfHost');host.innerHTML='';
+  ids.forEach(rid=>{const r=S.restos.find(x=>x.id===rid);if(r)host.appendChild(buildPrintPage(r,creneauxByResto[rid]||[]));});
+
+  const snLabel=ids.length===1?shortSnack(S.restos.find(r=>r.id===ids[0])?.nom):'multi';
+  const filename=`Planning ${snLabel} S${isoWeek(MONDAY)} ${monthLabel(MONDAY)}.pdf`;
+  try{
+    await html2pdf().set({
+      margin:8,filename,
+      image:{type:'jpeg',quality:0.95},
+      html2canvas:{scale:2,backgroundColor:'#ffffff'},
+      jsPDF:{unit:'mm',format:'a3',orientation:'landscape'}
+    }).from(host).save();
+    setSS('ok','PDF généré ✓');
+  }catch(e){setSS('err','Erreur PDF: '+e.message);}
+  host.innerHTML='';
+}
+
+function buildPrintPage(resto,creneaux){
+  const div=document.createElement('div');div.className='pg';
+  // salariés concernés : ceux qui ont au moins un créneau ce mois OU snack origine OU multi
+  const sids=new Set(creneaux.map(c=>c.salarie_id));
+  const list=S.salaries.filter(s=>s.actif!==false && (s.snack_origine_id===resto.id||s.est_multi||sids.has(s.id)))
+    .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return (ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
+  const get=(sid,date,svc)=>creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);
+  let html=`<h1>Planning ${shortSnack(resto.nom)}</h1><h2>Semaine ${isoWeek(MONDAY)} · ${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} au ${new Date(MONDAY.getTime()+6*86400000).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}</h2>`;
+  html+='<table><thead><tr><th rowspan="2">Salarié</th>';
+  for(let i=0;i<7;i++){html+=`<th colspan="4">${JOURS[i]} ${dateOfDay(i).getDate()}</th>`;}
+  html+='</tr><tr>';for(let i=0;i<7;i++){html+='<th>M dbt</th><th>M fin</th><th>S dbt</th><th>S fin</th>';}
+  html+='</tr></thead><tbody>';
+  list.forEach(s=>{
+    const role=roleMain(s.id)||'';
+    const tag=role==='cuisine'?'<span class="role">C</span>':(role==='caisse'?'<span class="role">R</span>':'');
+    html+=`<tr><td class="salname">${[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom}${tag}</td>`;
+    for(let i=0;i<7;i++){
+      const d=fmtDate(dateOfDay(i));
+      for(const svc of ['midi','soir']){
+        const cr=get(s.id,d,svc)||{};
+        const cls=svc;
+        html+=`<td class="${cls}">${(cr.heure_debut||'').slice(0,5)}</td><td class="${cls}">${(cr.heure_fin||'').slice(0,5)}</td>`;
+      }
+    }
+    html+='</tr>';
+  });
+  if(!list.length) html+='<tr><td colspan="29" style="text-align:center;padding:24px;color:#888">Aucun salarié</td></tr>';
+  html+='</tbody></table><div class="legend">C = Cuisine · R = Réception · M = Midi · S = Soir</div>';
+  div.innerHTML=html;
+  return div;
+}
 </script>
 </body>
 </html>
