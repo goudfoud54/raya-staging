@@ -128,6 +128,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       </div>
       <button class="btn ghost" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
       <button class="btn ghost" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
+      <button class="btn ghost" onclick="openReport()" title="Comparer pointages réels avec le planning">📊 Rapport</button>
       <button class="btn" onclick="autoFillWeek()" title="Remplir la semaine en fonction des dispos & règles">🎲 Auto-fill</button>
       <button class="btn ghost" onclick="openReglages()">⚙ Réglages</button>
       <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
@@ -175,7 +176,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.14 · éditeur de postes précis';
+const VERSION='v0.15 · rapport réel vs prévu';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -899,6 +900,88 @@ async function saveShifts(){
   openReglages();
 }
 function closeShiftsEditor(){document.getElementById('shiftsModal').innerHTML='';SHIFTS_STATE=null;}
+
+// ===== RAPPORT : RÉEL vs PRÉVU =====
+async function openReport(){
+  setSS('busy','Chargement pointages…');
+  const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
+  const{data:pts,error}=await sb.from('pointages').select('*').gte('ts',from+'T00:00:00').lt('ts',to+'T00:00:00').order('ts');
+  if(error){setSS('err','Erreur: '+error.message);return;}
+  setSS('','');
+  // Index pointages par (sid|date)
+  const idx={};(pts||[]).forEach(p=>{const k=p.salarie_id+'|'+p.ts.slice(0,10);(idx[k]=idx[k]||[]).push(p);});
+  const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
+  const retards=[],absences=[],depAntic=[],sansPlan=[];
+  // Pour chaque créneau planifié sur ce snack
+  S.creneaux.forEach(c=>{
+    if(!c.heure_debut)return;
+    const k=c.salarie_id+'|'+c.date;
+    const dayPts=(idx[k]||[]).slice().sort((a,b)=>a.ts.localeCompare(b.ts));
+    const plannedStart=new Date(c.date+'T'+c.heure_debut.slice(0,5)+':00');
+    const arrPts=dayPts.filter(p=>p.type==='arrivee').sort((a,b)=>Math.abs(new Date(a.ts)-plannedStart)-Math.abs(new Date(b.ts)-plannedStart));
+    const arr=arrPts[0];
+    if(!arr || Math.abs((new Date(arr.ts)-plannedStart)/60000)>240){
+      absences.push({sid:c.salarie_id,date:c.date,svc:c.service,planned:c.heure_debut.slice(0,5)+'→'+(c.heure_fin||'?').slice(0,5)});
+    } else {
+      const dMin=Math.round((new Date(arr.ts)-plannedStart)/60000);
+      if(dMin>5){
+        retards.push({sid:c.salarie_id,date:c.date,svc:c.service,planned:c.heure_debut.slice(0,5),actual:new Date(arr.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),delta:dMin});
+      }
+    }
+    if(c.heure_fin){
+      const plannedEnd=new Date(c.date+'T'+c.heure_fin.slice(0,5)+':00');
+      // Si heure_fin <= heure_debut, on est sur le lendemain
+      if(plannedEnd<=plannedStart) plannedEnd.setDate(plannedEnd.getDate()+1);
+      const sorPts=dayPts.filter(p=>p.type==='sortie').sort((a,b)=>Math.abs(new Date(a.ts)-plannedEnd)-Math.abs(new Date(b.ts)-plannedEnd));
+      // Inclure pointages du lendemain matin si fin tardive
+      if(c.heure_fin && plannedEnd.getDate()!==new Date(c.date).getDate()){
+        const k2=c.salarie_id+'|'+fmtDate(plannedEnd);
+        (idx[k2]||[]).filter(p=>p.type==='sortie').forEach(p=>sorPts.push(p));
+        sorPts.sort((a,b)=>Math.abs(new Date(a.ts)-plannedEnd)-Math.abs(new Date(b.ts)-plannedEnd));
+      }
+      const sor=sorPts[0];
+      if(sor && Math.abs((new Date(sor.ts)-plannedEnd)/60000)<=240){
+        const dMin=Math.round((new Date(sor.ts)-plannedEnd)/60000);
+        if(dMin<-10){
+          depAntic.push({sid:c.salarie_id,date:c.date,svc:c.service,planned:c.heure_fin.slice(0,5),actual:new Date(sor.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),delta:-dMin});
+        }
+      }
+    }
+  });
+  // Pointages sans planning (sur ce snack uniquement)
+  Object.entries(idx).forEach(([k,dayPts])=>{
+    const[sid,date]=k.split('|');
+    const planned=S.creneaux.find(c=>c.salarie_id===sid && c.date===date);
+    if(!planned){
+      const arr=dayPts.find(p=>p.type==='arrivee' && p.restaurant_id===SNACK.id);
+      if(arr) sansPlan.push({sid,date,time:new Date(arr.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})});
+    }
+  });
+
+  const fmtD=d=>new Date(d).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'});
+  const section=(title,color,items,renderItem)=>{
+    return `<div style="margin-bottom:18px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:${color}">${title} <span style="color:var(--muted);font-weight:400">(${items.length})</span></div>
+      ${items.length?`<div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;max-height:240px;overflow:auto">
+        ${items.map(renderItem).join('')}
+      </div>`:'<div style="color:var(--muted);font-size:12px">Aucun</div>'}
+    </div>`;
+  };
+  const html=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div><h3 style="margin:0;font-size:17px">Rapport semaine ${isoWeek(MONDAY)}</h3>
+      <div style="color:var(--muted);font-size:12px;margin-top:4px">Pointages (badgeuse) vs planning — ${SNACK.nom}</div></div>
+      <button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕</button>
+    </div>
+    <div style="margin:14px 0">
+      ${section('🔴 Retards (>5 min)','var(--bad)',retards.sort((a,b)=>b.delta-a.delta),r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned} → réel ${r.actual} <b style="color:var(--bad);margin-left:6px">+${r.delta} min</b></span></div>`)}
+      ${section('⚠ Absences (pas de pointage)','var(--warn)',absences,r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned}</span></div>`)}
+      ${section('🟠 Départs anticipés (>10 min)','var(--warn)',depAntic.sort((a,b)=>b.delta-a.delta),r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned} → réel ${r.actual} <b style="color:var(--warn);margin-left:6px">−${r.delta} min</b></span></div>`)}
+      ${section('🔵 Pointages sans planning','#5b9cff',sansPlan,r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)}</span><span style="color:var(--muted)">arrivée ${r.time}</span></div>`)}
+    </div>
+    ${(!retards.length && !absences.length && !depAntic.length && !sansPlan.length)?'<div style="text-align:center;padding:24px;color:var(--ok);font-weight:600">✓ Tout est conforme</div>':''}`;
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:88vh;overflow:auto;padding:24px">${html}</div></div>`;
+}
 
 // ===== AUTO-FILL =====
 const DEFAULT_SHIFTS={
