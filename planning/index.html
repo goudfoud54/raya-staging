@@ -17,6 +17,7 @@ a{color:var(--gold);text-decoration:none}
 input,select,button{font-family:inherit;color:var(--text)}
 button{cursor:pointer;border:none;background:none}
 .btn{padding:8px 14px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:12px;border:1px solid transparent}
+.btn:disabled{opacity:.3;cursor:not-allowed}
 .btn.ghost{background:transparent;color:var(--text);border-color:var(--line-2)}
 .btn.ghost:hover{background:rgba(255,255,255,.04)}
 .btn.sm{padding:5px 9px;font-size:11px}
@@ -120,6 +121,8 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button onclick="setZoom(zoom+0.1)">+</button>
       </div>
       <span class="save-state" id="ss"></span>
+      <button class="btn ghost" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
+      <button class="btn ghost" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
       <button class="btn" onclick="autoFillWeek()" title="Remplir la semaine en fonction des dispos & règles">🎲 Auto-fill</button>
       <button class="btn ghost" onclick="openReglages()">⚙ Réglages</button>
       <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
@@ -137,7 +140,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 </div>
 
 <div id="pdfModal"></div>
-<div id="pdfHost" style="position:fixed;left:-99999px;top:0;background:#fff;color:#000;width:1400px"></div>
+<div id="pdfHost" style="position:absolute;left:-9999px;top:0;background:#fff;color:#000;width:1400px;visibility:visible"></div>
 
 <style>
 .pdf-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:200}
@@ -166,7 +169,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.10 · auto-fill + récap heures';
+const VERSION='v0.11 · undo/redo + fix PDF';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -174,6 +177,42 @@ const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
 let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[],effectifs:[],regles:[]};
 let SNACK=null, MONDAY=null;
 let CONFLICTS=new Set();
+// ===== UNDO/REDO =====
+let UNDO=[], REDO=[], _txn=null;
+function beginTxn(){_txn=[];}
+function endTxn(){if(_txn&&_txn.length){UNDO.push(_txn);if(UNDO.length>50)UNDO.shift();REDO=[];updateUndoBtns();}_txn=null;}
+function recordAction(before,after){
+  const entry={before:before?{...before}:null,after:after?{...after}:null};
+  if(_txn)_txn.push(entry);
+  else{UNDO.push([entry]);if(UNDO.length>50)UNDO.shift();REDO=[];updateUndoBtns();}
+}
+function updateUndoBtns(){
+  const u=document.getElementById('btnUndo'),r=document.getElementById('btnRedo');
+  if(u)u.disabled=!UNDO.length;
+  if(r)r.disabled=!REDO.length;
+}
+async function applyAction(a,direction){
+  // direction=1 (redo) -> apply after ; direction=-1 (undo) -> apply before
+  const target=direction===1?a.after:a.before;
+  const fallback=direction===1?a.before:a.after;
+  if(target){
+    await sb.from('planning_creneaux').upsert(target,{onConflict:'restaurant_id,salarie_id,date,service'});
+  } else if(fallback){
+    await sb.from('planning_creneaux').delete().eq('restaurant_id',fallback.restaurant_id).eq('salarie_id',fallback.salarie_id).eq('date',fallback.date).eq('service',fallback.service);
+  }
+}
+async function undo(){
+  if(!UNDO.length)return;setSS('busy','Annulation…');
+  const batch=UNDO.pop();
+  for(const a of [...batch].reverse()) await applyAction(a,-1);
+  REDO.push(batch);await loadWeek();setSS('ok','↶ Annulé');updateUndoBtns();
+}
+async function redo(){
+  if(!REDO.length)return;setSS('busy','Rétablissement…');
+  const batch=REDO.pop();
+  for(const a of batch) await applyAction(a,1);
+  UNDO.push(batch);await loadWeek();setSS('ok','↷ Rétabli');updateUndoBtns();
+}
 
 function _toMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
 function _overlap(a,b){
@@ -356,11 +395,12 @@ async function saveCell(sid,date,svc,which,el){
   const v=normTime(raw);
   if(v===null){setSS('err','Format invalide (HH:MM)');el.value=el.dataset.saved||'';return;}
   el.value=v;
-  // Pas de changement → ne rien faire
   if(v===(el.dataset.saved||'')) return;
   el.dataset.saved=v;
   setSS('busy','Enregistrement…');
-  const cr=getCreneau(sid,date,svc)||{salarie_id:sid,restaurant_id:SNACK.id,date,service:svc,role:roleMain(sid)||'cuisine'};
+  const existing=getCreneau(sid,date,svc);
+  const before=existing?{...existing}:null;
+  const cr=existing?{...existing}:{salarie_id:sid,restaurant_id:SNACK.id,date,service:svc,role:roleMain(sid)||'cuisine'};
   if(which==='deb') cr.heure_debut=v||null; else cr.heure_fin=v||null;
   // Si vide des 2 côtés → suppression
   if(!cr.heure_debut && !cr.heure_fin){
@@ -369,7 +409,9 @@ async function saveCell(sid,date,svc,which,el){
       if(error){setSS('err','Erreur: '+error.message);return;}
     }
     S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));
-    setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();return;
+    S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));
+    recordAction(before,null);
+    setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();return;
   }
   // upsert
   const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin};
@@ -377,6 +419,7 @@ async function saveCell(sid,date,svc,which,el){
   if(error){setSS('err','Erreur: '+error.message);return;}
   S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));S.creneaux.push(data);
   S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
+  recordAction(before,data);
   setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();
   // Alerte si conflit avec un autre snack (sauf si popups désactivés)
   if(POPUP_ALERTS && CONFLICTS.has(`${sid}|${date}|${svc}`)){
@@ -501,7 +544,7 @@ function showCheckDetails(i){
 function render(){
   document.getElementById('wkLabel').textContent=wkRangeLabel();
   computeConflicts();
-  renderEffectifs();renderTable();renderChecks();
+  renderEffectifs();renderTable();renderChecks();updateUndoBtns();
   setSS('','');
 }
 
@@ -569,30 +612,50 @@ function openReglages(){
   if(!S.regles.length){
     html+='<div style="padding:18px;color:var(--muted);font-size:12px">Aucune règle configurée. Les vérifications utilisent les valeurs par défaut.</div>';
   } else {
-    S.regles.sort((a,b)=>{
+    // Trier : règles booléennes (avec on/off) en premier, valeurs obligatoires ensuite
+    const sorted=S.regles.slice().sort((a,b)=>{
       const ta=(RULE_META[a.cle]?.type||'z'),tb=(RULE_META[b.cle]?.type||'z');
-      return ta===tb?0:ta<tb?-1:1;
-    }).forEach((r,idx)=>{
+      const aIsBool=ta==='bool'?0:1, bIsBool=tb==='bool'?0:1;
+      if(aIsBool!==bIsBool) return aIsBool-bIsBool;
+      return (RULE_META[a.cle]?.lbl||a.cle).localeCompare(RULE_META[b.cle]?.lbl||b.cle);
+    });
+    let lastType=null;
+    sorted.forEach((r,idx)=>{
       const meta=RULE_META[r.cle]||{lbl:r.libelle||r.cle,type:'text'};
+      const isBool=meta.type==='bool';
+      // Insérer un sous-titre quand on passe des booléens aux valeurs
+      if(isBool && lastType!=='bool'){
+        html+=`<div style="padding:10px 16px 4px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;background:rgba(255,255,255,.02)">Règles activables</div>`;
+      } else if(!isBool && lastType==='bool'){
+        html+=`<div style="padding:10px 16px 4px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;background:rgba(255,255,255,.02);border-top:1px solid var(--line)">Limites & valeurs</div>`;
+      } else if(idx===0 && !isBool){
+        html+=`<div style="padding:10px 16px 4px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;background:rgba(255,255,255,.02)">Limites & valeurs</div>`;
+      }
+      lastType=isBool?'bool':'val';
+
       let valueInput='';
-      if(meta.type==='bool'){
-        // booléen : pas de champ valeur, juste case Activé
-        valueInput='';
-      } else if(meta.type==='number'){
+      if(meta.type==='number'){
         valueInput=`<input type="number" ${meta.min!=null?`min="${meta.min}"`:''} ${meta.max!=null?`max="${meta.max}"`:''} value="${r.valeur||0}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:80px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;text-align:center;font-weight:600">${meta.unit?`<span style="color:var(--muted);font-size:12px;margin-left:6px">${meta.unit}</span>`:''}`;
       } else if(meta.type==='time'){
         valueInput=`<input type="time" value="${r.valeur||'00:00'}" onblur="saveRegle('${r.id}','valeur',this.value)" style="padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">`;
-      } else {
+      } else if(!isBool) {
         valueInput=`<input type="text" value="${r.valeur||''}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:120px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px">`;
       }
-      const sep=idx>0?'border-top:1px solid var(--line);':'';
-      html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;${sep}">
-        <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
-          <input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${r.id}','active',this.checked)" style="width:18px;height:18px;cursor:pointer">
-          <span style="font-size:13.5px">${meta.lbl}</span>
-        </label>
-        ${valueInput?`<div>${valueInput}</div>`:'<div style="color:var(--muted);font-size:11px">'+(r.active?'Activée':'Désactivée')+'</div>'}
-      </div>`;
+
+      if(isBool){
+        html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line)">
+          <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
+            <input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${r.id}','active',this.checked)" style="width:18px;height:18px;cursor:pointer">
+            <span style="font-size:13.5px">${meta.lbl}</span>
+          </label>
+        </div>`;
+      } else {
+        // Règles à valeur — pas de case, juste le champ
+        html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line)">
+          <span style="font-size:13.5px;flex:1">${meta.lbl}</span>
+          <div>${valueInput}</div>
+        </div>`;
+      }
     });
   }
   html+='</div></div>';
@@ -655,6 +718,7 @@ async function autoFillWeek(){
 }
 async function autoFillCore(dayIndices){
   setSS('busy','Remplissage en cours…');
+  beginTxn();
   let added=0,skipped=0;
   const hoursWeek=sid=>S.creneaux.filter(c=>c.salarie_id===sid).reduce((a,c)=>a+_autoDur(c.heure_debut,c.heure_fin),0)/60;
   for(const di of dayIndices){
@@ -693,11 +757,12 @@ async function autoFillCore(dayIndices){
           const s=candidates[i];
           const payload={restaurant_id:SNACK.id,salarie_id:s.id,role,date,service:svc,heure_debut:deb,heure_fin:fin};
           const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
-          if(error){skipped++;}else{S.creneaux.push(data);S.allCreneauxWeek.push(data);added++;}
+          if(error){skipped++;}else{S.creneaux.push(data);S.allCreneauxWeek.push(data);if(_txn)_txn.push({before:null,after:data});added++;}
         }
       }
     }
   }
+  endTxn();
   await loadWeek();
   setSS('ok',`✓ ${added} créneau(x) ajouté(s)${skipped?` · ${skipped} non couvert(s) (manque de candidats)`:''}`);
 }
@@ -755,19 +820,22 @@ document.addEventListener('keydown',e=>{
     if(!CLIPBOARD)return;
     let target=document.activeElement;
     if(!target||!target.matches('table.plan td input')){
-      // utiliser l'ancre de sélection si dispo
       if(SELECTION.anchor){const a=SELECTION.anchor;target=document.querySelector(`table.plan input[data-row="${a.row}"][data-col="${a.col}"]`);}
     }
     if(!target){setSS('err','Clique d\'abord une cellule cible');return;}
     const tr=+target.dataset.row,tc=+target.dataset.col;
+    beginTxn();
     let pasted=0;
     CLIPBOARD.forEach((row,i)=>row.forEach((v,j)=>{
       const inp=document.querySelector(`table.plan input[data-row="${tr+i}"][data-col="${tc+j}"]`);
       if(inp){inp.value=v;inp.dispatchEvent(new Event('blur'));pasted++;}
     }));
+    setTimeout(endTxn,500);
     setSS('ok',`${pasted} cellule(s) collée(s)`);
     e.preventDefault();
   }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'&&!e.shiftKey){e.preventDefault();undo();return;}
+  if((e.ctrlKey||e.metaKey)&&((e.key.toLowerCase()==='y')||(e.shiftKey&&e.key.toLowerCase()==='z'))){e.preventDefault();redo();return;}
   if(e.key==='Escape'){clearSelection();CLIPBOARD=null;setSS('','');}
   if((e.key==='Delete'||e.key==='Backspace') && SELECTION.anchor && SELECTION.end){
     // Vider toutes les cellules sélectionnées
@@ -820,6 +888,9 @@ async function runPdf(){
 
   const host=document.getElementById('pdfHost');host.innerHTML='';
   ids.forEach(rid=>{const r=S.restos.find(x=>x.id===rid);if(r)host.appendChild(buildPrintPage(r,creneauxByResto[rid]||[]));});
+  // Rendre visible le temps de la capture (sinon html2canvas peut produire un blanc)
+  host.style.left='0';host.style.zIndex='-1';
+  await new Promise(r=>setTimeout(r,150));
 
   const snLabel=ids.length===1?shortSnack(S.restos.find(r=>r.id===ids[0])?.nom):'multi';
   const filename=`Planning ${snLabel} S${isoWeek(MONDAY)} ${monthLabel(MONDAY)}.pdf`;
@@ -827,11 +898,13 @@ async function runPdf(){
     await html2pdf().set({
       margin:8,filename,
       image:{type:'jpeg',quality:0.95},
-      html2canvas:{scale:2,backgroundColor:'#ffffff'},
-      jsPDF:{unit:'mm',format:'a3',orientation:'landscape'}
+      html2canvas:{scale:2,backgroundColor:'#ffffff',windowWidth:1500,useCORS:true},
+      jsPDF:{unit:'mm',format:'a3',orientation:'landscape'},
+      pagebreak:{mode:['css','legacy']}
     }).from(host).save();
     setSS('ok','PDF généré ✓');
   }catch(e){setSS('err','Erreur PDF: '+e.message);}
+  host.style.left='-9999px';host.style.zIndex='auto';
   host.innerHTML='';
 }
 
