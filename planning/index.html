@@ -55,8 +55,8 @@ button{cursor:pointer;border:none;background:none}
 
 /* GRID */
 .grid-wrap{padding:16px 24px;overflow-x:auto}
-table.plan{border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:calc(1500px * var(--zoom));font-size:calc(11.5px * var(--zoom))}
-table.plan th,table.plan td{padding:calc(5px * var(--zoom)) calc(7px * var(--zoom));border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;vertical-align:middle;white-space:nowrap}
+table.plan{border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:calc(1500px * var(--zoom));font-size:max(calc(11.5px * var(--zoom)),9.5px)}
+table.plan th,table.plan td{padding:max(calc(4px * var(--zoom)),2px) max(calc(5px * var(--zoom)),3px);border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;vertical-align:middle;white-space:nowrap}
 table.plan th{background:rgba(255,255,255,.02);color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;z-index:5}
 table.plan th.dayhead{font-size:12px;color:var(--text);background:rgba(255,255,255,.04)}
 table.plan th.midi{background:var(--midi)}
@@ -65,7 +65,8 @@ table.plan td.salname{text-align:left;font-weight:600;background:var(--card);pos
 table.plan th.salhead{position:sticky;left:0;z-index:6;background:rgba(255,255,255,.02);min-width:130px;border-right:2px solid var(--line-2)}
 table.plan td.midi{background:var(--midi)}
 table.plan td.soir{background:var(--soir)}
-table.plan td input{width:calc(56px * var(--zoom));min-width:34px;padding:2px 3px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:calc(11px * var(--zoom));font-family:monospace;text-align:center;outline:none}
+table.plan td input{width:calc(56px * var(--zoom));min-width:42px;padding:2px 2px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:max(calc(11px * var(--zoom)),9px);font-family:monospace;text-align:center;outline:none;letter-spacing:-.3px}
+table.plan td.selected{box-shadow:inset 0 0 0 2px var(--gold);background-color:rgba(200,160,53,.18)!important}
 table.plan td.salname{background:color-mix(in srgb, var(--scol,#15151f) 14%, var(--card));border-left:4px solid var(--scol,#444)}
 table.plan td.midi{background:color-mix(in srgb, var(--scol,transparent) 10%, var(--midi))}
 table.plan td.soir{background:color-mix(in srgb, var(--scol,transparent) 10%, var(--soir))}
@@ -161,7 +162,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.7 · couleurs lignes + fix import';
+const VERSION='v0.8 · sélection + copier/coller';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
@@ -295,11 +296,12 @@ function renderTable(){
   thead+='</tr></thead>';
 
   let tbody='<tbody>';
-  list.forEach(s=>{
+  list.forEach((s,rowIdx)=>{
     const role=roleMain(s.id)||'';
     const roleTag=role==='cuisine'?'<span class="role-c">C</span>':(role==='caisse'?'<span class="role-k">R</span>':'');
     const col=s.couleur||'#666';
     tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span>${fullName(s)}${roleTag}</td>`;
+    let colIdx=0;
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
       ['midi','soir'].forEach(svc=>{
@@ -308,8 +310,9 @@ function renderTable(){
         const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
         const cellKey=`${s.id}|${date}|${svc}`;
         const isConf=CONFLICTS.has(cellKey);
-        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" data-saved="${hd}" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
-        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" data-saved="${hf}" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
+        const c1=colIdx++,c2=colIdx++;
+        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" data-saved="${hd}" data-row="${rowIdx}" data-col="${c1}" data-sid="${s.id}" data-date="${date}" data-svc="${svc}" data-w="deb" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
+        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" data-saved="${hf}" data-row="${rowIdx}" data-col="${c2}" data-sid="${s.id}" data-date="${date}" data-svc="${svc}" data-w="fin" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
       });
     });
     tbody+='</tr>';
@@ -413,17 +416,27 @@ function renderChecks(){
   });
   CHECKS.push({lbl:'Plafond heures hebdo',ok:over.length===0,details:over});
 
-  // 6. Amplitude ≤ 12h
+  // 6. Amplitude ≤ 12h (par bloc consécutif — la coupure ≥ 30 min sépare les blocs)
   const amp=[];
-  const bySD2={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD2[k]=bySD2[k]||[];bySD2[k].push(c);});
-  Object.entries(bySD2).forEach(([k,arr])=>{
-    const deb=arr.map(c=>toMin(c.heure_debut)).filter(x=>x!=null);
-    const fin=arr.map(c=>{let f=toMin(c.heure_fin),d=toMin(c.heure_debut);if(f!=null&&d!=null&&f<=d)f+=24*60;return f;}).filter(x=>x!=null);
-    if(!deb.length||!fin.length)return;
-    const a=Math.max(...fin)-Math.min(...deb);
-    if(a>12*60){const[sid,date]=k.split('|');amp.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${(a/60).toFixed(1)}h d'amplitude`);}
+  const bySD2={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD2[k]=bySD2[k]||{};bySD2[k][c.service]=c;});
+  Object.entries(bySD2).forEach(([k,svcs])=>{
+    const midi=svcs.midi, soir=svcs.soir;
+    const blocs=[];
+    const mkBloc=(c)=>{if(!c||!c.heure_debut)return null;let d=toMin(c.heure_debut),f=toMin(c.heure_fin);if(f==null)return null;if(f<=d)f+=24*60;return {d,f};};
+    const m=mkBloc(midi),s=mkBloc(soir);
+    if(m && s){
+      // si pause ≥ 30 min entre fin midi et début soir → 2 blocs distincts
+      const sStartAdj=s.d<m.f?s.d+24*60:s.d;
+      const gap=sStartAdj-m.f;
+      if(gap>=30) {blocs.push(m);blocs.push(s);} else {blocs.push({d:m.d,f:s.f<=m.d?s.f+24*60:s.f});}
+    } else if(m) blocs.push(m);
+    else if(s) blocs.push(s);
+    for(const b of blocs){
+      const a=b.f-b.d;
+      if(a>12*60){const[sid,date]=k.split('|');amp.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${(a/60).toFixed(1)}h consécutives`);}
+    }
   });
-  CHECKS.push({lbl:'Amplitude ≤ 12h',ok:amp.length===0,details:amp});
+  CHECKS.push({lbl:'Amplitude ≤ 12h consécutives',ok:amp.length===0,details:amp});
 
   // 7. Fin 2h → pas matin
   const fin2=[];
@@ -468,6 +481,75 @@ function render(){
 function navWeek(n){MONDAY=new Date(MONDAY.getTime()+n*7*86400000);loadWeek();}
 function goToday(){MONDAY=getMonday(new Date());loadWeek();}
 function onSnackChange(){const id=document.getElementById('snackSel').value;SNACK=S.restos.find(r=>r.id===id);loadWeek();}
+
+// ===== SÉLECTION & COPIER/COLLER =====
+let SELECTION={anchor:null,end:null,dragStart:null};
+let CLIPBOARD=null;
+function applySelectionUI(){
+  const a=SELECTION.anchor,b=SELECTION.end;
+  document.querySelectorAll('table.plan td.selected').forEach(td=>td.classList.remove('selected'));
+  if(!a||!b)return;
+  const minR=Math.min(a.row,b.row),maxR=Math.max(a.row,b.row);
+  const minC=Math.min(a.col,b.col),maxC=Math.max(a.col,b.col);
+  document.querySelectorAll('table.plan td input').forEach(inp=>{
+    const r=+inp.dataset.row,c=+inp.dataset.col;
+    if(r>=minR&&r<=maxR&&c>=minC&&c<=maxC) inp.parentElement.classList.add('selected');
+  });
+}
+function clearSelection(){SELECTION.anchor=null;SELECTION.end=null;applySelectionUI();}
+document.addEventListener('mousedown',e=>{
+  if(!e.target.matches('table.plan td input'))return;
+  const r=+e.target.dataset.row,c=+e.target.dataset.col;
+  if(e.shiftKey && SELECTION.anchor){SELECTION.end={row:r,col:c};applySelectionUI();e.preventDefault();return;}
+  SELECTION.anchor={row:r,col:c};SELECTION.end={row:r,col:c};
+  SELECTION.dragStart={x:e.clientX,y:e.clientY,target:e.target};
+  applySelectionUI();
+});
+document.addEventListener('mousemove',e=>{
+  if(!SELECTION.dragStart)return;
+  if(Math.abs(e.clientX-SELECTION.dragStart.x)+Math.abs(e.clientY-SELECTION.dragStart.y)<6)return;
+  const el=document.elementFromPoint(e.clientX,e.clientY);
+  if(!el||!el.matches||!el.matches('table.plan td input'))return;
+  // drag détecté : on blur l'input pour empêcher la sélection de texte
+  if(SELECTION.dragStart.target){SELECTION.dragStart.target.blur();SELECTION.dragStart.target=null;}
+  SELECTION.end={row:+el.dataset.row,col:+el.dataset.col};
+  applySelectionUI();
+});
+document.addEventListener('mouseup',()=>{SELECTION.dragStart=null;});
+
+document.addEventListener('keydown',e=>{
+  // Ignorer si on tape dans un input texte
+  const inpField=e.target.matches&&e.target.matches('input,textarea,select');
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='c'){
+    if(!SELECTION.anchor)return;
+    const a=SELECTION.anchor,b=SELECTION.end;
+    const minR=Math.min(a.row,b.row),maxR=Math.max(a.row,b.row);
+    const minC=Math.min(a.col,b.col),maxC=Math.max(a.col,b.col);
+    const g=[];
+    for(let r=minR;r<=maxR;r++){const row=[];for(let c=minC;c<=maxC;c++){const inp=document.querySelector(`table.plan input[data-row="${r}"][data-col="${c}"]`);row.push(inp?inp.value:'');}g.push(row);}
+    CLIPBOARD=g;
+    setSS('ok',`${(maxR-minR+1)*(maxC-minC+1)} cellule(s) copiée(s)`);
+    e.preventDefault();
+  }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='v'){
+    if(!CLIPBOARD)return;
+    let target=document.activeElement;
+    if(!target||!target.matches('table.plan td input')){
+      // utiliser l'ancre de sélection si dispo
+      if(SELECTION.anchor){const a=SELECTION.anchor;target=document.querySelector(`table.plan input[data-row="${a.row}"][data-col="${a.col}"]`);}
+    }
+    if(!target){setSS('err','Clique d\'abord une cellule cible');return;}
+    const tr=+target.dataset.row,tc=+target.dataset.col;
+    let pasted=0;
+    CLIPBOARD.forEach((row,i)=>row.forEach((v,j)=>{
+      const inp=document.querySelector(`table.plan input[data-row="${tr+i}"][data-col="${tc+j}"]`);
+      if(inp){inp.value=v;inp.dispatchEvent(new Event('blur'));pasted++;}
+    }));
+    setSS('ok',`${pasted} cellule(s) collée(s)`);
+    e.preventDefault();
+  }
+  if(e.key==='Escape'){clearSelection();CLIPBOARD=null;setSS('','');}
+});
 
 // ===== EXPORT PDF =====
 function isoWeek(d){const t=new Date(d);t.setHours(0,0,0,0);t.setDate(t.getDate()+3-(t.getDay()+6)%7);const w1=new Date(t.getFullYear(),0,4);return 1+Math.round(((t-w1)/86400000-3+(w1.getDay()+6)%7)/7);}
