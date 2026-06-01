@@ -6,6 +6,7 @@
 <title>Raya — Planning</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--midi:rgba(200,160,53,.06);--soir:rgba(91,156,255,.05);--zoom:1}
@@ -113,6 +114,8 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button onclick="setZoom(zoom+0.1)">+</button>
       </div>
       <span class="save-state" id="ss"></span>
+      <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
+      <input type="file" id="xlsxFile" accept=".xlsx,.xlsm" style="display:none" onchange="handleImport(event)">
       <button class="btn ghost" onclick="openPdfModal()">📄 Export PDF</button>
       <a href="../" class="btn ghost">Portail</a>
     </div>
@@ -155,7 +158,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.5 · UX correctifs';
+const VERSION='v0.6 · import Excel';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
@@ -509,6 +512,119 @@ async function runPdf(){
     setSS('ok','PDF généré ✓');
   }catch(e){setSS('err','Erreur PDF: '+e.message);}
   host.innerHTML='';
+}
+
+// ===== IMPORT EXCEL =====
+let IMPORT_DATA=null;
+function colIdx(c){let r=0;for(const ch of c)r=r*26+(ch.charCodeAt(0)-64);return r;}
+function readCellTime(ws,addr){
+  const c=ws[addr];if(!c)return null;
+  if(c.w){const s=String(c.w).trim();const m=s.match(/^(\d{1,2}):(\d{2})/);if(m){const h=+m[1]===24?0:+m[1];return `${String(h).padStart(2,'0')}:${String(+m[2]).padStart(2,'0')}`;}if(s.startsWith('1900-01-01 00:00'))return '00:00';}
+  if(typeof c.v==='number'){const v=c.v;if(v===0)return null;let frac=v%1;if(v>=1&&frac<0.0001)return '00:00';if(frac<0.0001)return null;const h=Math.floor(frac*24),m=Math.round((frac*24-h)*60);return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;}
+  if(typeof c.v==='string'){const m=c.v.match(/(\d{1,2}):(\d{2})/);if(m){const h=+m[1]===24?0:+m[1];return `${String(h).padStart(2,'0')}:${String(+m[2]).padStart(2,'0')}`;}}
+  return null;
+}
+function readCellText(ws,addr){const c=ws[addr];if(!c)return null;return String(c.v||'').trim();}
+
+async function handleImport(ev){
+  const file=ev.target.files[0];ev.target.value='';if(!file)return;
+  setSS('busy','Lecture Excel…');
+  try{
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:'array'});
+    const sheets=wb.SheetNames.filter(n=>/^planning\s/i.test(n));
+    if(!sheets.length){setSS('err','Aucune feuille "Planning ..." trouvée');return;}
+    // map sheet -> restaurant
+    const sheetResto={};
+    for(const sn of sheets){
+      const short=sn.replace(/^planning\s+/i,'').toLowerCase();
+      const r=S.restos.find(x=>x.nom.toLowerCase().includes(short.replace('coeur','co').slice(0,5))||x.nom.toLowerCase().includes(short));
+      sheetResto[sn]=r||null;
+    }
+    // Parse all rows
+    const rows=[];
+    const colMap=[
+      ['C','D','E','F'],['G','H','I','J'],['K','L','M','N'],['O','P','Q','R'],
+      ['S','T','U','V'],['W','X','Y','Z'],['AA','AB','AC','AD']
+    ];
+    for(const sn of sheets){
+      const ws=wb.Sheets[sn];
+      const resto=sheetResto[sn];if(!resto)continue;
+      for(let r=5;r<=50;r++){
+        const nom=readCellText(ws,'B'+r);if(!nom)continue;
+        const home=(readCellText(ws,'A'+r)||'').toUpperCase();
+        const role=(readCellText(ws,'AE'+r)||'').toLowerCase();
+        const days={};let has=false;
+        colMap.forEach((cols,i)=>{
+          const md=readCellTime(ws,cols[0]+r),mf=readCellTime(ws,cols[1]+r),sd=readCellTime(ws,cols[2]+r),sf=readCellTime(ws,cols[3]+r);
+          if(md||mf||sd||sf){days[i]={midi:{deb:md,fin:mf},soir:{deb:sd,fin:sf}};has=true;}
+        });
+        if(has) rows.push({name:nom,home,role:role.includes('cuis')?'cuisine':'caisse',days,resto});
+      }
+    }
+    // Détecter nouveaux salariés (non trouvés par nom)
+    const findSal=name=>{const n=name.toLowerCase().trim();return S.salaries.find(s=>{const f=`${s.prenom||''} ${s.nom||''}`.toLowerCase().trim();return f===n||(s.nom||'').toLowerCase()===n;});};
+    const unknownMap=new Map();
+    rows.forEach(r=>{if(!findSal(r.name)){if(!unknownMap.has(r.name))unknownMap.set(r.name,{home:r.home,role:r.role});}});
+    IMPORT_DATA={rows,unknownMap,findSal};
+    showImportModal();
+    setSS('','');
+  }catch(e){setSS('err','Erreur Excel : '+e.message);}
+}
+
+function showImportModal(){
+  const{rows,unknownMap}=IMPORT_DATA;
+  const knownCount=rows.length-[...unknownMap.values()].length;
+  let html=`<h3>Import du planning Excel</h3>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:14px">${rows.length} ligne(s) trouvée(s) sur ${rows.length?[...new Set(rows.map(r=>r.resto.nom))].length:0} snack(s) · ${unknownMap.size} nouveau(x) salarié(s) détecté(s)</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:10px">L'import écrira les créneaux dans la semaine du <b style="color:var(--gold)">${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})}</b>. Tu peux changer la semaine avant en cliquant Annuler.</div>`;
+  if(unknownMap.size){
+    html+=`<div style="background:var(--surface);padding:12px 14px;border-radius:8px;border:1px solid var(--line-2);margin-bottom:14px;max-height:40vh;overflow:auto">
+      <div style="font-weight:600;margin-bottom:8px;font-size:13px">Nouveaux salariés détectés</div>
+      ${[...unknownMap.entries()].map(([n,d])=>`<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12.5px"><span style="flex:1"><b>${n}</b> <span style="color:var(--muted)">(${d.home||'?'} · ${d.role})</span></span><select class="imp-act" data-n="${encodeURIComponent(n)}" style="padding:5px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--line-2);color:var(--text);font-size:12px"><option value="add">Ajouter à la base</option><option value="ignore">Ignorer</option></select></div>`).join('')}
+    </div>`;
+  }
+  html+=`<div class="actions"><button class="btn ghost" onclick="document.getElementById('pdfModal').innerHTML=''">Annuler</button><button class="btn" onclick="doImport()">Importer</button></div>`;
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:600px">${html}</div></div>`;
+}
+
+async function doImport(){
+  const acts={};document.querySelectorAll('.imp-act').forEach(s=>{acts[decodeURIComponent(s.dataset.n)]=s.value;});
+  document.getElementById('pdfModal').innerHTML='';
+  setSS('busy','Import en cours…');
+  const{rows,unknownMap,findSal}=IMPORT_DATA;
+  const HOME_TO_RESTO={'GD CŒUR':'grand','GD COEUR':'grand','GRAND COEUR':'grand','GRAND CŒUR':'grand','CARNOT':'carnot','LOBAU':'lobau','EPINAL':'epinal'};
+  // 1) Créer les nouveaux salariés
+  const nameMap=new Map();S.salaries.forEach(s=>{const n=`${s.prenom||''} ${s.nom||''}`.toLowerCase().trim();nameMap.set(n,s.id);nameMap.set((s.nom||'').toLowerCase(),s.id);});
+  let created=0;
+  for(const[name,d]of unknownMap){
+    if(acts[name]!=='add')continue;
+    let snackId=null,multi=false;
+    if(d.home==='MULTI')multi=true; else {const key=(HOME_TO_RESTO[d.home]||d.home||'').toLowerCase();const r=S.restos.find(x=>x.nom.toLowerCase().includes(key));if(r)snackId=r.id;}
+    const pin=String(Math.floor(Math.random()*10000)).padStart(4,'0');
+    const{data,error}=await sb.from('salaries').insert({nom:name,snack_origine_id:snackId,est_multi:multi,actif:true,pin_badgeuse:pin}).select().single();
+    if(error){console.warn('Ajout '+name+': '+error.message);continue;}
+    await sb.from('salarie_roles').insert({salarie_id:data.id,role:d.role||'cuisine'});
+    S.salaries.push(data);S.roles.push({salarie_id:data.id,role:d.role||'cuisine'});
+    nameMap.set(name.toLowerCase(),data.id);created++;
+  }
+  // 2) Importer les créneaux
+  let added=0,skipped=0;
+  for(const row of rows){
+    const sid=findSal(row.name)?.id || nameMap.get(row.name.toLowerCase());
+    if(!sid){skipped++;continue;}
+    for(const[di,slots]of Object.entries(row.days)){
+      const date=fmtDate(dateOfDay(+di));
+      for(const svc of ['midi','soir']){
+        const s=slots[svc];if(!s.deb&&!s.fin)continue;
+        const{error}=await sb.from('planning_creneaux').upsert({restaurant_id:row.resto.id,salarie_id:sid,role:row.role,date,service:svc,heure_debut:s.deb,heure_fin:s.fin},{onConflict:'restaurant_id,salarie_id,date,service'});
+        if(error){skipped++;}else added++;
+      }
+    }
+  }
+  setSS('ok',`✓ ${added} créneaux importés${created?', '+created+' nouveau(x) salarié(s)':''}${skipped?', '+skipped+' ignoré(s)':''}`);
+  alert(`Import terminé :\n• ${added} créneaux ajoutés\n• ${created} nouveaux salariés\n• ${skipped} ignorés`);
+  loadWeek();
 }
 
 function buildPrintPage(resto,creneaux){
