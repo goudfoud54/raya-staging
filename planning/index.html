@@ -174,7 +174,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.12 · vagues + vue poste + PDF v2';
+const VERSION='v0.13 · vue poste v2 + fix autofill';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -196,10 +196,11 @@ function updateViewButtons(){
 function getShifts(jt,svc,role){
   const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===role);
   if(e && e.vagues && Array.isArray(e.vagues) && e.vagues.length) return e.vagues.map(v=>({deb:v.deb,fin:v.fin}));
-  // fallback defaults
   const fallback={midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}};
   const [d,f]=fallback[svc][role];
-  const n=e?e.nb_cible:0;
+  // Si pas d'effectif en base, on récupère le nb_cible via targetFor (qui a les defaults hardcodés)
+  let n=e?e.nb_cible:null;
+  if(n==null){const i={'Lu-Me':0,'Je':3,'Ve':4,'Sa':5,'Di':6}[jt];n=targetFor(i,svc)[role];}
   return Array(n).fill(0).map(()=>({deb:d,fin:f}));
 }
 // ===== UNDO/REDO =====
@@ -577,53 +578,64 @@ function render(){
 
 function renderPosteTable(){
   const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
-  // Construire la liste de TOUS les postes requis sur la semaine
-  let html='<thead><tr><th class="salhead">Poste</th>';
-  JOURS_SH.forEach((j,i)=>html+=`<th class="dayhead">${j} ${dateOfDay(i).getDate()}</th>`);
-  html+='</tr></thead><tbody>';
-  // Pour chaque (service, role, shift), une ligne avec 7 colonnes (un select par jour)
-  const services=[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']];
-  let totalRows=0;
-  for(const[svc,role]of services){
-    // Calculer le max de shifts sur la semaine pour ce (svc, role)
-    let maxShifts=0;
-    for(let i=0;i<7;i++){const s=getShifts(dayJourType(i),svc,role);if(s.length>maxShifts)maxShifts=s.length;}
-    for(let k=0;k<maxShifts;k++){
-      const svcCls=svc;
-      html+=`<tr><td class="salname" style="border-left:4px solid ${svc==='midi'?'#e8a06a':'#5b9cff'}"><b style="text-transform:capitalize">${svc} · ${role==='cuisine'?'C':'R'}</b><div style="color:var(--muted);font-size:10.5px;margin-top:2px">Poste ${k+1}</div></td>`;
-      for(let i=0;i<7;i++){
-        const shifts=getShifts(dayJourType(i),svc,role);
-        const shift=shifts[k];
-        const date=fmtDate(dateOfDay(i));
-        if(!shift){html+=`<td class="${svcCls}" style="color:var(--muted);font-size:10.5px;text-align:center">—</td>`;continue;}
-        // Créneau existant pour ce (date, svc, role, deb=shift.deb)
-        const matching=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&(c.heure_debut||'').slice(0,5)===shift.deb);
-        const cr=matching[Math.min(k-Math.max(0,k-shifts.length+matching.length),0)] || matching[0] || null;
-        // Plus simple : matching par ordre
-        const matchingByOrder=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut).sort((a,b)=>a.heure_debut.localeCompare(b.heure_debut));
-        const cr2=matchingByOrder[k]||null;
-        // Liste des candidats : salariés du snack/MULTI ayant ce rôle
-        const candidates=S.salaries.filter(s=>{
-          if(s.actif===false)return false;
-          if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
-          if(!rolesOf(s.id).includes(role))return false;
-          return true;
-        }).sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
-        const selSid=cr2?cr2.salarie_id:'';
-        const selColor=cr2?(S.salaries.find(s=>s.id===cr2.salarie_id)?.couleur||''):'';
-        const conflictKey=cr2?`${cr2.salarie_id}|${date}|${svc}`:'';
-        const isConf=cr2&&CONFLICTS.has(conflictKey);
-        html+=`<td class="${svcCls}${isConf?' conflict':''}" style="${selColor?'border-left:4px solid '+selColor:''}">
-          <select onchange="assignPosteCell('${date}','${svc}','${role}','${shift.deb}','${shift.fin}',this.value,'${cr2?cr2.id:''}')" style="width:100%;background:transparent;border:1px solid var(--line);color:var(--text);padding:4px 6px;border-radius:5px;font-size:11px">
-            <option value="">— ${shift.deb}→${shift.fin} —</option>
-            ${candidates.map(s=>`<option value="${s.id}" ${s.id===selSid?'selected':''}>${fullName(s)}</option>`).join('')}
-          </select>
-        </td>`;
-      }
-      html+='</tr>';totalRows++;
-    }
+  // Construire la liste des postes (svc, role, index) avec max sur la semaine
+  const rows=[];
+  for(const[svc,role]of[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']]){
+    let maxN=0;
+    for(let i=0;i<7;i++){const s=getShifts(dayJourType(i),svc,role);if(s.length>maxN)maxN=s.length;}
+    for(let k=0;k<maxN;k++)rows.push({svc,role,k});
   }
-  if(!totalRows) html+='<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted)">Aucun poste défini pour ce snack — configure les effectifs dans Réglages</td></tr>';
+  // header : Poste | Lu | Ma | ... | Di
+  let html='<thead><tr><th class="salhead">Poste</th>';
+  JOURS_SH.forEach((j,i)=>html+=`<th class="dayhead">${j} <span style="color:var(--muted);font-weight:400">${dateOfDay(i).getDate()}</span></th>`);
+  html+='</tr></thead><tbody>';
+
+  if(!rows.length){
+    html+='<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted)">Aucun poste défini pour ce snack — configure les effectifs dans Réglages</td></tr></tbody>';
+    document.getElementById('planTbl').innerHTML=html;return;
+  }
+
+  let lastGroup=null;
+  for(const{svc,role,k}of rows){
+    const groupLbl=svc==='midi'?'MIDI':'SOIR';
+    const groupKey=svc+'-'+role;
+    // Ligne d'en-tête de section quand le groupe change
+    if(lastGroup!==groupKey){
+      const roleLbl=role==='cuisine'?'Cuisine':'Réception';
+      const groupColor=svc==='midi'?'rgba(232,160,106,.15)':'rgba(91,156,255,.12)';
+      html+=`<tr><td colspan="8" style="background:${groupColor};padding:8px 14px;font-size:11px;font-weight:700;color:${svc==='midi'?'#e8a06a':'#5b9cff'};text-transform:uppercase;letter-spacing:.08em;border-top:2px solid var(--line)">${groupLbl} · ${roleLbl}</td></tr>`;
+      lastGroup=groupKey;
+    }
+    const roleSym=role==='cuisine'?'Cuisinier':'Caissier';
+    const bg=svc==='midi'?'rgba(232,160,106,.04)':'rgba(91,156,255,.04)';
+    html+=`<tr><td class="salname" style="background:${bg}"><b>${roleSym} ${k+1}</b></td>`;
+    for(let i=0;i<7;i++){
+      const shifts=getShifts(dayJourType(i),svc,role);
+      const shift=shifts[k];
+      const date=fmtDate(dateOfDay(i));
+      if(!shift){html+=`<td style="background:rgba(255,255,255,.015);text-align:center;color:var(--muted);font-size:11px">—</td>`;continue;}
+      const matchingByOrder=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut).sort((a,b)=>(a.heure_debut||'').localeCompare(b.heure_debut||''));
+      const cr=matchingByOrder[k]||null;
+      const candidates=S.salaries.filter(s=>{
+        if(s.actif===false)return false;
+        if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
+        if(!rolesOf(s.id).includes(role))return false;
+        return true;
+      }).sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
+      const selSid=cr?cr.salarie_id:'';
+      const selColor=cr?(S.salaries.find(s=>s.id===cr.salarie_id)?.couleur||''):'';
+      const conflictKey=cr?`${cr.salarie_id}|${date}|${svc}`:'';
+      const isConf=cr&&CONFLICTS.has(conflictKey);
+      html+=`<td style="background:${selColor?selColor+'25':bg};${selColor?'border-left:3px solid '+selColor:''};${isConf?'box-shadow:inset 0 0 0 1.5px var(--bad);':''};padding:5px 6px">
+        <select onchange="assignPosteCell('${date}','${svc}','${role}','${shift.deb}','${shift.fin}',this.value,'${cr?cr.id:''}')" style="width:100%;background:transparent;border:1px solid var(--line-2);color:var(--text);padding:4px 6px;border-radius:5px;font-size:11.5px;font-weight:600;cursor:pointer">
+          <option value="">— vacant —</option>
+          ${candidates.map(s=>`<option value="${s.id}" ${s.id===selSid?'selected':''}>${fullName(s)}</option>`).join('')}
+        </select>
+        <div style="color:var(--muted);font-size:10px;text-align:center;margin-top:3px;font-family:monospace">${shift.deb}→${shift.fin}</div>
+      </td>`;
+    }
+    html+='</tr>';
+  }
   html+='</tbody>';
   document.getElementById('planTbl').innerHTML=html;
 }
@@ -1195,7 +1207,16 @@ function drawSnackPage(doc,resto,creneaux){
     headStyles:{fontSize:7,textColor:[60,60,60]},
     columnStyles:{0:{cellWidth:32,fontSize:7.5}},
     margin:{left:10,right:10},
-    theme:'grid'
+    theme:'grid',
+    didDrawCell:function(d){
+      // Trait gras entre chaque jour (après la colonne 4, 8, 12, 16, 20, 24 = fin de jour)
+      const c=d.column.index;
+      if(c===0||c===4||c===8||c===12||c===16||c===20||c===24){
+        doc.setLineWidth(0.5);doc.setDrawColor(70,70,70);
+        const x=d.cell.x+d.cell.width;
+        doc.line(x,d.cell.y,x,d.cell.y+d.cell.height);
+      }
+    }
   });
   if(!list.length){doc.setFontSize(11);doc.setTextColor(140);doc.text('Aucun salarié pour ce snack',12,40);}
 }
