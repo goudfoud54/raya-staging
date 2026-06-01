@@ -44,7 +44,9 @@ button{cursor:pointer;border:none;background:none}
 .eff-wrap{padding:14px 24px;border-bottom:1px solid var(--line);background:var(--card);overflow-x:auto}
 .eff-grid{display:grid;grid-template-columns:repeat(7,minmax(150px,1fr));gap:8px;min-width:1100px}
 .eff-day{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-.eff-day h4{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;font-weight:600}
+.eff-day h4{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.dice{background:transparent;border:1px solid var(--line-2);border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer;color:var(--gold)}
+.dice:hover{background:rgba(200,160,53,.12);border-color:var(--gold)}
 .eff-svc{display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:11.5px;gap:6px}
 .eff-svc .lbl{color:var(--muted);min-width:32px}
 .eff-svc .cnt{display:flex;gap:4px;font-family:monospace}
@@ -118,6 +120,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button onclick="setZoom(zoom+0.1)">+</button>
       </div>
       <span class="save-state" id="ss"></span>
+      <button class="btn" onclick="autoFillWeek()" title="Remplir la semaine en fonction des dispos & règles">🎲 Auto-fill</button>
       <button class="btn ghost" onclick="openReglages()">⚙ Réglages</button>
       <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
       <input type="file" id="xlsxFile" accept=".xlsx,.xlsm" style="display:none" onchange="handleImport(event)">
@@ -163,7 +166,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.9 · réglages + fix vérifs';
+const VERSION='v0.10 · auto-fill + récap heures';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -288,7 +291,7 @@ function renderEffectifs(){
       const cls=(n,tgt)=>n===tgt?'cnt-ok':(n<tgt?'cnt-under':'cnt-over');
       return `<div class="eff-svc"><span class="lbl">${svc==='midi'?'Midi':'Soir'}</span><span class="cnt"><span class="${cls(counts[svc].cuisine,t.cuisine)}" title="Cuisine">${counts[svc].cuisine}/${t.cuisine}C</span><span class="${cls(counts[svc].caisse,t.caisse)}" title="Réception">${counts[svc].caisse}/${t.caisse}R</span></span></div>`;
     }).join('');
-    return `<div class="eff-day"><h4>${j} <span style="font-weight:400;color:var(--muted)">${dateOfDay(i).getDate()}</span></h4>${svcHTML}</div>`;
+    return `<div class="eff-day"><h4><span>${j} <span style="font-weight:400;color:var(--muted)">${dateOfDay(i).getDate()}</span></span><button class="dice" onclick="autoFillDay(${i})" title="Remplir auto ce jour">🎲</button></h4>${svcHTML}</div>`;
   }).join('');
   document.getElementById('effGrid').innerHTML=html;
 }
@@ -302,6 +305,7 @@ function renderTable(){
   // header
   let thead='<thead><tr><th class="salhead">Salarié</th>';
   JOURS_SH.forEach((j,i)=>{thead+=`<th colspan="4" class="dayhead">${j} <span style="color:var(--muted);font-weight:400">${dateOfDay(i).getDate()}</span></th>`;});
+  thead+='<th class="dayhead" rowspan="2" style="min-width:80px;background:rgba(200,160,53,.05)">Heures<br><small style="font-weight:400;color:var(--muted)">total / cible</small></th>';
   thead+='</tr><tr><th class="salhead"></th>';
   JOURS_SH.forEach(()=>{thead+='<th class="midi">M dbt</th><th class="midi">M fin</th><th class="soir">S dbt</th><th class="soir">S fin</th>';});
   thead+='</tr></thead>';
@@ -326,9 +330,21 @@ function renderTable(){
         tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" data-saved="${hf}" data-row="${rowIdx}" data-col="${c2}" data-sid="${s.id}" data-date="${date}" data-svc="${svc}" data-w="fin" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
       });
     });
+    // colonne récap heures
+    const _toMin2=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
+    const _dur2=(d,f)=>{let a=_toMin2(d),b=_toMin2(f);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
+    const totMin=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_dur2(c.heure_debut,c.heure_fin),0);
+    const totH=totMin/60;
+    const minH=s.heures_min||0, maxH=s.heures_max||s.plafond_heures||48;
+    let recapCls='',recapColor='var(--text)';
+    if(maxH && totH>maxH){recapCls='over';recapColor='var(--bad)';}
+    else if(minH && totH<minH){recapCls='under';recapColor='var(--warn)';}
+    else if(totH>0){recapCls='ok';recapColor='var(--ok)';}
+    const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
+    tbody+=`<td style="background:rgba(200,160,53,.04);font-weight:700;color:${recapColor};text-align:center">${totH.toFixed(1)}h${range}</td>`;
     tbody+='</tr>';
   });
-  if(!list.length) tbody+='<tr><td colspan="29" style="text-align:center;padding:30px;color:var(--muted)">Aucun salarié pour ce snack</td></tr>';
+  if(!list.length) tbody+='<tr><td colspan="30" style="text-align:center;padding:30px;color:var(--muted)">Aucun salarié pour ce snack</td></tr>';
   tbody+='</tbody>';
   document.getElementById('planTbl').innerHTML=thead+tbody;
 }
@@ -495,42 +511,105 @@ function onSnackChange(){const id=document.getElementById('snackSel').value;SNAC
 
 // ===== RÉGLAGES =====
 const JOUR_TYPES=['Lu-Me','Je','Ve','Sa','Di'];
-function openReglages(){
-  let html=`<h3 style="margin-bottom:6px">Réglages</h3><div style="color:var(--muted);font-size:12px;margin-bottom:14px">Snack : <b style="color:var(--gold)">${SNACK.nom}</b></div>`;
+const JOUR_TYPE_LABELS={'Lu-Me':'Lundi – Mercredi','Je':'Jeudi','Ve':'Vendredi','Sa':'Samedi','Di':'Dimanche'};
 
-  // Effectifs cibles
-  html+=`<div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:8px">Effectifs cibles (par type de jour)</div>
-    <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--surface);border:1px solid var(--line-2);border-radius:8px;overflow:hidden">
-      <thead><tr style="background:rgba(255,255,255,.03)"><th style="padding:6px 8px;text-align:left;font-weight:600;color:var(--muted)">Jour</th><th style="padding:6px 8px">Midi C</th><th style="padding:6px 8px">Midi R</th><th style="padding:6px 8px">Soir C</th><th style="padding:6px 8px">Soir R</th></tr></thead><tbody>`;
+// Métadonnées par règle (libellé, type d'input, unité, aide)
+const RULE_META={
+  coupure_min:{lbl:'Coupure minimum entre midi et soir',type:'number',unit:'h',min:0,max:12,help:'Temps de pause minimum requis entre deux services'},
+  fin_semaine:{lbl:'Heure de fin maximale lundi → jeudi',type:'time'},
+  fin_weekend:{lbl:'Heure de fin maximale vendredi & samedi',type:'time'},
+  fin_2h_pas_matin:{lbl:'Interdire le service du matin après une fin à 2 h',type:'bool'},
+  jour_off_min:{lbl:'Nombre minimum de jours de repos par semaine',type:'number',unit:'j',min:0,max:7},
+  plafond_hebdo:{lbl:'Plafond d\'heures par semaine',type:'number',unit:'h',min:0,max:80},
+  temps_partiel_max:{lbl:'Heures complémentaires max (temps partiel)',type:'number',unit:'%',min:100,max:200},
+  amplitude_max:{lbl:'Amplitude maximale consécutive',type:'number',unit:'h',min:0,max:24},
+  doublon_inter_snack:{lbl:'Zéro doublon entre snacks',type:'bool'},
+  couverture_continue:{lbl:'Couverture continue 1 cuisine + 1 réception',type:'bool'},
+  departs_echelonnes:{lbl:'Départs échelonnés (éviter les pics)',type:'bool'},
+  effectifs_exacts:{lbl:'Compteurs = objectif exact',type:'bool'}
+};
+
+function openReglages(){
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:10px;flex-wrap:wrap">
+    <div><h3 style="margin:0;font-size:18px">Réglages</h3><div style="color:var(--muted);font-size:12px;margin-top:4px">Snack : <b style="color:var(--gold)">${SNACK.nom}</b></div></div>
+    <button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML='';render()">✕ Fermer</button>
+  </div>`;
+
+  // === EFFECTIFS ===
+  html+=`<div style="margin-bottom:24px">
+    <div style="font-size:14px;font-weight:600;margin-bottom:4px">Effectifs cibles</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:12px">Nombre de salariés requis par jour et service · <b style="color:var(--text)">C</b> = cuisine, <b style="color:var(--text)">R</b> = réception</div>
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:rgba(255,255,255,.03)">
+          <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Jour</th>
+          <th colspan="2" style="padding:10px;text-align:center;font-weight:600;color:#e8a06a;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-left:1px solid var(--line)">Midi</th>
+          <th colspan="2" style="padding:10px;text-align:center;font-weight:600;color:#5b9cff;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-left:1px solid var(--line)">Soir</th>
+        </tr><tr style="background:rgba(255,255,255,.015);font-size:10.5px;color:var(--muted)">
+          <th></th>
+          <th style="padding:5px;border-left:1px solid var(--line)">Cuisine</th><th style="padding:5px">Réception</th>
+          <th style="padding:5px;border-left:1px solid var(--line)">Cuisine</th><th style="padding:5px">Réception</th>
+        </tr></thead><tbody>`;
   JOUR_TYPES.forEach(jt=>{
-    const get=(svc,role)=>{const t=targetForJT(jt,svc);return t[role];};
-    html+=`<tr><td style="padding:6px 8px;font-weight:600">${jt}</td>`;
+    const get=(svc,role)=>targetForJT(jt,svc)[role];
+    html+=`<tr style="border-top:1px solid var(--line)"><td style="padding:10px 14px;font-weight:600">${JOUR_TYPE_LABELS[jt]}</td>`;
     for(const[svc,role]of[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']]){
-      html+=`<td style="padding:4px 6px"><input type="number" min="0" max="20" value="${get(svc,role)}" data-jt="${jt}" data-svc="${svc}" data-role="${role}" onblur="saveEffectif(this)" style="width:50px;padding:4px 6px;border-radius:5px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);text-align:center;font-size:12px"></td>`;
+      const borderL=svc==='midi'&&role==='cuisine' || svc==='soir'&&role==='cuisine' ? 'border-left:1px solid var(--line);' : '';
+      html+=`<td style="padding:6px 8px;text-align:center;${borderL}"><input type="number" min="0" max="20" value="${get(svc,role)}" data-jt="${jt}" data-svc="${svc}" data-role="${role}" onblur="saveEffectif(this)" style="width:54px;padding:6px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);text-align:center;font-size:13px;font-weight:600"></td>`;
     }
     html+='</tr>';
   });
-  html+='</tbody></table></div>';
+  html+='</tbody></table></div></div>';
 
-  // Règles
-  html+=`<div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:8px">Règles de vérification</div>
-    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:10px;max-height:200px;overflow:auto">`;
-  S.regles.forEach(r=>{
-    html+=`<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12.5px">
-      <label style="display:flex;align-items:center;gap:6px;flex:1"><input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${r.id}','active',this.checked)"> <span>${r.libelle||r.cle}</span></label>
-      ${r.valeur!=null?`<input type="text" value="${r.valeur||''}" data-id="${r.id}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:80px;padding:4px 6px;border-radius:5px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:12px">`:''}
-    </div>`;
-  });
-  if(!S.regles.length) html+='<div style="color:var(--muted);font-size:12px">Aucune règle en base. Les vérifications utilisent des valeurs par défaut.</div>';
+  // === RÈGLES ===
+  html+=`<div style="margin-bottom:24px">
+    <div style="font-size:14px;font-weight:600;margin-bottom:4px">Règles de vérification</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:12px">Active ou désactive les contrôles qui s'appliquent au planning</div>
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;overflow:hidden">`;
+  if(!S.regles.length){
+    html+='<div style="padding:18px;color:var(--muted);font-size:12px">Aucune règle configurée. Les vérifications utilisent les valeurs par défaut.</div>';
+  } else {
+    S.regles.sort((a,b)=>{
+      const ta=(RULE_META[a.cle]?.type||'z'),tb=(RULE_META[b.cle]?.type||'z');
+      return ta===tb?0:ta<tb?-1:1;
+    }).forEach((r,idx)=>{
+      const meta=RULE_META[r.cle]||{lbl:r.libelle||r.cle,type:'text'};
+      let valueInput='';
+      if(meta.type==='bool'){
+        // booléen : pas de champ valeur, juste case Activé
+        valueInput='';
+      } else if(meta.type==='number'){
+        valueInput=`<input type="number" ${meta.min!=null?`min="${meta.min}"`:''} ${meta.max!=null?`max="${meta.max}"`:''} value="${r.valeur||0}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:80px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;text-align:center;font-weight:600">${meta.unit?`<span style="color:var(--muted);font-size:12px;margin-left:6px">${meta.unit}</span>`:''}`;
+      } else if(meta.type==='time'){
+        valueInput=`<input type="time" value="${r.valeur||'00:00'}" onblur="saveRegle('${r.id}','valeur',this.value)" style="padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">`;
+      } else {
+        valueInput=`<input type="text" value="${r.valeur||''}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:120px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px">`;
+      }
+      const sep=idx>0?'border-top:1px solid var(--line);':'';
+      html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;${sep}">
+        <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
+          <input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${r.id}','active',this.checked)" style="width:18px;height:18px;cursor:pointer">
+          <span style="font-size:13.5px">${meta.lbl}</span>
+        </label>
+        ${valueInput?`<div>${valueInput}</div>`:'<div style="color:var(--muted);font-size:11px">'+(r.active?'Activée':'Désactivée')+'</div>'}
+      </div>`;
+    });
+  }
   html+='</div></div>';
 
-  // Comportement alertes
-  html+=`<div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:8px">Alertes</div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" ${POPUP_ALERTS?'checked':''} onchange="setPopupAlerts(this.checked)"> Afficher une popup quand un conflit inter-snack est détecté</label>
+  // === ALERTES & COMPORTEMENT ===
+  html+=`<div style="margin-bottom:8px">
+    <div style="font-size:14px;font-weight:600;margin-bottom:4px">Comportement</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:12px">Préférences d'affichage et notifications</div>
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:14px 16px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="checkbox" ${POPUP_ALERTS?'checked':''} onchange="setPopupAlerts(this.checked)" style="width:18px;height:18px;cursor:pointer">
+        <span style="font-size:13.5px">Afficher une popup quand un conflit inter-snack est détecté</span>
+      </label>
+    </div>
   </div>`;
 
-  html+=`<div class="actions"><button class="btn" onclick="document.getElementById('pdfModal').innerHTML='';render()">Fermer</button></div>`;
-  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this){document.getElementById('pdfModal').innerHTML='';render();}"><div class="pdf-modal" style="max-width:640px;max-height:88vh;overflow:auto">${html}</div></div>`;
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this){document.getElementById('pdfModal').innerHTML='';render();}"><div class="pdf-modal" style="max-width:760px;width:92vw;max-height:90vh;overflow:auto;padding:26px">${html}</div></div>`;
 }
 function targetForJT(jt,svc){
   const fromDb=S.effectifs.filter(e=>e.restaurant_id===SNACK.id && e.jour_type===jt && e.service===svc);
@@ -557,6 +636,71 @@ async function saveRegle(id,field,val){
   setSS('ok','Règle sauvegardée');
 }
 function setPopupAlerts(v){POPUP_ALERTS=v;localStorage.setItem('pl_popups',v?'1':'0');}
+
+// ===== AUTO-FILL =====
+const DEFAULT_SHIFTS={
+  midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},
+  soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}
+};
+function _autoToMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
+function _autoDur(d,f){let a=_autoToMin(d),b=_autoToMin(f);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;}
+async function autoFillDay(dayIdx){
+  const j=JOURS[dayIdx];
+  if(!confirm(`Remplir automatiquement ${j} sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
+  await autoFillCore([dayIdx]);
+}
+async function autoFillWeek(){
+  if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
+  await autoFillCore([0,1,2,3,4,5,6]);
+}
+async function autoFillCore(dayIndices){
+  setSS('busy','Remplissage en cours…');
+  let added=0,skipped=0;
+  const hoursWeek=sid=>S.creneaux.filter(c=>c.salarie_id===sid).reduce((a,c)=>a+_autoDur(c.heure_debut,c.heure_fin),0)/60;
+  for(const di of dayIndices){
+    const date=fmtDate(dateOfDay(di));
+    for(const svc of ['midi','soir']){
+      const target=targetFor(di,svc);
+      for(const role of ['cuisine','caisse']){
+        const need=target[role];if(!need)continue;
+        const currentCount=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut).length;
+        const toAdd=need-currentCount;if(toAdd<=0)continue;
+        // Candidats
+        let candidates=S.salaries.filter(s=>{
+          if(s.actif===false)return false;
+          if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
+          if(!rolesOf(s.id).includes(role))return false;
+          if(S.creneaux.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc))return false;
+          if(S.allCreneauxWeek.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc&&c.restaurant_id!==SNACK.id))return false;
+          // Indispo
+          const ind=S.dispos.find(d=>d.salarie_id===s.id&&d.statut==='indispo'&&((d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date)));
+          if(ind)return false;
+          // Plafond
+          const plaf=s.plafond_heures||48;
+          if(hoursWeek(s.id)>=plaf)return false;
+          return true;
+        });
+        // Tri équitable : moins d'heures d'abord, home snack prioritaire
+        candidates.sort((a,b)=>{
+          const ha=hoursWeek(a.id),hb=hoursWeek(b.id);
+          if(Math.abs(ha-hb)>1.5)return ha-hb;
+          const aH=a.snack_origine_id===SNACK.id?0:1,bH=b.snack_origine_id===SNACK.id?0:1;
+          return aH-bH;
+        });
+        const [deb,fin]=DEFAULT_SHIFTS[svc][role];
+        for(let i=0;i<toAdd;i++){
+          if(i>=candidates.length){skipped+=(toAdd-i);break;}
+          const s=candidates[i];
+          const payload={restaurant_id:SNACK.id,salarie_id:s.id,role,date,service:svc,heure_debut:deb,heure_fin:fin};
+          const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+          if(error){skipped++;}else{S.creneaux.push(data);S.allCreneauxWeek.push(data);added++;}
+        }
+      }
+    }
+  }
+  await loadWeek();
+  setSS('ok',`✓ ${added} créneau(x) ajouté(s)${skipped?` · ${skipped} non couvert(s) (manque de candidats)`:''}`);
+}
 
 // ===== SÉLECTION & COPIER/COLLER =====
 let SELECTION={anchor:null,end:null,dragStart:null};
@@ -625,6 +769,21 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();
   }
   if(e.key==='Escape'){clearSelection();CLIPBOARD=null;setSS('','');}
+  if((e.key==='Delete'||e.key==='Backspace') && SELECTION.anchor && SELECTION.end){
+    // Vider toutes les cellules sélectionnées
+    const a=SELECTION.anchor,b=SELECTION.end;
+    const minR=Math.min(a.row,b.row),maxR=Math.max(a.row,b.row);
+    const minC=Math.min(a.col,b.col),maxC=Math.max(a.col,b.col);
+    const isInInput=e.target&&e.target.matches&&e.target.matches('input');
+    if(isInInput && (minR===maxR&&minC===maxC)) return; // single cell : laisser le natif
+    e.preventDefault();
+    let cleared=0;
+    document.querySelectorAll('table.plan td input').forEach(inp=>{
+      const r=+inp.dataset.row,c=+inp.dataset.col;
+      if(r>=minR&&r<=maxR&&c>=minC&&c<=maxC && inp.value){inp.value='';inp.dispatchEvent(new Event('blur'));cleared++;}
+    });
+    setSS('ok',`${cleared} cellule(s) effacée(s)`);
+  }
 });
 
 // ===== EXPORT PDF =====
