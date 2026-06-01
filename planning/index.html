@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Raya — Planning</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.0/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -121,6 +122,10 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button onclick="setZoom(zoom+0.1)">+</button>
       </div>
       <span class="save-state" id="ss"></span>
+      <div class="weeknav" title="Type de vue">
+        <button id="vSal" onclick="setView('sal')" style="padding:5px 10px;font-size:11px">👥 Salarié</button>
+        <button id="vPoste" onclick="setView('poste')" style="padding:5px 10px;font-size:11px">🪑 Poste</button>
+      </div>
       <button class="btn ghost" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
       <button class="btn ghost" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
       <button class="btn" onclick="autoFillWeek()" title="Remplir la semaine en fonction des dispos & règles">🎲 Auto-fill</button>
@@ -169,7 +174,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.11 · undo/redo + fix PDF';
+const VERSION='v0.12 · vagues + vue poste + PDF v2';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -177,6 +182,26 @@ const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
 let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[],effectifs:[],regles:[]};
 let SNACK=null, MONDAY=null;
 let CONFLICTS=new Set();
+let VIEW_MODE=localStorage.getItem('pl_view')||'sal';
+function setView(v){VIEW_MODE=v;localStorage.setItem('pl_view',v);render();}
+function updateViewButtons(){
+  const a=document.getElementById('vSal'),b=document.getElementById('vPoste');
+  if(a)a.style.background=VIEW_MODE==='sal'?'rgba(200,160,53,.18)':'transparent';
+  if(a)a.style.color=VIEW_MODE==='sal'?'var(--gold)':'var(--text)';
+  if(b)b.style.background=VIEW_MODE==='poste'?'rgba(200,160,53,.18)':'transparent';
+  if(b)b.style.color=VIEW_MODE==='poste'?'var(--gold)':'var(--text)';
+}
+
+// Shifts par défaut quand vagues non définies
+function getShifts(jt,svc,role){
+  const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===role);
+  if(e && e.vagues && Array.isArray(e.vagues) && e.vagues.length) return e.vagues.map(v=>({deb:v.deb,fin:v.fin}));
+  // fallback defaults
+  const fallback={midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}};
+  const [d,f]=fallback[svc][role];
+  const n=e?e.nb_cible:0;
+  return Array(n).fill(0).map(()=>({deb:d,fin:f}));
+}
 // ===== UNDO/REDO =====
 let UNDO=[], REDO=[], _txn=null;
 function beginTxn(){_txn=[];}
@@ -544,8 +569,90 @@ function showCheckDetails(i){
 function render(){
   document.getElementById('wkLabel').textContent=wkRangeLabel();
   computeConflicts();
-  renderEffectifs();renderTable();renderChecks();updateUndoBtns();
+  renderEffectifs();
+  if(VIEW_MODE==='poste') renderPosteTable(); else renderTable();
+  renderChecks();updateUndoBtns();updateViewButtons();
   setSS('','');
+}
+
+function renderPosteTable(){
+  const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
+  // Construire la liste de TOUS les postes requis sur la semaine
+  let html='<thead><tr><th class="salhead">Poste</th>';
+  JOURS_SH.forEach((j,i)=>html+=`<th class="dayhead">${j} ${dateOfDay(i).getDate()}</th>`);
+  html+='</tr></thead><tbody>';
+  // Pour chaque (service, role, shift), une ligne avec 7 colonnes (un select par jour)
+  const services=[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']];
+  let totalRows=0;
+  for(const[svc,role]of services){
+    // Calculer le max de shifts sur la semaine pour ce (svc, role)
+    let maxShifts=0;
+    for(let i=0;i<7;i++){const s=getShifts(dayJourType(i),svc,role);if(s.length>maxShifts)maxShifts=s.length;}
+    for(let k=0;k<maxShifts;k++){
+      const svcCls=svc;
+      html+=`<tr><td class="salname" style="border-left:4px solid ${svc==='midi'?'#e8a06a':'#5b9cff'}"><b style="text-transform:capitalize">${svc} · ${role==='cuisine'?'C':'R'}</b><div style="color:var(--muted);font-size:10.5px;margin-top:2px">Poste ${k+1}</div></td>`;
+      for(let i=0;i<7;i++){
+        const shifts=getShifts(dayJourType(i),svc,role);
+        const shift=shifts[k];
+        const date=fmtDate(dateOfDay(i));
+        if(!shift){html+=`<td class="${svcCls}" style="color:var(--muted);font-size:10.5px;text-align:center">—</td>`;continue;}
+        // Créneau existant pour ce (date, svc, role, deb=shift.deb)
+        const matching=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&(c.heure_debut||'').slice(0,5)===shift.deb);
+        const cr=matching[Math.min(k-Math.max(0,k-shifts.length+matching.length),0)] || matching[0] || null;
+        // Plus simple : matching par ordre
+        const matchingByOrder=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut).sort((a,b)=>a.heure_debut.localeCompare(b.heure_debut));
+        const cr2=matchingByOrder[k]||null;
+        // Liste des candidats : salariés du snack/MULTI ayant ce rôle
+        const candidates=S.salaries.filter(s=>{
+          if(s.actif===false)return false;
+          if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
+          if(!rolesOf(s.id).includes(role))return false;
+          return true;
+        }).sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
+        const selSid=cr2?cr2.salarie_id:'';
+        const selColor=cr2?(S.salaries.find(s=>s.id===cr2.salarie_id)?.couleur||''):'';
+        const conflictKey=cr2?`${cr2.salarie_id}|${date}|${svc}`:'';
+        const isConf=cr2&&CONFLICTS.has(conflictKey);
+        html+=`<td class="${svcCls}${isConf?' conflict':''}" style="${selColor?'border-left:4px solid '+selColor:''}">
+          <select onchange="assignPosteCell('${date}','${svc}','${role}','${shift.deb}','${shift.fin}',this.value,'${cr2?cr2.id:''}')" style="width:100%;background:transparent;border:1px solid var(--line);color:var(--text);padding:4px 6px;border-radius:5px;font-size:11px">
+            <option value="">— ${shift.deb}→${shift.fin} —</option>
+            ${candidates.map(s=>`<option value="${s.id}" ${s.id===selSid?'selected':''}>${fullName(s)}</option>`).join('')}
+          </select>
+        </td>`;
+      }
+      html+='</tr>';totalRows++;
+    }
+  }
+  if(!totalRows) html+='<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted)">Aucun poste défini pour ce snack — configure les effectifs dans Réglages</td></tr>';
+  html+='</tbody>';
+  document.getElementById('planTbl').innerHTML=html;
+}
+
+async function assignPosteCell(date,svc,role,deb,fin,newSid,oldCreneauId){
+  setSS('busy','Enregistrement…');
+  beginTxn();
+  // 1) Si l'ancien existait et qu'on change → supprimer (ou modifier)
+  if(oldCreneauId){
+    const oldCr=S.creneaux.find(c=>c.id===oldCreneauId);
+    if(oldCr && (!newSid || newSid !== oldCr.salarie_id)){
+      await sb.from('planning_creneaux').delete().eq('id',oldCreneauId);
+      S.creneaux=S.creneaux.filter(c=>c.id!==oldCreneauId);
+      S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==oldCreneauId);
+      if(_txn)_txn.push({before:oldCr,after:null});
+    }
+  }
+  // 2) Si nouveau salarié sélectionné → upsert
+  if(newSid){
+    const payload={restaurant_id:SNACK.id,salarie_id:newSid,role,date,service:svc,heure_debut:deb,heure_fin:fin};
+    const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+    if(error){setSS('err','Erreur: '+error.message);endTxn();return;}
+    S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===newSid&&c.date===date&&c.service===svc));S.creneaux.push(data);
+    S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===newSid&&c.date===date&&c.service===svc&&c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
+    if(_txn)_txn.push({before:null,after:data});
+  }
+  endTxn();
+  setSS('ok','Enregistré ✓');
+  render();
 }
 
 function navWeek(n){MONDAY=new Date(MONDAY.getTime()+n*7*86400000);loadWeek();}
@@ -723,39 +830,49 @@ async function autoFillCore(dayIndices){
   const hoursWeek=sid=>S.creneaux.filter(c=>c.salarie_id===sid).reduce((a,c)=>a+_autoDur(c.heure_debut,c.heure_fin),0)/60;
   for(const di of dayIndices){
     const date=fmtDate(dateOfDay(di));
+    const jt=dayJourType(di);
     for(const svc of ['midi','soir']){
-      const target=targetFor(di,svc);
       for(const role of ['cuisine','caisse']){
-        const need=target[role];if(!need)continue;
-        const currentCount=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut).length;
-        const toAdd=need-currentCount;if(toAdd<=0)continue;
-        // Candidats
-        let candidates=S.salaries.filter(s=>{
-          if(s.actif===false)return false;
-          if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
-          if(!rolesOf(s.id).includes(role))return false;
-          if(S.creneaux.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc))return false;
-          if(S.allCreneauxWeek.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc&&c.restaurant_id!==SNACK.id))return false;
-          // Indispo
-          const ind=S.dispos.find(d=>d.salarie_id===s.id&&d.statut==='indispo'&&((d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date)));
-          if(ind)return false;
-          // Plafond
-          const plaf=s.plafond_heures||48;
-          if(hoursWeek(s.id)>=plaf)return false;
-          return true;
+        // Récupère les shifts définis (vagues) ou défauts
+        const shifts=getShifts(jt,svc,role);
+        if(!shifts.length)continue;
+        // Cherche les shifts déjà couverts (matching heure_debut)
+        const currentCreneaux=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut);
+        const filledIdx=new Set();
+        const usedSids=new Set(currentCreneaux.map(c=>c.salarie_id));
+        currentCreneaux.forEach(c=>{
+          for(let i=0;i<shifts.length;i++){
+            if(filledIdx.has(i))continue;
+            if((c.heure_debut||'').slice(0,5)===shifts[i].deb){filledIdx.add(i);break;}
+          }
         });
-        // Tri équitable : moins d'heures d'abord, home snack prioritaire
-        candidates.sort((a,b)=>{
-          const ha=hoursWeek(a.id),hb=hoursWeek(b.id);
-          if(Math.abs(ha-hb)>1.5)return ha-hb;
-          const aH=a.snack_origine_id===SNACK.id?0:1,bH=b.snack_origine_id===SNACK.id?0:1;
-          return aH-bH;
-        });
-        const [deb,fin]=DEFAULT_SHIFTS[svc][role];
-        for(let i=0;i<toAdd;i++){
-          if(i>=candidates.length){skipped+=(toAdd-i);break;}
-          const s=candidates[i];
-          const payload={restaurant_id:SNACK.id,salarie_id:s.id,role,date,service:svc,heure_debut:deb,heure_fin:fin};
+        // Shifts à remplir
+        const toFill=[];for(let i=0;i<shifts.length;i++)if(!filledIdx.has(i))toFill.push(shifts[i]);
+        // Si nombre de créneaux existants ≥ shifts, ne rien ajouter (sur-effectif)
+        if(currentCreneaux.length>=shifts.length){continue;}
+        const remaining=shifts.length-currentCreneaux.length;
+        const realToFill=toFill.slice(0,remaining);
+        for(const shift of realToFill){
+          // Candidats pour ce shift précis
+          const candidates=S.salaries.filter(s=>{
+            if(s.actif===false)return false;
+            if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
+            if(!rolesOf(s.id).includes(role))return false;
+            if(usedSids.has(s.id))return false;
+            if(S.creneaux.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc))return false;
+            if(S.allCreneauxWeek.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc&&c.restaurant_id!==SNACK.id))return false;
+            const ind=S.dispos.find(d=>d.salarie_id===s.id&&d.statut==='indispo'&&((d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date)));
+            if(ind)return false;
+            const plaf=s.plafond_heures||48;if(hoursWeek(s.id)>=plaf)return false;
+            return true;
+          }).sort((a,b)=>{
+            const ha=hoursWeek(a.id),hb=hoursWeek(b.id);
+            if(Math.abs(ha-hb)>1.5)return ha-hb;
+            const aH=a.snack_origine_id===SNACK.id?0:1,bH=b.snack_origine_id===SNACK.id?0:1;return aH-bH;
+          });
+          if(!candidates.length){skipped++;continue;}
+          const s=candidates[0];usedSids.add(s.id);
+          const payload={restaurant_id:SNACK.id,salarie_id:s.id,role,date,service:svc,heure_debut:shift.deb,heure_fin:shift.fin};
           const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
           if(error){skipped++;}else{S.creneaux.push(data);S.allCreneauxWeek.push(data);if(_txn)_txn.push({before:null,after:data});added++;}
         }
@@ -764,7 +881,7 @@ async function autoFillCore(dayIndices){
   }
   endTxn();
   await loadWeek();
-  setSS('ok',`✓ ${added} créneau(x) ajouté(s)${skipped?` · ${skipped} non couvert(s) (manque de candidats)`:''}`);
+  setSS('ok',`✓ ${added} créneau(x) ajouté(s)${skipped?` · ${skipped} non couvert(s)`:''}`);
 }
 
 // ===== SÉLECTION & COPIER/COLLER =====
@@ -882,30 +999,24 @@ async function runPdf(){
   closePdfModal();setSS('busy','Génération PDF…');
 
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
-  // Toutes les créneaux des snacks demandés
   const{data:allCr}=await sb.from('planning_creneaux').select('*').in('restaurant_id',ids).gte('date',from).lt('date',to);
   const creneauxByResto={};(allCr||[]).forEach(c=>{(creneauxByResto[c.restaurant_id]=creneauxByResto[c.restaurant_id]||[]).push(c);});
 
-  const host=document.getElementById('pdfHost');host.innerHTML='';
-  ids.forEach(rid=>{const r=S.restos.find(x=>x.id===rid);if(r)host.appendChild(buildPrintPage(r,creneauxByResto[rid]||[]));});
-  // Rendre visible le temps de la capture (sinon html2canvas peut produire un blanc)
-  host.style.left='0';host.style.zIndex='-1';
-  await new Promise(r=>setTimeout(r,150));
-
-  const snLabel=ids.length===1?shortSnack(S.restos.find(r=>r.id===ids[0])?.nom):'multi';
-  const filename=`Planning ${snLabel} S${isoWeek(MONDAY)} ${monthLabel(MONDAY)}.pdf`;
   try{
-    await html2pdf().set({
-      margin:8,filename,
-      image:{type:'jpeg',quality:0.95},
-      html2canvas:{scale:2,backgroundColor:'#ffffff',windowWidth:1500,useCORS:true},
-      jsPDF:{unit:'mm',format:'a3',orientation:'landscape'},
-      pagebreak:{mode:['css','legacy']}
-    }).from(host).save();
+    const{jsPDF}=window.jspdf;
+    const doc=new jsPDF({orientation:'landscape',format:'a3',unit:'mm'});
+    let first=true;
+    for(const rid of ids){
+      const r=S.restos.find(x=>x.id===rid);if(!r)continue;
+      if(!first) doc.addPage();
+      first=false;
+      drawSnackPage(doc,r,creneauxByResto[rid]||[]);
+    }
+    const snLabel=ids.length===1?shortSnack(S.restos.find(r=>r.id===ids[0])?.nom):'multi';
+    const filename=`Planning ${snLabel} S${isoWeek(MONDAY)} ${monthLabel(MONDAY)}.pdf`;
+    doc.save(filename);
     setSS('ok','PDF généré ✓');
-  }catch(e){setSS('err','Erreur PDF: '+e.message);}
-  host.style.left='-9999px';host.style.zIndex='auto';
-  host.innerHTML='';
+  }catch(e){setSS('err','Erreur PDF: '+e.message);console.error(e);}
 }
 
 // ===== IMPORT EXCEL =====
@@ -1038,6 +1149,55 @@ async function doImport(){
   setSS('ok',`✓ ${added} créneaux importés${created?', '+created+' nouveau(x) salarié(s)':''}${skipped?', '+skipped+' ignoré(s)':''}`);
   alert(`Import terminé :\n• ${added} créneaux ajoutés\n• ${created} nouveaux salariés\n• ${skipped} ignorés`);
   loadWeek();
+}
+
+function hexMix(hex,alpha){const m=String(hex||'').match(/^#?([0-9a-f]{6})/i);if(!m)return[240,240,240];const r=parseInt(m[1].slice(0,2),16),g=parseInt(m[1].slice(2,4),16),b=parseInt(m[1].slice(4,6),16);return[Math.round(r*alpha+255*(1-alpha)),Math.round(g*alpha+255*(1-alpha)),Math.round(b*alpha+255*(1-alpha))];}
+
+function drawSnackPage(doc,resto,creneaux){
+  const sids=new Set(creneaux.map(c=>c.salarie_id));
+  const list=S.salaries.filter(s=>s.actif!==false && (s.snack_origine_id===resto.id||s.est_multi||sids.has(s.id)))
+    .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return (ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
+  const get=(sid,date,svc)=>creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);
+  // Titre
+  doc.setFontSize(16);doc.setFont(undefined,'bold');
+  doc.text(`Planning ${shortSnack(resto.nom)}`, 12, 14);
+  doc.setFontSize(10);doc.setFont(undefined,'normal');doc.setTextColor(100);
+  const endDate=new Date(MONDAY.getTime()+6*86400000);
+  doc.text(`Semaine ${isoWeek(MONDAY)} · ${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} → ${endDate.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}`, 12, 19);
+  doc.setTextColor(0);
+  // Head
+  const head=[
+    [{content:'Salarié',rowSpan:2,styles:{halign:'left',valign:'middle',fillColor:[235,235,235]}}].concat(JOURS.map((j,i)=>({content:`${j} ${dateOfDay(i).getDate()}`,colSpan:4,styles:{halign:'center',fillColor:[240,240,240]}}))),
+    Array(7).fill(0).flatMap((_,i)=>[
+      {content:'M dbt',styles:{fillColor:[255,247,224]}},
+      {content:'M fin',styles:{fillColor:[255,247,224]}},
+      {content:'S dbt',styles:{fillColor:[230,239,255]}},
+      {content:'S fin',styles:{fillColor:[230,239,255]}}
+    ])
+  ];
+  const body=list.map(s=>{
+    const tint=hexMix(s.couleur,0.25);
+    const row=[{content:[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?',styles:{fillColor:tint,fontStyle:'bold',halign:'left'}}];
+    for(let i=0;i<7;i++){
+      const date=fmtDate(dateOfDay(i));
+      for(const svc of ['midi','soir']){
+        const cr=get(s.id,date,svc)||{};
+        const cellTint=svc==='midi'?hexMix(s.couleur,0.10):hexMix(s.couleur,0.13);
+        row.push({content:(cr.heure_debut||'').slice(0,5),styles:{fillColor:cellTint}});
+        row.push({content:(cr.heure_fin||'').slice(0,5),styles:{fillColor:cellTint}});
+      }
+    }
+    return row;
+  });
+  doc.autoTable({
+    head,body,startY:24,
+    styles:{fontSize:6.5,cellPadding:1.2,halign:'center',lineWidth:0.1,lineColor:[200,200,200]},
+    headStyles:{fontSize:7,textColor:[60,60,60]},
+    columnStyles:{0:{cellWidth:32,fontSize:7.5}},
+    margin:{left:10,right:10},
+    theme:'grid'
+  });
+  if(!list.length){doc.setFontSize(11);doc.setTextColor(140);doc.text('Aucun salarié pour ce snack',12,40);}
 }
 
 function buildPrintPage(resto,creneaux){
