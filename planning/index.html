@@ -176,7 +176,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.15 · rapport réel vs prévu';
+const VERSION='v0.16 · duplication postes';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -854,6 +854,15 @@ function openShiftsEditor(jt,svc,role){
   <div style="color:var(--muted);font-size:12px;margin:10px 0 14px">Définis l'heure exacte de chaque poste. L'auto-fill respectera précisément ces horaires.</div>
   <div id="shiftsList" style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:10px;min-height:40px"></div>
   <button class="btn ghost sm" onclick="addShift()" style="margin-top:12px">+ Ajouter un poste</button>
+
+  <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+    <div style="font-size:12.5px;font-weight:600;margin-bottom:8px">📋 Appliquer aussi ces horaires à&nbsp;:</div>
+    <div style="display:flex;gap:12px 18px;flex-wrap:wrap;font-size:12.5px">
+      ${JOUR_TYPES.filter(j=>j!==jt).map(j=>`<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="copy-jt" value="${j}" style="cursor:pointer"> ${JOUR_TYPE_LABELS[j]}</label>`).join('')}
+    </div>
+    <div style="color:var(--muted);font-size:11px;margin-top:8px">Coche les jours-types où ces mêmes horaires (${svcLbl} · ${roleLbl}) s'appliquent — gagne du temps au lieu de tout ressaisir.</div>
+  </div>
+
   <div class="actions" style="margin-top:22px">
     <button class="btn ghost" onclick="closeShiftsEditor()">Annuler</button>
     <button class="btn" onclick="saveShifts()">Enregistrer</button>
@@ -883,20 +892,26 @@ function delShift(i){SHIFTS_STATE.shifts.splice(i,1);renderShiftsList();}
 function updShift(i,which,val){SHIFTS_STATE.shifts[i][which]=val;}
 async function saveShifts(){
   const{jt,svc,role,shifts,existingId}=SHIFTS_STATE;
-  // Trier par deb pour l'affichage
   shifts.sort((a,b)=>(a.deb||'').localeCompare(b.deb||''));
-  const payload={restaurant_id:SNACK.id,jour_type:jt,service:svc,role,nb_cible:shifts.length,vagues:shifts};
-  if(existingId){
-    const{error}=await sb.from('planning_effectifs').update(payload).eq('id',existingId);
-    if(error){alert('Erreur: '+error.message);return;}
-    const e=S.effectifs.find(x=>x.id===existingId);if(e)Object.assign(e,payload);
-  } else {
-    const{data,error}=await sb.from('planning_effectifs').insert(payload).select().single();
-    if(error){alert('Erreur: '+error.message);return;}
-    S.effectifs.push(data);
+  // Cibles : le jour-type actuel + ceux cochés "Appliquer aussi à"
+  const others=[...document.querySelectorAll('.copy-jt:checked')].map(c=>c.value);
+  const targets=[jt,...others];
+  let savedCount=0;
+  for(const targetJt of targets){
+    const existing=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===targetJt&&x.service===svc&&x.role===role);
+    const payload={restaurant_id:SNACK.id,jour_type:targetJt,service:svc,role,nb_cible:shifts.length,vagues:shifts};
+    if(existing){
+      const{error}=await sb.from('planning_effectifs').update(payload).eq('id',existing.id);
+      if(error){alert('Erreur sur '+targetJt+': '+error.message);continue;}
+      Object.assign(existing,payload);savedCount++;
+    } else {
+      const{data,error}=await sb.from('planning_effectifs').insert(payload).select().single();
+      if(error){alert('Erreur sur '+targetJt+': '+error.message);continue;}
+      S.effectifs.push(data);savedCount++;
+    }
   }
   closeShiftsEditor();
-  setSS('ok','Postes enregistrés ✓');
+  setSS('ok',`Postes enregistrés ✓ (${savedCount} jour-type${savedCount>1?'s':''})`);
   openReglages();
 }
 function closeShiftsEditor(){document.getElementById('shiftsModal').innerHTML='';SHIFTS_STATE=null;}
