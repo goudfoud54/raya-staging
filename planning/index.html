@@ -64,7 +64,7 @@ table.plan td.salname{text-align:left;font-weight:600;background:var(--card);pos
 table.plan th.salhead{position:sticky;left:0;z-index:6;background:rgba(255,255,255,.02);min-width:130px;border-right:2px solid var(--line-2)}
 table.plan td.midi{background:var(--midi)}
 table.plan td.soir{background:var(--soir)}
-table.plan td input{width:calc(54px * var(--zoom));padding:2px 4px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:calc(11px * var(--zoom));font-family:monospace;text-align:center;outline:none}
+table.plan td input{width:calc(64px * var(--zoom));min-width:54px;padding:2px 4px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:calc(11px * var(--zoom));font-family:monospace;text-align:center;outline:none}
 table.plan td input::placeholder{color:rgba(255,255,255,.12)}
 table.plan td.conflict{box-shadow:inset 0 0 0 1.5px var(--bad);background:rgba(196,90,90,.08)!important}
 table.plan td.conflict input{color:var(--bad);font-weight:700}
@@ -155,7 +155,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.4 · export PDF';
+const VERSION='v0.5 · UX correctifs';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
@@ -301,8 +301,8 @@ function renderTable(){
         const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
         const cellKey=`${s.id}|${date}|${svc}`;
         const isConf=CONFLICTS.has(cellKey);
-        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
-        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
+        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" data-saved="${hd}" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
+        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" data-saved="${hf}" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
       });
     });
     tbody+='</tr>';
@@ -317,8 +317,11 @@ function setSS(state,msg){const el=document.getElementById('ss');el.className='s
 async function saveCell(sid,date,svc,which,el){
   const raw=el.value;
   const v=normTime(raw);
-  if(v===null){setSS('err','Format invalide (HH:MM)');el.value='';return;}
+  if(v===null){setSS('err','Format invalide (HH:MM)');el.value=el.dataset.saved||'';return;}
   el.value=v;
+  // Pas de changement → ne rien faire
+  if(v===(el.dataset.saved||'')) return;
+  el.dataset.saved=v;
   setSS('busy','Enregistrement…');
   const cr=getCreneau(sid,date,svc)||{salarie_id:sid,restaurant_id:SNACK.id,date,service:svc,role:roleMain(sid)||'cuisine'};
   if(which==='deb') cr.heure_debut=v||null; else cr.heure_fin=v||null;
@@ -346,97 +349,106 @@ async function saveCell(sid,date,svc,which,el){
   }
 }
 
+let CHECKS=[];
 function renderChecks(){
-  const checks=[];
-  // 1. Effectifs OK
-  let effOk=true;
-  for(let i=0;i<7;i++)for(const svc of ['midi','soir']){
-    const t=targetFor(i,svc);const date=fmtDate(dateOfDay(i));
-    const cuisineN=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='cuisine'&&c.heure_debut).length;
-    const caisseN=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='caisse'&&c.heure_debut).length;
-    if(cuisineN!==t.cuisine||caisseN!==t.caisse) effOk=false;
-  }
-  checks.push({lbl:'Effectifs cibles',ok:effOk});
-
-  // 2. Pas de doublon inter-snack
-  const conflicts=new Set();
-  for(const c of S.allCreneauxWeek){
-    if(!c.heure_debut)continue;
-    const others=S.allCreneauxWeek.filter(x=>x.salarie_id===c.salarie_id && x.date===c.date && x.service===c.service && x.restaurant_id!==c.restaurant_id && x.heure_debut);
-    if(others.length) conflicts.add(c.salarie_id+c.date+c.service);
-  }
-  checks.push({lbl:`Pas de doublon inter-snack${conflicts.size?` (${conflicts.size})`:''}`,ok:conflicts.size===0});
-
-  // 3. Coupure ≥ 3h entre midi et soir (sur cette semaine, ce snack)
-  let coupOk=true;
-  const bySalDay={};
-  S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySalDay[k]=bySalDay[k]||{};bySalDay[k][c.service]=c;});
-  for(const [k,svcs] of Object.entries(bySalDay)){
-    if(svcs.midi?.heure_fin && svcs.soir?.heure_debut){
-      const fm=new Date('2000-01-01T'+svcs.midi.heure_fin);
-      const ds=new Date('2000-01-01T'+svcs.soir.heure_debut);
-      const diff=(ds-fm)/3600000;
-      if(diff>0 && diff<3) coupOk=false;
-    }
-  }
-  checks.push({lbl:'Coupure ≥ 3h',ok:coupOk});
-
-  // 4. Au moins 1 jour off par salarié (semaine en cours)
-  let offOk=true;const noOff=[];
-  const list=S.salaries.filter(s=>s.snack_origine_id===SNACK.id||s.est_multi);
-  list.forEach(s=>{
-    const days=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));
-    if(days.size>=7){offOk=false;noOff.push(s.nom);}
-  });
-  checks.push({lbl:`≥ 1 jour off${noOff.length?' ('+noOff.join(', ')+')':''}`,ok:offOk});
-
-  // helpers durées
+  CHECKS=[];
   const toMin=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
   const dur=(deb,fin)=>{let a=toMin(deb),b=toMin(fin);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
+  const dayIdxOfDate=d=>(new Date(d).getDay()+6)%7;
+  const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
 
-  // 5. Plafond heures hebdo par salarié
-  let plafondOk=true;const overload=[];
+  // 1. Effectifs cibles
+  const eff=[];
+  for(let i=0;i<7;i++)for(const svc of ['midi','soir']){
+    const t=targetFor(i,svc);const date=fmtDate(dateOfDay(i));
+    const cn=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='cuisine'&&c.heure_debut).length;
+    const ck=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='caisse'&&c.heure_debut).length;
+    if(cn!==t.cuisine) eff.push(`${JOURS[i]} ${svc} · Cuisine : ${cn}/${t.cuisine}`);
+    if(ck!==t.caisse) eff.push(`${JOURS[i]} ${svc} · Réception : ${ck}/${t.caisse}`);
+  }
+  CHECKS.push({lbl:'Effectifs cibles',ok:eff.length===0,details:eff});
+
+  // 2. Doublons inter-snack
+  const conf=[];
+  for(const c of S.allCreneauxWeek){
+    if(!c.heure_debut || c.restaurant_id!==SNACK.id)continue;
+    const others=S.allCreneauxWeek.filter(x=>x.salarie_id===c.salarie_id && x.date===c.date && x.restaurant_id!==c.restaurant_id && x.heure_debut && _overlap(c,x));
+    if(others.length){
+      const oList=others.map(o=>{const r=S.restos.find(x=>x.id===o.restaurant_id);return `${shortSnack(r?.nom||'')} ${o.service} ${(o.heure_debut||'').slice(0,5)}→${(o.heure_fin||'').slice(0,5)||'?'}`;}).join(' / ');
+      conf.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} ${c.service} ${(c.heure_debut||'').slice(0,5)}→${(c.heure_fin||'').slice(0,5)||'?'} ↔ ${oList}`);
+    }
+  }
+  CHECKS.push({lbl:'Pas de doublon inter-snack',ok:conf.length===0,details:conf});
+
+  // 3. Coupure ≥ 3h
+  const coup=[];
+  const bySD={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD[k]=bySD[k]||{};bySD[k][c.service]=c;});
+  Object.entries(bySD).forEach(([k,svcs])=>{
+    if(svcs.midi?.heure_fin && svcs.soir?.heure_debut){
+      const diff=(toMin(svcs.soir.heure_debut)-toMin(svcs.midi.heure_fin))/60;
+      if(diff>0 && diff<3){const[sid,date]=k.split('|');coup.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${diff.toFixed(1)}h entre midi et soir`);}
+    }
+  });
+  CHECKS.push({lbl:'Coupure ≥ 3h',ok:coup.length===0,details:coup});
+
+  // 4. ≥ 1 jour off
+  const noOff=[];
+  const list=S.salaries.filter(s=>s.snack_origine_id===SNACK.id||s.est_multi);
+  list.forEach(s=>{const d=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));if(d.size>=7)noOff.push(nameOf(s.id)+' : 7 jours travaillés');});
+  CHECKS.push({lbl:'≥ 1 jour off',ok:noOff.length===0,details:noOff});
+
+  // 5. Plafond heures
+  const over=[];
   list.forEach(s=>{
     const plaf=(s.plafond_heures||48)*60;
     const total=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+dur(c.heure_debut,c.heure_fin),0);
-    if(total>plaf){plafondOk=false;overload.push(`${s.nom} ${Math.round(total/60*10)/10}h`);}
+    if(total>plaf) over.push(`${nameOf(s.id)} : ${(total/60).toFixed(1)}h > ${plaf/60}h`);
   });
-  checks.push({lbl:`Plafond heures hebdo${overload.length?' ('+overload.join(', ')+')':''}`,ok:plafondOk});
+  CHECKS.push({lbl:'Plafond heures hebdo',ok:over.length===0,details:over});
 
-  // 6. Amplitude max 12h consécutives par jour
-  let ampliOk=true;const ampOver=[];
-  const bySD={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD[k]=bySD[k]||[];bySD[k].push(c);});
-  Object.entries(bySD).forEach(([k,arr])=>{
+  // 6. Amplitude ≤ 12h
+  const amp=[];
+  const bySD2={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD2[k]=bySD2[k]||[];bySD2[k].push(c);});
+  Object.entries(bySD2).forEach(([k,arr])=>{
     const deb=arr.map(c=>toMin(c.heure_debut)).filter(x=>x!=null);
     const fin=arr.map(c=>{let f=toMin(c.heure_fin),d=toMin(c.heure_debut);if(f!=null&&d!=null&&f<=d)f+=24*60;return f;}).filter(x=>x!=null);
     if(!deb.length||!fin.length)return;
-    const ampl=Math.max(...fin)-Math.min(...deb);
-    if(ampl>12*60){ampliOk=false;const sid=k.split('|')[0];const s=S.salaries.find(x=>x.id===sid);ampOver.push((s?.nom||'?')+' '+Math.round(ampl/60*10)/10+'h');}
+    const a=Math.max(...fin)-Math.min(...deb);
+    if(a>12*60){const[sid,date]=k.split('|');amp.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${(a/60).toFixed(1)}h d'amplitude`);}
   });
-  checks.push({lbl:`Amplitude ≤ 12h${ampOver.length?' ('+ampOver.join(', ')+')':''}`,ok:ampliOk});
+  CHECKS.push({lbl:'Amplitude ≤ 12h',ok:amp.length===0,details:amp});
 
-  // 7. Fin à 2h → pas de service matin le lendemain
-  let fin2hOk=true;const fin2hKO=[];
-  Object.entries(bySD).forEach(([k,arr])=>{
-    const soir=arr.find(c=>c.service==='soir' && c.heure_fin);
-    if(!soir)return;
-    const fm=toMin(soir.heure_fin); const deb=toMin(soir.heure_debut);
-    const finReel = (fm!=null&&deb!=null&&fm<=deb) ? fm : fm; // 2h00 = 120, déjà ok
+  // 7. Fin 2h → pas matin
+  const fin2=[];
+  Object.entries(bySD2).forEach(([k,arr])=>{
+    const soir=arr.find(c=>c.service==='soir' && c.heure_fin);if(!soir)return;
+    const fm=toMin(soir.heure_fin);
     if(fm!=null && fm>=0 && fm<=180){
-      // fin avant 3h du matin → lendemain matin interdit
-      const[sid,date]=k.split('|');
-      const next=new Date(date);next.setDate(next.getDate()+1);const nd=fmtDate(next);
-      const nextMidi=S.creneaux.find(c=>c.salarie_id===sid && c.date===nd && c.service==='midi' && c.heure_debut);
-      if(nextMidi && toMin(nextMidi.heure_debut)<15*60){
-        fin2hOk=false;const s=S.salaries.find(x=>x.id===sid);fin2hKO.push(s?.nom||'?');
-      }
+      const[sid,date]=k.split('|');const nd=fmtDate(new Date(new Date(date).getTime()+86400000));
+      const nm=S.creneaux.find(c=>c.salarie_id===sid && c.date===nd && c.service==='midi' && c.heure_debut);
+      if(nm && toMin(nm.heure_debut)<15*60) fin2.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]}→${JOURS[dayIdxOfDate(nd)]} : fin ${(soir.heure_fin||'').slice(0,5)} puis matin ${(nm.heure_debut||'').slice(0,5)}`);
     }
   });
-  checks.push({lbl:`Fin 2h → pas matin J+1${fin2hKO.length?' ('+[...new Set(fin2hKO)].join(', ')+')':''}`,ok:fin2hOk});
+  CHECKS.push({lbl:'Fin 2h → pas matin J+1',ok:fin2.length===0,details:fin2});
 
-  document.getElementById('checks').querySelector('#checks, .chk-list')||0;
-  document.getElementById('checks').innerHTML='<h3>Vérifications</h3><div class="chk-list">'+
-    checks.map(c=>`<div class="chk ${c.ok?'ok':'ko'}">${c.ok?'✓':'⚠'} ${c.lbl}</div>`).join('')+'</div>';
+  document.getElementById('checks').innerHTML=CHECKS.map((c,i)=>{
+    const n=c.details.length;const hasD=n>0;
+    return `<button class="chk ${c.ok?'ok':'ko'}" ${hasD?`onclick="showCheckDetails(${i})"`:''} style="${hasD?'cursor:pointer':'cursor:default'}">${c.ok?'✓':'⚠'} ${c.lbl}${n?` (${n})`:''}</button>`;
+  }).join('');
+}
+
+function showCheckDetails(i){
+  const c=CHECKS[i];if(!c||!c.details.length)return;
+  document.getElementById('pdfModal').innerHTML=`
+  <div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''">
+    <div class="pdf-modal" style="max-width:560px">
+      <h3>${c.ok?'✓':'⚠'} ${c.lbl} <span style="color:var(--muted);font-weight:400;font-size:12px">(${c.details.length})</span></h3>
+      <div style="max-height:60vh;overflow:auto;background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:12px;font-size:12.5px;line-height:1.7">
+        ${c.details.map(d=>`<div>• ${d}</div>`).join('')}
+      </div>
+      <div class="actions" style="margin-top:14px"><button class="btn" onclick="document.getElementById('pdfModal').innerHTML=''">OK</button></div>
+    </div>
+  </div>`;
 }
 
 function render(){
