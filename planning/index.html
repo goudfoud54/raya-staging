@@ -128,7 +128,6 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       </div>
       <button class="btn ghost" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
       <button class="btn ghost" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
-      <button class="btn ghost" onclick="openReport()" title="Comparer pointages réels avec le planning">📊 Rapport</button>
       <button class="btn" onclick="autoFillWeek()" title="Remplir la semaine en fonction des dispos & règles">🎲 Auto-fill</button>
       <button class="btn ghost" onclick="openReglages()">⚙ Réglages</button>
       <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
@@ -176,7 +175,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.16 · duplication postes';
+const VERSION='v0.17 · fix Suppr multi-cellules';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -1146,21 +1145,64 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&((e.key.toLowerCase()==='y')||(e.shiftKey&&e.key.toLowerCase()==='z'))){e.preventDefault();redo();return;}
   if(e.key==='Escape'){clearSelection();CLIPBOARD=null;setSS('','');}
   if((e.key==='Delete'||e.key==='Backspace') && SELECTION.anchor && SELECTION.end){
-    // Vider toutes les cellules sélectionnées
     const a=SELECTION.anchor,b=SELECTION.end;
     const minR=Math.min(a.row,b.row),maxR=Math.max(a.row,b.row);
     const minC=Math.min(a.col,b.col),maxC=Math.max(a.col,b.col);
     const isInInput=e.target&&e.target.matches&&e.target.matches('input');
-    if(isInInput && (minR===maxR&&minC===maxC)) return; // single cell : laisser le natif
+    if(isInInput && (minR===maxR&&minC===maxC)) return;
     e.preventDefault();
-    let cleared=0;
-    document.querySelectorAll('table.plan td input').forEach(inp=>{
-      const r=+inp.dataset.row,c=+inp.dataset.col;
-      if(r>=minR&&r<=maxR&&c>=minC&&c<=maxC && inp.value){inp.value='';inp.dispatchEvent(new Event('blur'));cleared++;}
-    });
-    setSS('ok',`${cleared} cellule(s) effacée(s)`);
+    deleteSelectedCells(minR,maxR,minC,maxC);
   }
 });
+
+async function deleteSelectedCells(minR,maxR,minC,maxC){
+  // 1) Identifier les slots (sid, date, svc) affectés ET vider visuellement les inputs concernés
+  const slots=new Map();
+  document.querySelectorAll('table.plan td input').forEach(inp=>{
+    const r=+inp.dataset.row,c=+inp.dataset.col;
+    if(r>=minR&&r<=maxR&&c>=minC&&c<=maxC){
+      const sid=inp.dataset.sid,date=inp.dataset.date,svc=inp.dataset.svc,which=inp.dataset.w;
+      if(inp.value){inp.value='';inp.dataset.saved='';}
+      const k=`${sid}|${date}|${svc}`;
+      const s=slots.get(k)||{sid,date,svc,debSel:false,finSel:false};
+      if(which==='deb')s.debSel=true;else if(which==='fin')s.finSel=true;
+      slots.set(k,s);
+    }
+  });
+  if(!slots.size)return;
+  setSS('busy','Suppression…');
+  beginTxn();
+  let cleared=0;
+  for(const slot of slots.values()){
+    const{sid,date,svc,debSel,finSel}=slot;
+    const cr=S.creneaux.find(c=>c.salarie_id===sid&&c.date===date&&c.service===svc);
+    if(!cr)continue;
+    const before={...cr};
+    // Calculer le nouvel état : vider les champs sélectionnés
+    const newDeb=debSel?null:cr.heure_debut;
+    const newFin=finSel?null:cr.heure_fin;
+    if(!newDeb && !newFin){
+      // Suppression complète
+      await sb.from('planning_creneaux').delete().eq('id',cr.id);
+      S.creneaux=S.creneaux.filter(c=>c.id!==cr.id);
+      S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==cr.id);
+      if(_txn)_txn.push({before,after:null});
+    } else {
+      // Mise à jour partielle
+      const payload={...cr,heure_debut:newDeb,heure_fin:newFin};
+      const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+      if(!error){
+        S.creneaux=S.creneaux.filter(c=>c.id!==cr.id);S.creneaux.push(data);
+        S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==cr.id);S.allCreneauxWeek.push(data);
+        if(_txn)_txn.push({before,after:data});
+      }
+    }
+    cleared++;
+  }
+  endTxn();
+  setSS('ok',`${cleared} créneau(x) modifié(s)`);
+  renderEffectifs();renderChecks();updateConflictsUI();
+}
 
 // ===== EXPORT PDF =====
 function isoWeek(d){const t=new Date(d);t.setHours(0,0,0,0);t.setDate(t.getDate()+3-(t.getDay()+6)%7);const w1=new Date(t.getFullYear(),0,4);return 1+Math.round(((t-w1)/86400000-3+(w1.getDay()+6)%7)/7);}
