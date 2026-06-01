@@ -128,6 +128,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       </div>
       <button class="btn ghost" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
       <button class="btn ghost" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
+      <button class="btn ghost" onclick="openDemandes()" style="position:relative" title="Demandes d'indisponibilités à valider">🔔 Demandes <span id="demandesBadge" style="display:none;background:var(--bad);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:4px;font-weight:700"></span></button>
       <button class="btn" onclick="autoFillWeek()" title="Remplir la semaine en fonction des dispos & règles">🎲 Auto-fill</button>
       <button class="btn ghost" onclick="openReglages()">⚙ Réglages</button>
       <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
@@ -175,7 +176,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.17 · fix Suppr multi-cellules';
+const VERSION='v0.18 · validation indispos + alerte';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -423,6 +424,19 @@ async function saveCell(sid,date,svc,which,el){
   if(v===null){setSS('err','Format invalide (HH:MM)');el.value=el.dataset.saved||'';return;}
   el.value=v;
   if(v===(el.dataset.saved||'')) return;
+  // Vérif indispo : si valeur ajoutée (non vide) ET salarié indispo ce jour-là → alerte
+  if(v && POPUP_ALERTS){
+    const ind=hasIndispo(sid,date);
+    if(ind){
+      const sal=S.salaries.find(s=>s.id===sid);
+      const nm=[sal?.prenom,sal?.nom].filter(Boolean).join(' ')||sal?.nom||'?';
+      const motif=ind.motif?` (motif : ${ind.motif})`:'';
+      const plage=(ind.heure_debut||ind.heure_fin)?` de ${(ind.heure_debut||'').slice(0,5)} à ${(ind.heure_fin||'').slice(0,5)}`:'';
+      if(!confirm(`⚠ Indisponibilité déclarée\n\n${nm} a déclaré être INDISPONIBLE ce jour${plage}${motif}.\n\nLe planifier quand même ?`)){
+        el.value=el.dataset.saved||'';return;
+      }
+    }
+  }
   el.dataset.saved=v;
   setSS('busy','Enregistrement…');
   const existing=getCreneau(sid,date,svc);
@@ -573,7 +587,7 @@ function render(){
   computeConflicts();
   renderEffectifs();
   if(VIEW_MODE==='poste') renderPosteTable(); else renderTable();
-  renderChecks();updateUndoBtns();updateViewButtons();
+  renderChecks();updateUndoBtns();updateViewButtons();updateDemandesBadge();
   setSS('','');
 }
 
@@ -914,6 +928,69 @@ async function saveShifts(){
   openReglages();
 }
 function closeShiftsEditor(){document.getElementById('shiftsModal').innerHTML='';SHIFTS_STATE=null;}
+
+// ===== DEMANDES INDISPOS =====
+function updateDemandesBadge(){
+  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').length;
+  const b=document.getElementById('demandesBadge');
+  if(b){if(pending){b.textContent=pending;b.style.display='inline-block';}else{b.style.display='none';}}
+}
+async function openDemandes(){
+  // Reload dispos pour avoir les dernières demandes
+  const{data}=await sb.from('salarie_dispos').select('*');
+  S.dispos=data||[];updateDemandesBadge();
+  const JOURS_LBL=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
+  const fmt=d=>{if(d.type==='recurrente')return 'Tous les '+JOURS_LBL[d.jour_semaine].toLowerCase()+'s';if(d.date_specifique)return new Date(d.date_specifique).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});return '—';};
+  const plage=d=>(d.heure_debut||d.heure_fin)?((d.heure_debut||'').slice(0,5)+' → '+(d.heure_fin||'').slice(0,5)):'journée entière';
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px">
+    <div><h3 style="margin:0;font-size:17px">Demandes d'indisponibilité</h3>
+    <div style="color:var(--muted);font-size:12.5px;margin-top:4px">${pending.length} en attente · L'auto-fill et l'alerte ne tiennent compte que des validées.</div></div>
+    <button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕</button>
+  </div>`;
+  if(!pending.length){
+    html+='<div style="text-align:center;padding:30px;color:var(--ok);font-weight:600">✓ Aucune demande en attente</div>';
+  } else {
+    html+='<div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;overflow:hidden">';
+    pending.forEach((d,i)=>{
+      html+=`<div style="padding:14px 16px;${i>0?'border-top:1px solid var(--line)':''}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+          <div><div style="font-weight:600;font-size:13.5px">${nameOf(d.salarie_id)}</div>
+          <div style="color:var(--muted);font-size:11.5px;margin-top:3px">${fmt(d)} · ${plage(d)}</div>
+          ${d.motif?'<div style="color:var(--muted);font-size:12px;margin-top:5px;font-style:italic">'+d.motif+'</div>':''}</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn ghost sm" style="color:var(--bad);border-color:rgba(196,90,90,.4)" onclick="decideDispo('${d.id}','refusee')">Refuser</button>
+            <button class="btn sm" onclick="decideDispo('${d.id}','validee')">Valider</button>
+          </div>
+        </div>
+      </div>`;
+    });
+    html+='</div>';
+  }
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:640px">${html}</div></div>`;
+}
+async function decideDispo(id,decision){
+  const{error}=await sb.from('salarie_dispos').update({statut_demande:decision,decided_at:new Date().toISOString()}).eq('id',id);
+  if(error){alert('Erreur: '+error.message);return;}
+  const d=S.dispos.find(x=>x.id===id);
+  if(d){d.statut_demande=decision;d.decided_at=new Date().toISOString();}
+  setSS('ok',decision==='validee'?'Demande validée ✓':'Demande refusée');
+  updateDemandesBadge();openDemandes();
+}
+
+// Vérifie si un salarié a une indispo validée pour cette date
+function hasIndispo(sid,date){
+  const di=(new Date(date).getDay()+6)%7;
+  return S.dispos.find(d=>{
+    if(d.salarie_id!==sid)return false;
+    if(d.statut!=='indispo')return false;
+    if((d.statut_demande||'validee')!=='validee')return false;
+    if(d.type==='recurrente' && d.jour_semaine===di)return true;
+    if(d.type==='ponctuelle' && d.date_specifique===date)return true;
+    return false;
+  });
+}
 
 // ===== RAPPORT : RÉEL vs PRÉVU =====
 async function openReport(){
