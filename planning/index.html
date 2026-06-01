@@ -145,6 +145,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 </div>
 
 <div id="pdfModal"></div>
+<div id="shiftsModal"></div>
 <div id="pdfHost" style="position:absolute;left:-9999px;top:0;background:#fff;color:#000;width:1400px;visibility:visible"></div>
 
 <style>
@@ -174,7 +175,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 const ADMIN_PW='Rayan1301';
-const VERSION='v0.13 · vue poste v2 + fix autofill';
+const VERSION='v0.14 · éditeur de postes précis';
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -714,14 +715,23 @@ function openReglages(){
         </tr></thead><tbody>`;
   JOUR_TYPES.forEach(jt=>{
     const get=(svc,role)=>targetForJT(jt,svc)[role];
+    const hasVagues=(svc,role)=>{const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===role);return e&&e.vagues&&e.vagues.length;};
     html+=`<tr style="border-top:1px solid var(--line)"><td style="padding:10px 14px;font-weight:600">${JOUR_TYPE_LABELS[jt]}</td>`;
     for(const[svc,role]of[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']]){
       const borderL=svc==='midi'&&role==='cuisine' || svc==='soir'&&role==='cuisine' ? 'border-left:1px solid var(--line);' : '';
-      html+=`<td style="padding:6px 8px;text-align:center;${borderL}"><input type="number" min="0" max="20" value="${get(svc,role)}" data-jt="${jt}" data-svc="${svc}" data-role="${role}" onblur="saveEffectif(this)" style="width:54px;padding:6px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);text-align:center;font-size:13px;font-weight:600"></td>`;
+      const n=get(svc,role); const cfg=hasVagues(svc,role);
+      html+=`<td style="padding:6px 8px;text-align:center;${borderL}">
+        <button onclick="openShiftsEditor('${jt}','${svc}','${role}')" style="width:64px;padding:6px 8px;border-radius:6px;border:1px solid ${cfg?'var(--gold)':'var(--line-2)'};background:${cfg?'rgba(200,160,53,.08)':'var(--bg)'};color:var(--text);font-size:13px;font-weight:600;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;line-height:1.1">
+          <span>${n}</span>
+          <span style="font-size:9px;color:var(--muted);font-weight:400">${cfg?'⚙ détaillé':'défaut'}</span>
+        </button>
+      </td>`;
     }
     html+='</tr>';
   });
-  html+='</tbody></table></div></div>';
+  html+='</tbody></table>';
+  html+='<div style="color:var(--muted);font-size:11.5px;margin-top:10px">💡 Clique sur un chiffre pour définir l\'heure exacte de chaque poste (ex : <i>cuisinier à 10:00, un autre à 10:30, deux à 11:30…</i>). L\'auto-fill respectera ces horaires.</div>';
+  html+='</div>';
 
   // === RÈGLES ===
   html+=`<div style="margin-bottom:24px">
@@ -818,6 +828,77 @@ async function saveRegle(id,field,val){
   setSS('ok','Règle sauvegardée');
 }
 function setPopupAlerts(v){POPUP_ALERTS=v;localStorage.setItem('pl_popups',v?'1':'0');}
+
+// ===== ÉDITEUR DE POSTES (vagues précises) =====
+let SHIFTS_STATE=null;
+function openShiftsEditor(jt,svc,role){
+  const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===role);
+  let shifts;
+  if(e && e.vagues && Array.isArray(e.vagues) && e.vagues.length){
+    shifts=e.vagues.map(v=>({deb:v.deb,fin:v.fin}));
+  } else {
+    const def={midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}};
+    const i={'Lu-Me':0,'Je':3,'Ve':4,'Sa':5,'Di':6}[jt];
+    const n=e?e.nb_cible:targetFor(i,svc)[role];
+    shifts=Array(n).fill(0).map(()=>({deb:def[svc][role][0],fin:def[svc][role][1]}));
+  }
+  SHIFTS_STATE={jt,svc,role,shifts,existingId:e?.id};
+  const roleLbl=role==='cuisine'?'Cuisine':'Réception';
+  const svcLbl=svc==='midi'?'Midi':'Soir';
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px">
+    <div><h3 style="margin:0;font-size:16px">Postes ${svcLbl} · ${roleLbl}</h3>
+    <div style="color:var(--muted);font-size:12px;margin-top:3px">${JOUR_TYPE_LABELS[jt]}</div></div>
+    <button class="btn ghost sm" onclick="closeShiftsEditor()">✕</button>
+  </div>
+  <div style="color:var(--muted);font-size:12px;margin:10px 0 14px">Définis l'heure exacte de chaque poste. L'auto-fill respectera précisément ces horaires.</div>
+  <div id="shiftsList" style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:10px;min-height:40px"></div>
+  <button class="btn ghost sm" onclick="addShift()" style="margin-top:12px">+ Ajouter un poste</button>
+  <div class="actions" style="margin-top:22px">
+    <button class="btn ghost" onclick="closeShiftsEditor()">Annuler</button>
+    <button class="btn" onclick="saveShifts()">Enregistrer</button>
+  </div>`;
+  document.getElementById('shiftsModal').innerHTML=`<div class="pdf-bg" style="z-index:300" onclick="if(event.target===this)closeShiftsEditor()"><div class="pdf-modal" style="max-width:460px">${html}</div></div>`;
+  renderShiftsList();
+}
+function renderShiftsList(){
+  const list=document.getElementById('shiftsList');if(!list)return;
+  if(!SHIFTS_STATE.shifts.length){list.innerHTML='<div style="color:var(--muted);font-size:12px;text-align:center;padding:14px">Aucun poste — clique « + Ajouter un poste »</div>';return;}
+  list.innerHTML=SHIFTS_STATE.shifts.map((s,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;${i>0?'border-top:1px solid var(--line)':''}">
+      <span style="color:var(--muted);font-size:11.5px;min-width:64px;font-weight:600">Poste ${i+1}</span>
+      <input type="time" value="${s.deb||''}" onchange="updShift(${i},'deb',this.value)" style="padding:6px 9px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">
+      <span style="color:var(--muted)">→</span>
+      <input type="time" value="${s.fin||''}" onchange="updShift(${i},'fin',this.value)" style="padding:6px 9px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">
+      <button class="btn danger sm" style="margin-left:auto" onclick="delShift(${i})" title="Supprimer">×</button>
+    </div>
+  `).join('');
+}
+function addShift(){
+  const def={midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}};
+  const [d,f]=def[SHIFTS_STATE.svc][SHIFTS_STATE.role];
+  SHIFTS_STATE.shifts.push({deb:d,fin:f});renderShiftsList();
+}
+function delShift(i){SHIFTS_STATE.shifts.splice(i,1);renderShiftsList();}
+function updShift(i,which,val){SHIFTS_STATE.shifts[i][which]=val;}
+async function saveShifts(){
+  const{jt,svc,role,shifts,existingId}=SHIFTS_STATE;
+  // Trier par deb pour l'affichage
+  shifts.sort((a,b)=>(a.deb||'').localeCompare(b.deb||''));
+  const payload={restaurant_id:SNACK.id,jour_type:jt,service:svc,role,nb_cible:shifts.length,vagues:shifts};
+  if(existingId){
+    const{error}=await sb.from('planning_effectifs').update(payload).eq('id',existingId);
+    if(error){alert('Erreur: '+error.message);return;}
+    const e=S.effectifs.find(x=>x.id===existingId);if(e)Object.assign(e,payload);
+  } else {
+    const{data,error}=await sb.from('planning_effectifs').insert(payload).select().single();
+    if(error){alert('Erreur: '+error.message);return;}
+    S.effectifs.push(data);
+  }
+  closeShiftsEditor();
+  setSS('ok','Postes enregistrés ✓');
+  openReglages();
+}
+function closeShiftsEditor(){document.getElementById('shiftsModal').innerHTML='';SHIFTS_STATE=null;}
 
 // ===== AUTO-FILL =====
 const DEFAULT_SHIFTS={
