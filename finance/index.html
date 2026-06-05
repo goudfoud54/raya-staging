@@ -106,6 +106,8 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
         <option value="ytd">Année en cours</option>
         <option value="last_30">30 derniers jours</option>
         <option value="last_90">90 derniers jours</option>
+        <option value="last_365">12 derniers mois</option>
+        <option value="all">Tout (depuis 2020)</option>
       </select>
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -190,6 +192,8 @@ function periodRange(){
   else if(PERIOD==='ytd'){from=new Date(now.getFullYear(),0,1);to=now;}
   else if(PERIOD==='last_30'){from=new Date(now);from.setDate(from.getDate()-30);to=now;}
   else if(PERIOD==='last_90'){from=new Date(now);from.setDate(from.getDate()-90);to=now;}
+  else if(PERIOD==='last_365'){from=new Date(now);from.setFullYear(from.getFullYear()-1);to=now;}
+  else if(PERIOD==='all'){from=new Date(2020,0,1);to=new Date(now.getFullYear()+1,11,31);}
   const iso=d=>d.toISOString().slice(0,10);
   return {from:iso(from),to:iso(to)};
 }
@@ -811,11 +815,11 @@ async function doImport(){
   const{data:reglesData}=await sb.from('fin_regles_catego').select('*').eq('actif',true).eq('organization_id',ORG.id).order('priorite',{ascending:false});
   const regles=reglesData||[];
   // Construire transactions
-  const toInsert=[];
-  IMP_DATA.forEach(r=>{
+  const toInsert=[];const skipped=[];
+  IMP_DATA.forEach((r,idx)=>{
     const d=parseDateFR(r[IMP_MAPPING.date]);
     const lib=(r[IMP_MAPPING.libelle]||'').toString().trim();
-    if(!d||!lib)return;
+    if(!d||!lib){skipped.push(idx);return;}
     let deb=0,cre=0;
     if(IMP_MAPPING.debit>=0)deb=Math.abs(parseAmount(r[IMP_MAPPING.debit]));
     if(IMP_MAPPING.credit>=0)cre=Math.abs(parseAmount(r[IMP_MAPPING.credit]));
@@ -823,27 +827,59 @@ async function doImport(){
       const m=parseAmount(r[IMP_MAPPING.montant]);
       if(m<0)deb=-m;else cre=m;
     }
-    if(deb===0 && cre===0)return;
+    if(deb===0 && cre===0){skipped.push(idx);return;}
     const ref=IMP_MAPPING.reference>=0?(r[IMP_MAPPING.reference]||'').toString().trim():null;
-    // Catégorisation auto via règles
     const libLower=lib.toLowerCase();
     let catId=null,statut='non_categorisee';
     for(const rule of regles){if(libLower.includes(rule.pattern.toLowerCase())){catId=rule.categorie_id;statut='categorisee';break;}}
     toInsert.push({organization_id:ORG.id,compte_id:compteId,date_operation:d,libelle:lib,reference:ref,debit:deb,credit:cre,categorie_id:catId,statut});
   });
-  if(!toInsert.length){toast('Aucune ligne valide');return;}
+  if(!toInsert.length){toast('Aucune ligne valide — vérifie le mapping');return;}
   // Créer import record
   const{data:imp}=await sb.from('fin_imports_bancaires').insert({organization_id:ORG.id,compte_id:compteId,nom_fichier:document.getElementById('imp_file').files[0].name,format_detecte:IMP_FORMAT,nb_lignes:toInsert.length,imported_by:ME.id}).select().single();
-  // Insert trx (upsert pour dédup)
-  let nbNew=0,nbDup=0;
-  // On insère ligne par ligne pour gérer les conflicts (unique index)
-  for(const tx of toInsert){
-    const{error}=await sb.from('fin_transactions_bancaires').insert({...tx,import_id:imp?.id});
-    if(error){if(error.code==='23505')nbDup++;else console.error(error);}
-    else nbNew++;
+
+  // Progress UI
+  const total=toInsert.length;
+  document.getElementById('imp_preview').innerHTML=`
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:18px;text-align:center">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px" id="imp_prog_lbl">Import en cours… 0 / ${total}</div>
+      <div style="background:var(--bg);border-radius:8px;height:20px;overflow:hidden;border:1px solid var(--line-2)">
+        <div id="imp_prog_bar" style="background:var(--gold);height:100%;width:0%;transition:width .2s"></div>
+      </div>
+      <div style="color:var(--muted);font-size:11.5px;margin-top:8px" id="imp_prog_sub">Insertion par lots de 100…</div>
+    </div>`;
+  document.getElementById('imp_btn').disabled=true;document.getElementById('imp_btn').style.opacity=.4;
+
+  // Batch insert par chunks de 100 (10× plus rapide que ligne par ligne)
+  let nbNew=0,nbDup=0,nbErr=0;
+  const CHUNK=100;
+  for(let i=0;i<toInsert.length;i+=CHUNK){
+    const batch=toInsert.slice(i,i+CHUNK).map(tx=>({...tx,import_id:imp?.id}));
+    // Tente insert batch — si conflict (dup), retry une par une
+    const{error}=await sb.from('fin_transactions_bancaires').insert(batch);
+    if(!error){
+      nbNew+=batch.length;
+    } else {
+      // Conflict ou autre erreur → fallback ligne par ligne
+      for(const tx of batch){
+        const{error:e2}=await sb.from('fin_transactions_bancaires').insert(tx);
+        if(!e2)nbNew++;
+        else if(e2.code==='23505')nbDup++;
+        else {nbErr++;console.error(e2);}
+      }
+    }
+    const done=Math.min(i+CHUNK,total);
+    document.getElementById('imp_prog_lbl').textContent=`Import en cours… ${done} / ${total}`;
+    document.getElementById('imp_prog_bar').style.width=(done/total*100)+'%';
+    document.getElementById('imp_prog_sub').textContent=`${nbNew} nouvelles · ${nbDup} doublons${nbErr?' · '+nbErr+' erreurs':''}`;
   }
   if(imp) await sb.from('fin_imports_bancaires').update({nb_nouvelles:nbNew,nb_dupliquees:nbDup}).eq('id',imp.id);
-  toast(`Import OK · ${nbNew} nouvelles, ${nbDup} doublons ignorés`);closeModal();renderBanque(document.getElementById('content'));
+  const msg=`Import terminé ✓\n${nbNew} nouvelles · ${nbDup} doublons${nbErr?' · '+nbErr+' erreurs':''}${skipped.length?'\n('+skipped.length+' lignes vides ignorées)':''}`;
+  document.getElementById('imp_preview').innerHTML=`<div style="background:rgba(63,184,127,.08);border:1px solid var(--ok);border-radius:10px;padding:18px;text-align:center"><div style="color:var(--ok);font-weight:700;font-size:16px;margin-bottom:6px">✓ Import terminé</div><div style="color:var(--text);font-size:13.5px;line-height:1.7">${nbNew} <b>nouvelles</b> transactions insérées<br>${nbDup} doublons déjà présents ${nbErr?' · '+nbErr+' erreurs':''}${skipped.length?'<br>'+skipped.length+' lignes vides ignorées':''}</div><div style="margin-top:12px;color:var(--muted);font-size:11.5px">⚠ Si tu ne vois pas tes transactions, passe la période (en haut) sur <b>"Tout"</b> ou <b>"12 derniers mois"</b>.</div></div>`;
+  toast(`Import OK · ${nbNew} nouvelles, ${nbDup} doublons`);
+  // Auto-switch period to "all" pour que l'utilisateur voie ses transactions
+  if(nbNew>0){PERIOD='all';document.getElementById('periodSelect').value='all';}
+  setTimeout(()=>{closeModal();renderBanque(document.getElementById('content'));},2500);
 }
 
 async function openRegles(){
