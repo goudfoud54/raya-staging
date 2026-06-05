@@ -173,9 +173,9 @@ sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();else d
 
 async function loadCommonData(){
   const[r,c,sa]=await Promise.all([
-    sb.from('restaurants').select('id,nom').order('nom'),
-    sb.from('fin_categories').select('*').eq('actif',true).order('type').order('ordre'),
-    sb.from('salaries').select('id,nom,prenom,taux_horaire_brut,coef_charges_perso').eq('actif',true),
+    sb.from('restaurants').select('id,nom').eq('organization_id',ORG.id).order('nom'),
+    sb.from('fin_categories').select('*').eq('organization_id',ORG.id).eq('actif',true).order('type').order('ordre'),
+    sb.from('salaries').select('id,nom,prenom,taux_horaire_brut,coef_charges_perso').eq('organization_id',ORG.id).eq('actif',true),
   ]);
   S.snacks=r.data||[];S.categories=c.data||[];S.salaries=sa.data||[];
   const sel=document.getElementById('snackSelect');
@@ -621,6 +621,7 @@ async function renderBanque(el){
       <button class="btn" onclick="openCompte()">+ Nouveau compte</button>
       <button class="btn" onclick="openImport()" ${COMPTES.length?'':'disabled style="opacity:.5"'}>📥 Importer relevé</button>
       <button class="btn ghost" onclick="openRegles()">⚙ Règles auto (${REGLES.length})</button>
+      <button class="btn ok" onclick="autoCategorize()" title="Applique toutes les règles aux transactions non catégorisées">✨ Catégoriser tout</button>
       <div style="flex:1"></div>
       <select id="bk_filt_compte" onchange="renderBanque(document.getElementById('content'))"><option value="">Tous comptes</option>${COMPTES.map(co=>`<option value="${co.id}">${co.nom}</option>`).join('')}</select>
       <select id="bk_filt_stat" onchange="renderBanque(document.getElementById('content'))"><option value="">Tous statuts</option><option value="non_categorisee">Non catégorisées</option><option value="categorisee">Catégorisées</option><option value="rapprochee">Rapprochées</option><option value="ignoree">Ignorées</option></select>
@@ -647,6 +648,30 @@ async function renderBanque(el){
   });
   html+='</tbody></table>';
   document.getElementById('bk_trx_list').innerHTML=html;
+}
+async function autoCategorize(){
+  // Charge règles + trx non catégorisées
+  const{data:regles}=await sb.from('fin_regles_catego').select('id,pattern,categorie_id,priorite').eq('organization_id',ORG.id).eq('actif',true).order('priorite',{ascending:false});
+  if(!regles||!regles.length){toast('Aucune règle active. Va dans ⚙ Règles auto pour en créer.');return;}
+  const{data:trx}=await sb.from('fin_transactions_bancaires').select('id,libelle').eq('organization_id',ORG.id).eq('statut','non_categorisee');
+  if(!trx||!trx.length){toast('Aucune transaction non catégorisée');return;}
+  toast(`Analyse de ${trx.length} transactions…`);
+  let nbCat=0,nbSkip=0;
+  // Match par règles (priorité décroissante)
+  const updates={};
+  trx.forEach(t=>{
+    const lib=(t.libelle||'').toLowerCase();
+    for(const r of regles){if(lib.includes(r.pattern.toLowerCase())){updates[t.id]=r.categorie_id;nbCat++;return;}}
+    nbSkip++;
+  });
+  if(nbCat===0){toast('Aucune correspondance trouvée — crée plus de règles');return;}
+  // Batch update par catégorie
+  const byCat={};Object.entries(updates).forEach(([id,catId])=>{(byCat[catId]=byCat[catId]||[]).push(id);});
+  for(const[catId,ids]of Object.entries(byCat)){
+    await sb.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).in('id',ids);
+  }
+  toast(`✨ ${nbCat} transactions catégorisées · ${nbSkip} sans match`);
+  renderBanque(document.getElementById('content'));
 }
 async function categoriserTrx(id,catId){
   if(!catId)return;
