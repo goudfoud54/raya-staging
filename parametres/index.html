@@ -157,6 +157,32 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       </div>
     </div>
 
+    <!-- CLÉS API & MCP -->
+    <div class="section">
+      <h3>🔑 Clés API & MCP (Eatime360)</h3>
+      <div style="color:var(--muted);font-size:12px;line-height:1.5;margin-bottom:14px">
+        Génère une clé pour piloter ton org via le <b>serveur MCP Eatime360</b>. Tu peux ensuite connecter Claude (ou un autre client MCP) à ton instance pour automatiser des actions.
+        <br><br>
+        <span style="color:var(--text)">URL du serveur MCP :</span> <code id="mcpUrl" style="background:var(--surface);padding:3px 7px;border-radius:4px;color:var(--gold);font-size:11.5px">—</code>
+        <button class="btn ghost sm" style="margin-left:6px" onclick="copyLink(document.getElementById('mcpUrl').textContent)">📋</button>
+      </div>
+      <div id="apiKeysList" style="font-size:13px;margin-bottom:16px"></div>
+      <div style="padding-top:14px;border-top:1px solid var(--line)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">+ Nouvelle clé API</div>
+        <div class="grid2">
+          <div class="fld"><label>Libellé (ex: "Mon Claude perso", "Zapier")</label><input id="ak_label" placeholder="Mon Claude perso"></div>
+          <div class="fld"><label>Permissions</label>
+            <select id="ak_scopes">
+              <option value="read,write">Lecture + écriture (complet)</option>
+              <option value="read">Lecture seule (sécurisé)</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn" onclick="createApiKey()">Générer la clé</button>
+        <div id="ak_result" style="margin-top:14px"></div>
+      </div>
+    </div>
+
     <!-- ORGANISATIONS (super_admin only) -->
     <div class="section hidden" id="orgsSection">
       <h3>🛡 Organisations (super admin)</h3>
@@ -216,6 +242,8 @@ async function loadProfileAndShow(){
   renderForm();
   loadUsers();
   loadSalariesForInvite();
+  document.getElementById('mcpUrl').textContent=SUPA_URL+'/functions/v1/mcp';
+  loadApiKeys();
   if(ME.role==='super_admin'){document.getElementById('orgsSection').classList.remove('hidden');loadOrgs();}
 }
 async function logout(){await sb.auth.signOut();location.reload();}
@@ -358,6 +386,76 @@ async function removeUser(id,name){
   if(error){toast(error.message);return;}
   toast('Utilisateur retiré');
   loadUsers();
+}
+
+// ────────────────────────────────  CLÉS API & MCP  ────────────────────────────────
+async function loadApiKeys(){
+  const{data:keys}=await sb.from('api_keys').select('id,prefix,label,scopes,created_at,last_used_at,revoked_at').eq('organization_id',ORG.id).order('created_at',{ascending:false});
+  if(!keys||keys.length===0){document.getElementById('apiKeysList').innerHTML='<div style="color:var(--muted);padding:10px;text-align:center;font-size:12.5px">Aucune clé API. Génère-en une ci-dessous.</div>';return;}
+  let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+  keys.forEach(k=>{
+    const rev=k.revoked_at!=null;
+    const used=k.last_used_at?new Date(k.last_used_at).toLocaleString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'jamais';
+    const created=new Date(k.created_at).toLocaleDateString('fr-FR');
+    html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);${rev?'opacity:.5':''}">
+      <div style="font-family:monospace;background:var(--surface);padding:3px 8px;border-radius:4px;font-size:11.5px;color:var(--gold)">${k.prefix}…</div>
+      <div style="flex:1">
+        <div style="font-weight:600">${k.label||'(sans nom)'}${rev?' <span style="color:var(--bad);font-size:10px">RÉVOQUÉE</span>':''}</div>
+        <div style="color:var(--muted);font-size:11px">${(k.scopes||[]).join(' + ')} · créée le ${created} · dernière utilisation : ${used}</div>
+      </div>
+      ${rev?'':`<button class="btn ghost sm" onclick="revokeApiKey('${k.id}')">Révoquer</button>`}
+    </div>`;
+  });
+  html=html.replace(/<\/div>$/,'')+'</div>';
+  document.getElementById('apiKeysList').innerHTML=html;
+}
+function genApiKey(){
+  // 32 bytes random → base64url
+  const buf=new Uint8Array(32); crypto.getRandomValues(buf);
+  let s=btoa(String.fromCharCode(...buf)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  return 'eat_'+s;
+}
+async function sha256Hex(s){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function createApiKey(){
+  const label=document.getElementById('ak_label').value.trim()||'Sans nom';
+  const scopes=document.getElementById('ak_scopes').value.split(',');
+  document.getElementById('ak_result').innerHTML='<span style="color:var(--muted)">Génération…</span>';
+  const key=genApiKey();
+  const hash=await sha256Hex(key);
+  const prefix=key.slice(0,12); // "eat_xxxxxxxx"
+  const{error}=await sb.from('api_keys').insert({organization_id:ORG.id,key_hash:hash,prefix,label,scopes,created_by:ME.id});
+  if(error){document.getElementById('ak_result').innerHTML='<span style="color:var(--bad)">'+error.message+'</span>';return;}
+  document.getElementById('ak_result').innerHTML=`
+    <div style="background:rgba(192,80,80,.08);border:1px solid var(--bad);border-radius:8px;padding:14px">
+      <div style="color:var(--bad);font-weight:700;margin-bottom:8px">⚠ Note cette clé maintenant — elle ne sera plus jamais affichée</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input value="${key}" readonly style="flex:1;background:#0b0b15;border:1px solid var(--line-2);color:var(--text);padding:10px;border-radius:6px;font-family:monospace;font-size:12px">
+        <button class="btn" onclick="copyLink('${key}')">📋 Copier</button>
+      </div>
+      <details style="margin-top:10px">
+        <summary style="cursor:pointer;color:var(--gold);font-size:12.5px;font-weight:600">⚙ Configuration MCP pour Claude (clic pour voir)</summary>
+        <pre style="background:#0b0b15;padding:10px;border-radius:6px;color:var(--muted);font-size:11px;overflow-x:auto;margin-top:8px;white-space:pre-wrap;word-break:break-all">{
+  "mcpServers": {
+    "eatime360": {
+      "url": "${SUPA_URL}/functions/v1/mcp",
+      "headers": { "Authorization": "Bearer ${key}" }
+    }
+  }
+}</pre>
+      </details>
+    </div>`;
+  document.getElementById('ak_label').value='';
+  loadApiKeys();
+}
+async function revokeApiKey(id){
+  if(!confirm('Révoquer cette clé ? Toute connexion l\'utilisant échouera immédiatement.'))return;
+  const{error}=await sb.from('api_keys').update({revoked_at:new Date().toISOString()}).eq('id',id);
+  if(error){toast(error.message);return;}
+  toast('Clé révoquée ✓');
+  loadApiKeys();
 }
 
 // ────────────────────────────────  ORGANISATIONS (super_admin)  ────────────────────────────────
