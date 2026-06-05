@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HACCP — Kiosque</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:#0b0b15;color:#e8e8ec;min-height:100vh;overflow-x:hidden}
+.scr{min-height:100vh;display:flex;flex-direction:column;padding:20px;max-width:520px;margin:0 auto}
+h1{color:#c8a035;font-size:32px;font-weight:800;text-align:center;margin-bottom:8px}
+h1 small{display:block;font-size:13px;color:#7b7b8a;font-weight:400;margin-top:6px}
+.hint{color:#7b7b8a;text-align:center;font-size:14px;margin-bottom:22px}
+.back{position:absolute;top:14px;left:14px;background:none;border:1px solid #2a2a3a;color:#e8e8ec;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer}
+.tile{background:#15151f;border:1px solid rgba(255,255,255,.08);padding:24px;border-radius:14px;text-align:center;cursor:pointer;transition:.15s;font-size:16px;font-weight:600}
+.tile:hover,.tile:active{border-color:#c8a035;transform:translateY(-2px)}
+.tile .ic{font-size:42px;margin-bottom:10px;display:block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:340px;margin:0 auto}
+.pad button{padding:24px;font-size:24px;font-weight:700;background:#15151f;border:1px solid rgba(255,255,255,.08);color:#e8e8ec;border-radius:14px;cursor:pointer}
+.pad button:active{background:#c8a035;color:#1a1a1a}
+.pad .clr{background:#28202a;color:#c45a5a;border-color:rgba(196,90,90,.3)}
+.pad .ok{background:#c8a035;color:#1a1a1a;font-weight:800;border:none}
+.pin-display{font-size:36px;letter-spacing:.4em;text-align:center;color:#c8a035;font-weight:800;margin:18px 0;min-height:46px}
+.fld{margin-bottom:14px}
+.fld label{display:block;font-size:12px;color:#7b7b8a;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.fld input,.fld select,.fld textarea{width:100%;padding:14px 16px;border-radius:10px;border:1px solid #2a2a3a;background:#1c1c28;color:#e8e8ec;font-size:18px;outline:none}
+.fld input:focus,.fld select:focus{border-color:#c8a035}
+.btn{padding:18px;border-radius:10px;background:#c8a035;color:#1a1a1a;font-weight:700;font-size:17px;border:none;cursor:pointer;width:100%}
+.btn.ghost{background:transparent;color:#e8e8ec;border:1px solid #2a2a3a}
+.err{color:#c45a5a;font-size:14px;text-align:center;margin-top:10px}
+.ok-msg{color:#3fb87f;font-weight:700;text-align:center;font-size:18px;padding:30px}
+.user{background:#1c1c28;padding:10px 14px;border-radius:10px;font-size:13px;text-align:center;margin-bottom:18px;color:#c8a035}
+</style>
+</head>
+<body>
+<div id="scr"></div>
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+
+let SALARIE=null,PIN='',SNACK_ID=null,SNACKS=[],EQS=[],ZONES=[];
+
+const TYPES_EQ={frigo:'Frigo',congel:'Congel',vitrine:'Vitrine',friteuse:'Friteuse',sonde:'Sonde'};
+const ACTIONS_HUILE={controle:'Contrôle polarité',filtration:'Filtration',vidange:'Vidange',ajout:'Ajout'};
+const PERIODS={quotidien:'1× / jour','2x_jour':'2× / jour',hebdo:'Hebdo',mensuel:'Mensuel'};
+
+async function init(){
+  SNACK_ID=localStorage.getItem('haccp_kiosk_snack');
+  if(!SNACK_ID){await pickSnack();return;}
+  const{data:snacks}=await sb.from('restaurants').select('id,nom');SNACKS=snacks||[];
+  if(!SNACKS.find(s=>s.id===SNACK_ID)){localStorage.removeItem('haccp_kiosk_snack');await pickSnack();return;}
+  const[e,z]=await Promise.all([
+    sb.from('haccp_equipements').select('*').eq('actif',true),
+    sb.from('haccp_zones_nettoyage').select('*').eq('actif',true)
+  ]);
+  EQS=(e.data||[]).filter(x=>!x.restaurant_id||x.restaurant_id===SNACK_ID);
+  ZONES=(z.data||[]).filter(x=>!x.restaurant_id||x.restaurant_id===SNACK_ID);
+  pinScreen();
+}
+
+async function pickSnack(){
+  const{data}=await sb.from('restaurants').select('id,nom').order('nom');
+  SNACKS=data||[];
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <h1>HACCP<small>Configuration kiosque</small></h1>
+    <div class="hint">Choisis le snack pour cette tablette :</div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">
+      ${SNACKS.map(s=>`<button class="tile" onclick="setSnack('${s.id}')">${s.nom}</button>`).join('')||'<div style="color:#7b7b8a;text-align:center">Aucun snack configuré</div>'}
+    </div>
+  </div>`;
+}
+function setSnack(id){localStorage.setItem('haccp_kiosk_snack',id);location.reload();}
+
+function pinScreen(){
+  PIN='';SALARIE=null;
+  const snack=SNACKS.find(s=>s.id===SNACK_ID);
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="if(confirm('Changer de snack ?')){localStorage.removeItem('haccp_kiosk_snack');location.reload();}">⚙</button>
+    <h1>HACCP<small>${snack?.nom||''}</small></h1>
+    <div class="hint">Saisis ton code PIN pour commencer</div>
+    <div class="pin-display" id="pinDisp"></div>
+    <div class="pad">
+      <button onclick="addPin('1')">1</button><button onclick="addPin('2')">2</button><button onclick="addPin('3')">3</button>
+      <button onclick="addPin('4')">4</button><button onclick="addPin('5')">5</button><button onclick="addPin('6')">6</button>
+      <button onclick="addPin('7')">7</button><button onclick="addPin('8')">8</button><button onclick="addPin('9')">9</button>
+      <button class="clr" onclick="clrPin()">C</button><button onclick="addPin('0')">0</button><button class="ok" onclick="validatePin()">OK</button>
+    </div>
+    <div class="err" id="pinErr"></div>
+  </div>`;
+}
+function addPin(d){if(PIN.length<6){PIN+=d;document.getElementById('pinDisp').textContent='•'.repeat(PIN.length);}}
+function clrPin(){PIN='';document.getElementById('pinDisp').textContent='';document.getElementById('pinErr').textContent='';}
+async function validatePin(){
+  if(!PIN){document.getElementById('pinErr').textContent='Code requis';return;}
+  const{data}=await sb.from('salaries').select('id,nom,prenom,actif').eq('pin_badgeuse',PIN).maybeSingle();
+  if(!data){document.getElementById('pinErr').textContent='Code inconnu';PIN='';document.getElementById('pinDisp').textContent='';return;}
+  if(data.actif===false){document.getElementById('pinErr').textContent='Salarié inactif';return;}
+  SALARIE=data;
+  menuScreen();
+}
+
+function menuScreen(){
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="pinScreen()">↩ Sortir</button>
+    <h1>HACCP</h1>
+    <div class="user">👋 ${SALARIE.prenom||''} ${SALARIE.nom}</div>
+    <div class="hint">Que veux-tu enregistrer ?</div>
+    <div class="grid2" style="margin-top:20px">
+      <button class="tile" onclick="tempScreen()"><span class="ic">🌡</span>Température<br><span style="font-size:11px;color:#7b7b8a;font-weight:400">frigo / congel / vitrine</span></button>
+      <button class="tile" onclick="huileScreen()"><span class="ic">🍳</span>Huile friteuse</button>
+      <button class="tile" onclick="recepScreen()"><span class="ic">📦</span>Réception<br><span style="font-size:11px;color:#7b7b8a;font-weight:400">marchandise</span></button>
+      <button class="tile" onclick="netScreen()"><span class="ic">🧽</span>Nettoyage</button>
+    </div>
+  </div>`;
+}
+
+// ─────── TEMPÉRATURE ───────
+function tempScreen(){
+  const eqs=EQS.filter(e=>['frigo','congel','vitrine','sonde'].includes(e.type));
+  if(!eqs.length){document.getElementById('scr').innerHTML=`<div class="scr"><button class="back" onclick="menuScreen()">↩</button><h1>🌡 Température</h1><div class="err">Aucun équipement configuré pour ce snack. Va dans le module HACCP admin.</div><button class="btn ghost" onclick="menuScreen()">Retour</button></div>`;return;}
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="menuScreen()">↩ Menu</button>
+    <h1>🌡 Température</h1>
+    <div class="user">${SALARIE.prenom||''} ${SALARIE.nom}</div>
+    <div class="fld"><label>Équipement</label><select id="t_eq">${eqs.map(e=>`<option value="${e.id}">${e.nom} (${TYPES_EQ[e.type]}, ${e.t_min??''}→${e.t_max??''}°C)</option>`).join('')}</select></div>
+    <div class="fld"><label>T° relevée (°C)</label><input type="number" step="0.1" id="t_val" placeholder="3.2" autofocus></div>
+    <div class="fld" id="t_actionBox" style="display:none"><label>⚠ Hors seuil — Action corrective</label><input id="t_act" placeholder="ex: bascule produits, signalé manager"></div>
+    <button class="btn" onclick="saveTemp()">Enregistrer</button>
+    <div class="err" id="t_err"></div>
+  </div>`;
+  document.getElementById('t_val').addEventListener('input',(e)=>{
+    const eq=EQS.find(x=>x.id===document.getElementById('t_eq').value);
+    const v=parseFloat(e.target.value);
+    const hors=!isNaN(v) && ((eq.t_min!=null && v<eq.t_min) || (eq.t_max!=null && v>eq.t_max));
+    document.getElementById('t_actionBox').style.display=hors?'block':'none';
+  });
+}
+async function saveTemp(){
+  const eqId=document.getElementById('t_eq').value;
+  const v=parseFloat(document.getElementById('t_val').value);
+  if(isNaN(v)){document.getElementById('t_err').textContent='T° requise';return;}
+  const eq=EQS.find(x=>x.id===eqId);
+  const conforme=!((eq.t_min!=null && v<eq.t_min) || (eq.t_max!=null && v>eq.t_max));
+  const{error}=await sb.from('haccp_releves_temperature').insert({organization_id:eq.organization_id,equipement_id:eqId,valeur:v,conforme,action_corrective:document.getElementById('t_act')?.value||null,salarie_id:SALARIE.id,saisi_par_pin:PIN});
+  if(error){document.getElementById('t_err').textContent=error.message;return;}
+  successScreen(conforme?'Relevé OK ✓':'Relevé hors seuil enregistré ⚠');
+}
+
+// ─────── HUILE ───────
+function huileScreen(){
+  const frs=EQS.filter(e=>e.type==='friteuse');
+  if(!frs.length){document.getElementById('scr').innerHTML=`<div class="scr"><button class="back" onclick="menuScreen()">↩</button><h1>🍳 Huile</h1><div class="err">Aucune friteuse configurée.</div><button class="btn ghost" onclick="menuScreen()">Retour</button></div>`;return;}
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="menuScreen()">↩ Menu</button>
+    <h1>🍳 Huile friteuse</h1>
+    <div class="user">${SALARIE.prenom||''} ${SALARIE.nom}</div>
+    <div class="fld"><label>Friteuse</label><select id="h_eq">${frs.map(e=>`<option value="${e.id}">${e.nom}</option>`).join('')}</select></div>
+    <div class="fld"><label>Action</label><select id="h_act">${Object.entries(ACTIONS_HUILE).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
+    <div class="fld"><label>Polarité % (si test)</label><input type="number" step="0.1" id="h_pol" placeholder="ex: 21"></div>
+    <div class="fld"><label>Conforme ?</label><select id="h_conf"><option value="true">Oui</option><option value="false">Non, à vidanger</option></select></div>
+    <button class="btn" onclick="saveHuile()">Enregistrer</button>
+    <div class="err" id="h_err"></div>
+  </div>`;
+}
+async function saveHuile(){
+  const eqId=document.getElementById('h_eq').value;const eq=EQS.find(x=>x.id===eqId);
+  const{error}=await sb.from('haccp_huiles').insert({organization_id:eq.organization_id,equipement_id:eqId,action:document.getElementById('h_act').value,polarite_pct:parseFloat(document.getElementById('h_pol').value)||null,conforme:document.getElementById('h_conf').value==='true',salarie_id:SALARIE.id,saisi_par_pin:PIN});
+  if(error){document.getElementById('h_err').textContent=error.message;return;}
+  successScreen('Contrôle huile enregistré ✓');
+}
+
+// ─────── RÉCEPTION ───────
+function recepScreen(){
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="menuScreen()">↩ Menu</button>
+    <h1>📦 Réception</h1>
+    <div class="user">${SALARIE.prenom||''} ${SALARIE.nom}</div>
+    <div class="fld"><label>Fournisseur</label><input id="r_four" placeholder="Metro, Promocash…"></div>
+    <div class="fld"><label>Produit *</label><input id="r_prod" placeholder="Filet poulet 5kg" autofocus></div>
+    <div class="fld"><label>N° de lot</label><input id="r_lot"></div>
+    <div class="fld"><label>DLUO</label><input type="date" id="r_dluo"></div>
+    <div class="fld"><label>T° à réception (°C)</label><input type="number" step="0.1" id="r_t"></div>
+    <div class="fld"><label>Conforme ?</label><select id="r_conf"><option value="true">Oui — accepté</option><option value="false">Non — refusé</option></select></div>
+    <button class="btn" onclick="saveRecep()">Enregistrer</button>
+    <div class="err" id="r_err"></div>
+  </div>`;
+}
+async function saveRecep(){
+  const prod=document.getElementById('r_prod').value.trim();
+  if(!prod){document.getElementById('r_err').textContent='Produit requis';return;}
+  // Trouver organization_id à partir du snack
+  const{data:snack}=await sb.from('restaurants').select('organization_id').eq('id',SNACK_ID).maybeSingle();
+  if(!snack){document.getElementById('r_err').textContent='Snack introuvable';return;}
+  const{error}=await sb.from('haccp_receptions').insert({organization_id:snack.organization_id,restaurant_id:SNACK_ID,fournisseur:document.getElementById('r_four').value||null,produit:prod,lot:document.getElementById('r_lot').value||null,dluo:document.getElementById('r_dluo').value||null,t_reception:parseFloat(document.getElementById('r_t').value)||null,conforme:document.getElementById('r_conf').value==='true',salarie_id:SALARIE.id,saisi_par_pin:PIN});
+  if(error){document.getElementById('r_err').textContent=error.message;return;}
+  successScreen('Réception enregistrée ✓');
+}
+
+// ─────── NETTOYAGE ───────
+function netScreen(){
+  if(!ZONES.length){document.getElementById('scr').innerHTML=`<div class="scr"><button class="back" onclick="menuScreen()">↩</button><h1>🧽 Nettoyage</h1><div class="err">Aucune zone configurée.</div><button class="btn ghost" onclick="menuScreen()">Retour</button></div>`;return;}
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="menuScreen()">↩ Menu</button>
+    <h1>🧽 Nettoyage</h1>
+    <div class="user">${SALARIE.prenom||''} ${SALARIE.nom}</div>
+    <div class="fld"><label>Zone</label><select id="n_z">${ZONES.map(z=>`<option value="${z.id}">${z.nom} · ${PERIODS[z.periodicite]||''}</option>`).join('')}</select></div>
+    <div class="fld"><label>Notes (optionnel)</label><input id="n_notes" placeholder="ex: dégraissage + désinfection"></div>
+    <button class="btn" onclick="saveNet()">✓ J'ai effectué le nettoyage</button>
+    <div class="err" id="n_err"></div>
+  </div>`;
+}
+async function saveNet(){
+  const zid=document.getElementById('n_z').value;
+  const z=ZONES.find(x=>x.id===zid);
+  const{error}=await sb.from('haccp_nettoyages').insert({organization_id:z.organization_id,zone_id:zid,salarie_id:SALARIE.id,saisi_par_pin:PIN,notes:document.getElementById('n_notes').value||null});
+  if(error){document.getElementById('n_err').textContent=error.message;return;}
+  successScreen('Nettoyage enregistré ✓');
+}
+
+function successScreen(msg){
+  document.getElementById('scr').innerHTML=`<div class="scr" style="justify-content:center">
+    <div style="text-align:center;font-size:80px">✓</div>
+    <div class="ok-msg">${msg}</div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:30px">
+      <button class="btn" onclick="menuScreen()">Nouvelle saisie</button>
+      <button class="btn ghost" onclick="pinScreen()">↩ Sortir</button>
+    </div>
+  </div>`;
+  setTimeout(()=>{ if(document.querySelector('.ok-msg')) menuScreen(); },5000);
+}
+
+init();
+</script>
+</body>
+</html>

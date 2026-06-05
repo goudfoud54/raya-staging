@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eatime360 — HACCP</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+a{color:var(--gold);text-decoration:none}
+.hidden{display:none!important}
+input,select,textarea,button{font-family:inherit;color:var(--text)}
+button{cursor:pointer;border:none;background:none}
+.btn{padding:9px 14px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px;border:none;display:inline-flex;align-items:center;gap:6px}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
+.btn.bad{background:var(--bad);color:#fff}
+.btn.ok{background:var(--ok);color:#111}
+.btn.sm{padding:6px 11px;font-size:12px}
+
+/* LOCK */
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px}
+.lock h1{color:var(--gold);font-size:22px}
+.lock input{padding:12px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:14px;width:280px;outline:none;text-align:center}
+.err{color:var(--bad);font-size:12px;min-height:16px}
+
+.header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:10px}
+.brand{color:var(--gold);font-weight:700;font-size:16px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+
+.tabs{display:flex;gap:2px;padding:0 24px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tabs button{padding:11px 16px;border-bottom:2px solid transparent;color:var(--muted);font-weight:600;font-size:13px;white-space:nowrap}
+.tabs button.active{color:var(--gold);border-color:var(--gold)}
+.tabs button:hover{color:var(--text)}
+
+.wrap{max-width:1200px;margin:0 auto;padding:24px 24px 60px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
+.toolbar select,.toolbar input{padding:8px 12px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;outline:none}
+
+.grid{display:grid;gap:14px}
+.grid.cards{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+.kpi .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.kpi .val{font-size:28px;font-weight:800;margin-top:6px}
+.kpi.bad .val{color:var(--bad)} .kpi.ok .val{color:var(--ok)} .kpi.warn .val{color:var(--warn)}
+
+table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+table.tbl th,table.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+table.tbl th{font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;background:var(--surface)}
+table.tbl tr:last-child td{border-bottom:none}
+table.tbl tr:hover{background:rgba(255,255,255,.02)}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase}
+.badge.ok{background:rgba(63,184,127,.15);color:var(--ok)}
+.badge.bad{background:rgba(196,90,90,.15);color:var(--bad)}
+.badge.warn{background:rgba(224,169,58,.15);color:var(--warn)}
+
+.section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+.section h3{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;font-weight:600}
+.fld{margin-bottom:12px}
+.fld label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;font-weight:500}
+.fld input,.fld textarea,.fld select{width:100%;padding:9px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;outline:none}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:700px){.grid2,.grid3{grid-template-columns:1fr}}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:24px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto}
+.modal h2{font-size:16px;font-weight:700;margin-bottom:14px}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;border:1px solid var(--line-2);padding:11px 22px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:200}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="lock" class="lock hidden">
+  <h1>HACCP</h1>
+  <div style="color:var(--muted);font-size:13px">Connexion requise</div>
+  <input type="email" id="loginEmail" placeholder="Email">
+  <input type="password" id="loginPw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')login()">
+  <button class="btn" onclick="login()">Se connecter</button>
+  <div class="err" id="err"></div>
+  <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
+</div>
+
+<div id="app" class="hidden">
+  <div class="header">
+    <div class="brand">Eatime360 <small>· HACCP · v0.1</small></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
+      <a href="../" class="btn ghost sm">Portail</a>
+      <a href="../haccp-kiosk/" class="btn ghost sm" target="_blank">📱 Kiosque</a>
+      <button class="btn ghost sm" onclick="logout()">↩</button>
+    </div>
+  </div>
+  <div class="tabs">
+    <button data-tab="dashboard" class="active" onclick="setTab('dashboard')">📊 Dashboard</button>
+    <button data-tab="temperatures" onclick="setTab('temperatures')">🌡 Températures</button>
+    <button data-tab="huiles" onclick="setTab('huiles')">🍳 Huiles</button>
+    <button data-tab="receptions" onclick="setTab('receptions')">📦 Réceptions</button>
+    <button data-tab="nettoyage" onclick="setTab('nettoyage')">🧽 Nettoyage</button>
+    <button data-tab="equipements" onclick="setTab('equipements')">⚙ Équipements</button>
+    <button data-tab="zones" onclick="setTab('zones')">📍 Zones</button>
+    <button data-tab="export" onclick="setTab('export')">📄 Export DDPP</button>
+  </div>
+  <div class="wrap" id="content"></div>
+</div>
+
+<div id="modalHost"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+let ME=null,ORG={},SNACK=null;
+let TAB='dashboard';
+const S={ snacks:[], equipements:[], zones:[], salaries:[] };
+
+const TYPES_EQ={frigo:'Frigo / Chambre froide',congel:'Congélateur',vitrine:'Vitrine réfrigérée',friteuse:'Friteuse',sonde:'Sonde mobile',autre:'Autre'};
+const PERIODICITES={quotidien:'Quotidien','2x_jour':'2× / jour',hebdo:'Hebdomadaire',mensuel:'Mensuel',trimestriel:'Trimestriel',annuel:'Annuel'};
+const ACTIONS_HUILE={controle:'Contrôle (polarité)',filtration:'Filtration',vidange:'Vidange complète',ajout:'Ajout / Compoint'};
+
+let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
+function val(id){const e=document.getElementById(id);return e?e.value.trim():'';}
+function num(id){const v=val(id);return v===''?null:parseFloat(v);}
+
+async function login(){
+  const email=val('loginEmail'),password=val('loginPw');
+  const{error}=await sb.auth.signInWithPassword({email,password});
+  if(error){document.getElementById('err').textContent=error.message;return;}
+  await loadProfileAndShow();
+}
+async function loadProfileAndShow(){
+  const{data:{session}}=await sb.auth.getSession();if(!session)return;
+  const{data:profile}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
+  ME=profile;
+  const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
+  ORG=org||{};
+  if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
+  if(ORG.suspended && ME.role!=='super_admin'){
+    document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue. Contacter le service client.</div>';
+    return;
+  }
+  document.getElementById('lock').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  await loadCommonData();
+  render();
+}
+async function logout(){await sb.auth.signOut();location.reload();}
+sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();else document.getElementById('lock').classList.remove('hidden');});
+
+async function loadCommonData(){
+  const[r,e,z,s]=await Promise.all([
+    sb.from('restaurants').select('id,nom').order('nom'),
+    sb.from('haccp_equipements').select('*').order('ordre').order('nom'),
+    sb.from('haccp_zones_nettoyage').select('*').order('ordre').order('nom'),
+    sb.from('salaries').select('id,nom,prenom').eq('actif',true).order('nom'),
+  ]);
+  S.snacks=r.data||[];S.equipements=e.data||[];S.zones=z.data||[];S.salaries=s.data||[];
+  const sel=document.getElementById('snackSelect');
+  sel.innerHTML='<option value="">Tous les snacks</option>'+S.snacks.map(x=>`<option value="${x.id}">${x.nom}</option>`).join('');
+  if(SNACK) sel.value=SNACK.id;
+}
+function onSnackChange(){
+  const id=document.getElementById('snackSelect').value;
+  SNACK=id?S.snacks.find(x=>x.id===id):null;
+  render();
+}
+function setTab(t){TAB=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();}
+function nameSal(id){const s=S.salaries.find(x=>x.id===id);return s?(s.prenom?s.prenom+' ':'')+s.nom:'—';}
+function nameEq(id){const e=S.equipements.find(x=>x.id===id);return e?e.nom:'—';}
+function nameZone(id){const z=S.zones.find(x=>x.id===id);return z?z.nom:'—';}
+function fmtDt(ts){if(!ts)return'—';return new Date(ts).toLocaleString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}
+function fmtD(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR');}
+function eqOfSnack(){return S.equipements.filter(e=>!SNACK||e.restaurant_id===SNACK.id||!e.restaurant_id);}
+function zonesOfSnack(){return S.zones.filter(z=>!SNACK||z.restaurant_id===SNACK.id||!z.restaurant_id);}
+
+function render(){const el=document.getElementById('content');
+  if(TAB==='dashboard') return renderDashboard(el);
+  if(TAB==='temperatures') return renderTemperatures(el);
+  if(TAB==='huiles') return renderHuiles(el);
+  if(TAB==='receptions') return renderReceptions(el);
+  if(TAB==='nettoyage') return renderNettoyage(el);
+  if(TAB==='equipements') return renderEquipements(el);
+  if(TAB==='zones') return renderZones(el);
+  if(TAB==='export') return renderExport(el);
+}
+
+// ────────────── DASHBOARD ──────────────
+async function renderDashboard(el){
+  el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
+  const since=new Date();since.setDate(since.getDate()-7);
+  const sinceIso=since.toISOString();
+  let qT=sb.from('haccp_releves_temperature').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
+  let qH=sb.from('haccp_huiles').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
+  let qR=sb.from('haccp_receptions').select('*').gte('ts',sinceIso).order('ts',{ascending:false});
+  let qN=sb.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
+  if(SNACK){qR=qR.eq('restaurant_id',SNACK.id);}
+  const[t,h,r,n]=await Promise.all([qT,qH,qR,qN]);
+  const filterSnack=arr=>!SNACK?arr:arr.filter(x=>(x.haccp_equipements?.restaurant_id||x.haccp_zones_nettoyage?.restaurant_id||x.restaurant_id)===SNACK.id);
+  const T=filterSnack(t.data||[]),H=filterSnack(h.data||[]),R=r.data||[],N=filterSnack(n.data||[]);
+  const tNonConf=T.filter(x=>x.conforme===false).length;
+  const rNonConf=R.filter(x=>x.conforme===false).length;
+  let html=`
+    <h2 style="font-size:18px;font-weight:700;margin-bottom:6px">Tableau de bord HACCP</h2>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:18px">7 derniers jours${SNACK?' · '+SNACK.nom:' · tous snacks'}</div>
+    <div class="grid cards" style="margin-bottom:24px">
+      <div class="kpi"><div class="lbl">Relevés T°</div><div class="val">${T.length}</div></div>
+      <div class="kpi ${tNonConf>0?'bad':'ok'}"><div class="lbl">T° hors seuil</div><div class="val">${tNonConf}</div></div>
+      <div class="kpi"><div class="lbl">Contrôles huile</div><div class="val">${H.length}</div></div>
+      <div class="kpi"><div class="lbl">Réceptions</div><div class="val">${R.length}</div></div>
+      <div class="kpi ${rNonConf>0?'bad':'ok'}"><div class="lbl">Réceptions non conformes</div><div class="val">${rNonConf}</div></div>
+      <div class="kpi"><div class="lbl">Nettoyages</div><div class="val">${N.length}</div></div>
+    </div>
+    <div class="section"><h3>Derniers relevés de température</h3>
+      <table class="tbl"><thead><tr><th>Quand</th><th>Équipement</th><th>T°</th><th>Statut</th><th>Salarié</th></tr></thead><tbody>
+        ${T.slice(0,8).map(x=>`<tr><td>${fmtDt(x.ts)}</td><td>${nameEq(x.equipement_id)}</td><td><b>${x.valeur}°C</b></td><td>${x.conforme===false?'<span class="badge bad">Hors seuil</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:18px">Aucun relevé sur 7 jours</td></tr>'}
+      </tbody></table>
+    </div>`;
+  el.innerHTML=html;
+}
+
+// ────────────── TEMPÉRATURES ──────────────
+async function renderTemperatures(el){
+  el.innerHTML=`
+    <div class="toolbar">
+      <select id="filtEq"><option value="">Tous équipements</option>${eqOfSnack().filter(e=>['frigo','congel','vitrine','sonde'].includes(e.type)).map(e=>`<option value="${e.id}">${e.nom}</option>`).join('')}</select>
+      <input type="date" id="filtFrom"><span style="color:var(--muted)">→</span><input type="date" id="filtTo">
+      <button class="btn sm" onclick="renderTemperatures(document.getElementById('content'))">Filtrer</button>
+      <div style="flex:1"></div>
+      <button class="btn" onclick="openReleve()">+ Nouveau relevé</button>
+    </div>
+    <div id="releveList" style="color:var(--muted)">Chargement…</div>`;
+  const eq=val('filtEq'),from=val('filtFrom'),to=val('filtTo');
+  let q=sb.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').order('ts',{ascending:false}).limit(500);
+  if(eq) q=q.eq('equipement_id',eq);
+  if(from) q=q.gte('ts',from+'T00:00:00');
+  if(to) q=q.lte('ts',to+'T23:59:59');
+  const{data}=await q;
+  let list=data||[];
+  if(SNACK) list=list.filter(x=>!x.haccp_equipements||x.haccp_equipements.restaurant_id===SNACK.id);
+  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Équipement</th><th>T° relevée</th><th>Plage</th><th>Statut</th><th>Salarié</th><th>Action corrective</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucun relevé</td></tr>';
+  else list.forEach(x=>{
+    const e=x.haccp_equipements||{};
+    const plage=(e.t_min!=null||e.t_max!=null)?`${e.t_min??''}°C → ${e.t_max??''}°C`:'—';
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${e.nom||'—'}</td><td><b>${x.valeur}°C</b></td><td style="color:var(--muted)">${plage}</td><td>${x.conforme===false?'<span class="badge bad">Hors seuil</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td style="color:var(--muted);font-size:11.5px">${x.action_corrective||''}</td><td><button class="btn ghost sm" onclick="delReleve('${x.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('releveList').innerHTML=html;
+}
+function openReleve(){
+  const eqs=eqOfSnack().filter(e=>['frigo','congel','vitrine','sonde'].includes(e.type));
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Nouveau relevé de température</h2>
+    <div class="fld"><label>Équipement</label><select id="r_eq">${eqs.map(e=>`<option value="${e.id}">${e.nom} (${e.t_min??''}→${e.t_max??''}°C)</option>`).join('')}</select></div>
+    <div class="grid2">
+      <div class="fld"><label>Date / heure</label><input type="datetime-local" id="r_ts" value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)}"></div>
+      <div class="fld"><label>T° relevée (°C)</label><input type="number" step="0.1" id="r_val" placeholder="3.2" autofocus></div>
+    </div>
+    <div class="fld"><label>Salarié</label><select id="r_sal"><option value="">—</option>${S.salaries.map(s=>`<option value="${s.id}">${s.prenom||''} ${s.nom}</option>`).join('')}</select></div>
+    <div class="fld"><label>Action corrective (si non conforme)</label><input id="r_act" placeholder="ex: bascule produits frigo B, signalé au manager"></div>
+    <div class="fld"><label>Notes</label><input id="r_notes"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveReleve()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveReleve(){
+  const eqId=val('r_eq'),v=parseFloat(val('r_val'));
+  if(isNaN(v)){toast('T° requise');return;}
+  const eq=S.equipements.find(e=>e.id===eqId);
+  const conforme=(eq.t_min!=null && v<eq.t_min) || (eq.t_max!=null && v>eq.t_max) ? false : true;
+  const payload={organization_id:ORG.id,equipement_id:eqId,ts:val('r_ts')?new Date(val('r_ts')).toISOString():new Date().toISOString(),valeur:v,conforme,action_corrective:val('r_act')||null,salarie_id:val('r_sal')||null,notes:val('r_notes')||null};
+  const{error}=await sb.from('haccp_releves_temperature').insert(payload);
+  if(error){toast(error.message);return;}
+  toast(conforme?'Relevé OK ✓':'Relevé hors seuil ⚠');
+  closeModal();renderTemperatures(document.getElementById('content'));
+}
+async function delReleve(id){if(!confirm('Supprimer ce relevé ?'))return;const{error}=await sb.from('haccp_releves_temperature').delete().eq('id',id);if(error){toast(error.message);return;}toast('Supprimé');renderTemperatures(document.getElementById('content'));}
+
+// ────────────── HUILES ──────────────
+async function renderHuiles(el){
+  el.innerHTML=`
+    <div class="toolbar">
+      <select id="filtFr"><option value="">Toutes friteuses</option>${eqOfSnack().filter(e=>e.type==='friteuse').map(e=>`<option value="${e.id}">${e.nom}</option>`).join('')}</select>
+      <button class="btn sm" onclick="renderHuiles(document.getElementById('content'))">Filtrer</button>
+      <div style="flex:1"></div>
+      <button class="btn" onclick="openHuile()">+ Nouveau contrôle</button>
+    </div>
+    <div id="huileList">Chargement…</div>`;
+  const fr=val('filtFr');
+  let q=sb.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').order('ts',{ascending:false}).limit(500);
+  if(fr) q=q.eq('equipement_id',fr);
+  const{data}=await q;
+  let list=data||[];
+  if(SNACK) list=list.filter(x=>!x.haccp_equipements||x.haccp_equipements.restaurant_id===SNACK.id);
+  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Friteuse</th><th>Action</th><th>Polarité %</th><th>Marque</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucun contrôle</td></tr>';
+  else list.forEach(x=>{
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.haccp_equipements?.nom||'—'}</td><td>${ACTIONS_HUILE[x.action]||x.action}</td><td>${x.polarite_pct??'—'}</td><td>${x.marque||'—'}</td><td>${x.conforme===false?'<span class="badge bad">Vidange</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delHuile('${x.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('huileList').innerHTML=html;
+}
+function openHuile(){
+  const friteuses=eqOfSnack().filter(e=>e.type==='friteuse');
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Nouveau contrôle / opération huile</h2>
+    <div class="fld"><label>Friteuse</label><select id="h_eq">${friteuses.map(e=>`<option value="${e.id}">${e.nom}</option>`).join('')}</select></div>
+    <div class="grid2">
+      <div class="fld"><label>Date / heure</label><input type="datetime-local" id="h_ts" value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)}"></div>
+      <div class="fld"><label>Action</label><select id="h_act">${Object.entries(ACTIONS_HUILE).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Polarité (%)</label><input type="number" step="0.1" id="h_pol" placeholder="ex: 21"></div>
+      <div class="fld"><label>Conforme ?</label><select id="h_conf"><option value="true">Oui</option><option value="false">Non — à vidanger</option></select></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Marque huile</label><input id="h_marque" placeholder="ex: Olvea Tournesol"></div>
+      <div class="fld"><label>Contenance (L)</label><input type="number" step="0.5" id="h_cont"></div>
+    </div>
+    <div class="fld"><label>Salarié</label><select id="h_sal"><option value="">—</option>${S.salaries.map(s=>`<option value="${s.id}">${s.prenom||''} ${s.nom}</option>`).join('')}</select></div>
+    <div class="fld"><label>Notes</label><input id="h_notes"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveHuile()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveHuile(){
+  const payload={organization_id:ORG.id,equipement_id:val('h_eq'),ts:val('h_ts')?new Date(val('h_ts')).toISOString():new Date().toISOString(),action:val('h_act'),polarite_pct:num('h_pol'),marque:val('h_marque')||null,contenance_l:num('h_cont'),conforme:val('h_conf')==='true',salarie_id:val('h_sal')||null,notes:val('h_notes')||null};
+  const{error}=await sb.from('haccp_huiles').insert(payload);
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderHuiles(document.getElementById('content'));
+}
+async function delHuile(id){if(!confirm('Supprimer ?'))return;await sb.from('haccp_huiles').delete().eq('id',id);renderHuiles(document.getElementById('content'));}
+
+// ────────────── RÉCEPTIONS ──────────────
+async function renderReceptions(el){
+  el.innerHTML=`
+    <div class="toolbar">
+      <input id="filtProd" placeholder="Rechercher produit/fournisseur…">
+      <button class="btn sm" onclick="renderReceptions(document.getElementById('content'))">Filtrer</button>
+      <div style="flex:1"></div>
+      <button class="btn" onclick="openReception()">+ Nouvelle réception</button>
+    </div>
+    <div id="recList">Chargement…</div>`;
+  let q=sb.from('haccp_receptions').select('*').order('ts',{ascending:false}).limit(500);
+  if(SNACK) q=q.eq('restaurant_id',SNACK.id);
+  const search=val('filtProd');
+  const{data}=await q;
+  let list=data||[];
+  if(search) list=list.filter(x=>((x.produit||'')+' '+(x.fournisseur||'')).toLowerCase().includes(search.toLowerCase()));
+  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Fournisseur</th><th>Produit</th><th>Lot</th><th>DLUO</th><th>Qté</th><th>T° réception</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:30px">Aucune réception</td></tr>';
+  else list.forEach(x=>{
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.fournisseur||'—'}</td><td><b>${x.produit}</b></td><td>${x.lot||'—'}</td><td>${fmtD(x.dluo)}</td><td>${x.quantite??''} ${x.unite||''}</td><td>${x.t_reception??'—'}°C</td><td>${x.conforme===false?'<span class="badge bad">Refusé</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delReception('${x.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('recList').innerHTML=html;
+}
+function openReception(){
+  const snackOpts=S.snacks.map(s=>`<option value="${s.id}" ${SNACK&&SNACK.id===s.id?'selected':''}>${s.nom}</option>`).join('');
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Nouvelle réception</h2>
+    <div class="grid2">
+      <div class="fld"><label>Snack</label><select id="re_sn">${snackOpts}</select></div>
+      <div class="fld"><label>Date / heure</label><input type="datetime-local" id="re_ts" value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)}"></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Fournisseur</label><input id="re_four" placeholder="Metro, Promocash…"></div>
+      <div class="fld"><label>Produit *</label><input id="re_prod" placeholder="ex: Filet de poulet 5kg" autofocus></div>
+    </div>
+    <div class="grid3">
+      <div class="fld"><label>Numéro de lot</label><input id="re_lot"></div>
+      <div class="fld"><label>DLUO</label><input type="date" id="re_dluo"></div>
+      <div class="fld"><label>Qté + unité</label><div style="display:flex;gap:5px"><input type="number" step="0.1" id="re_qte" style="flex:1"><input id="re_un" placeholder="kg" style="width:60px"></div></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>T° à réception (°C)</label><input type="number" step="0.1" id="re_t"></div>
+      <div class="fld"><label>Conforme ?</label><select id="re_conf"><option value="true">Oui</option><option value="false">Non — refusé</option></select></div>
+    </div>
+    <div class="fld"><label>Salarié</label><select id="re_sal"><option value="">—</option>${S.salaries.map(s=>`<option value="${s.id}">${s.prenom||''} ${s.nom}</option>`).join('')}</select></div>
+    <div class="fld"><label>Action corrective (si non conforme)</label><input id="re_act"></div>
+    <div class="fld"><label>Notes</label><input id="re_notes"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveReception()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveReception(){
+  if(!val('re_prod')){toast('Produit requis');return;}
+  const payload={organization_id:ORG.id,restaurant_id:val('re_sn')||null,ts:val('re_ts')?new Date(val('re_ts')).toISOString():new Date().toISOString(),fournisseur:val('re_four')||null,produit:val('re_prod'),lot:val('re_lot')||null,dluo:val('re_dluo')||null,quantite:num('re_qte'),unite:val('re_un')||null,t_reception:num('re_t'),conforme:val('re_conf')==='true',action_corrective:val('re_act')||null,salarie_id:val('re_sal')||null,notes:val('re_notes')||null};
+  const{error}=await sb.from('haccp_receptions').insert(payload);
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderReceptions(document.getElementById('content'));
+}
+async function delReception(id){if(!confirm('Supprimer ?'))return;await sb.from('haccp_receptions').delete().eq('id',id);renderReceptions(document.getElementById('content'));}
+
+// ────────────── NETTOYAGE ──────────────
+async function renderNettoyage(el){
+  el.innerHTML=`
+    <div class="toolbar">
+      <select id="filtZone"><option value="">Toutes zones</option>${zonesOfSnack().map(z=>`<option value="${z.id}">${z.nom}</option>`).join('')}</select>
+      <input type="date" id="filtFromN"><span style="color:var(--muted)">→</span><input type="date" id="filtToN">
+      <button class="btn sm" onclick="renderNettoyage(document.getElementById('content'))">Filtrer</button>
+      <div style="flex:1"></div>
+      <button class="btn" onclick="openNettoyage()">+ Saisir un nettoyage</button>
+    </div>
+    <div id="netList">Chargement…</div>`;
+  let q=sb.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,periodicite,restaurant_id)').order('ts',{ascending:false}).limit(500);
+  if(val('filtZone')) q=q.eq('zone_id',val('filtZone'));
+  if(val('filtFromN')) q=q.gte('ts',val('filtFromN')+'T00:00:00');
+  if(val('filtToN')) q=q.lte('ts',val('filtToN')+'T23:59:59');
+  const{data}=await q;
+  let list=data||[];
+  if(SNACK) list=list.filter(x=>!x.haccp_zones_nettoyage||x.haccp_zones_nettoyage.restaurant_id===SNACK.id);
+  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Zone</th><th>Périodicité</th><th>Salarié</th><th>Notes</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Aucun nettoyage saisi</td></tr>';
+  else list.forEach(x=>{
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td><b>${x.haccp_zones_nettoyage?.nom||'—'}</b></td><td>${PERIODICITES[x.haccp_zones_nettoyage?.periodicite]||'—'}</td><td>${nameSal(x.salarie_id)}</td><td style="color:var(--muted);font-size:12px">${x.notes||''}</td><td><button class="btn ghost sm" onclick="delNettoyage('${x.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('netList').innerHTML=html;
+}
+function openNettoyage(){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Saisir un nettoyage</h2>
+    <div class="fld"><label>Zone</label><select id="n_zone">${zonesOfSnack().map(z=>`<option value="${z.id}">${z.nom} (${PERIODICITES[z.periodicite]||''})</option>`).join('')}</select></div>
+    <div class="fld"><label>Date / heure</label><input type="datetime-local" id="n_ts" value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)}"></div>
+    <div class="fld"><label>Salarié</label><select id="n_sal"><option value="">—</option>${S.salaries.map(s=>`<option value="${s.id}">${s.prenom||''} ${s.nom}</option>`).join('')}</select></div>
+    <div class="fld"><label>Notes</label><input id="n_notes" placeholder="ex: dégraissage complet + désinfection"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveNettoyage()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveNettoyage(){
+  const payload={organization_id:ORG.id,zone_id:val('n_zone'),ts:val('n_ts')?new Date(val('n_ts')).toISOString():new Date().toISOString(),salarie_id:val('n_sal')||null,notes:val('n_notes')||null};
+  const{error}=await sb.from('haccp_nettoyages').insert(payload);
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderNettoyage(document.getElementById('content'));
+}
+async function delNettoyage(id){if(!confirm('Supprimer ?'))return;await sb.from('haccp_nettoyages').delete().eq('id',id);renderNettoyage(document.getElementById('content'));}
+
+// ────────────── ÉQUIPEMENTS ──────────────
+function renderEquipements(el){
+  const list=eqOfSnack();
+  let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openEq()">+ Ajouter un équipement</button></div>
+    <table class="tbl"><thead><tr><th>Nom</th><th>Type</th><th>Snack</th><th>T° min</th><th>T° max</th><th>Actif</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px">Aucun équipement — ajoute frigos, congel, friteuses</td></tr>';
+  else list.forEach(e=>{
+    html+=`<tr><td><b>${e.nom}</b></td><td>${TYPES_EQ[e.type]||e.type}</td><td>${S.snacks.find(s=>s.id===e.restaurant_id)?.nom||'—'}</td><td>${e.t_min??'—'}°C</td><td>${e.t_max??'—'}°C</td><td>${e.actif?'<span class="badge ok">Oui</span>':'<span class="badge bad">Non</span>'}</td><td><button class="btn ghost sm" onclick='openEq(${JSON.stringify(e).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delEq('${e.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+function openEq(eq){
+  eq=eq||{};
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>${eq.id?'Modifier':'Nouvel'} équipement</h2>
+    <div class="fld"><label>Nom *</label><input id="eq_nom" value="${eq.nom||''}" placeholder="ex: Frigo cuisine A"></div>
+    <div class="grid2">
+      <div class="fld"><label>Type</label><select id="eq_type">${Object.entries(TYPES_EQ).map(([k,v])=>`<option value="${k}" ${eq.type===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="fld"><label>Snack</label><select id="eq_sn"><option value="">— Tous</option>${S.snacks.map(s=>`<option value="${s.id}" ${eq.restaurant_id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>T° min (°C)</label><input type="number" step="0.1" id="eq_tmin" value="${eq.t_min??''}" placeholder="0"></div>
+      <div class="fld"><label>T° max (°C)</label><input type="number" step="0.1" id="eq_tmax" value="${eq.t_max??''}" placeholder="4"></div>
+    </div>
+    <div class="fld"><label>QR code (optionnel)</label><input id="eq_qr" value="${eq.qr_code||''}"></div>
+    <div class="fld"><label>Notes</label><input id="eq_notes" value="${eq.notes||''}"></div>
+    <div class="fld"><label><input type="checkbox" id="eq_actif" ${eq.actif!==false?'checked':''}> Actif</label></div>
+    <input type="hidden" id="eq_id" value="${eq.id||''}">
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveEq()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveEq(){
+  if(!val('eq_nom')){toast('Nom requis');return;}
+  const payload={organization_id:ORG.id,nom:val('eq_nom'),type:val('eq_type'),restaurant_id:val('eq_sn')||null,t_min:num('eq_tmin'),t_max:num('eq_tmax'),qr_code:val('eq_qr')||null,notes:val('eq_notes')||null,actif:document.getElementById('eq_actif').checked};
+  const id=val('eq_id');
+  const{error}=id?await sb.from('haccp_equipements').update(payload).eq('id',id):await sb.from('haccp_equipements').insert(payload);
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderEquipements(document.getElementById('content'));
+}
+async function delEq(id){if(!confirm('Supprimer cet équipement (et tous ses relevés) ?'))return;await sb.from('haccp_equipements').delete().eq('id',id);await loadCommonData();renderEquipements(document.getElementById('content'));}
+
+// ────────────── ZONES NETTOYAGE ──────────────
+function renderZones(el){
+  const list=zonesOfSnack();
+  let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openZone()">+ Ajouter une zone</button></div>
+    <table class="tbl"><thead><tr><th>Nom</th><th>Périodicité</th><th>Snack</th><th>Produit utilisé</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucune zone — définis ton plan de nettoyage</td></tr>';
+  else list.forEach(z=>{
+    html+=`<tr><td><b>${z.nom}</b></td><td>${PERIODICITES[z.periodicite]||'—'}</td><td>${S.snacks.find(s=>s.id===z.restaurant_id)?.nom||'—'}</td><td>${z.produit_utilise||'—'}</td><td><button class="btn ghost sm" onclick='openZone(${JSON.stringify(z).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delZone('${z.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+function openZone(z){
+  z=z||{};
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>${z.id?'Modifier':'Nouvelle'} zone de nettoyage</h2>
+    <div class="fld"><label>Nom *</label><input id="z_nom" value="${z.nom||''}" placeholder="ex: Plonge, Sol cuisine, Plan de travail"></div>
+    <div class="grid2">
+      <div class="fld"><label>Périodicité</label><select id="z_per">${Object.entries(PERIODICITES).map(([k,v])=>`<option value="${k}" ${z.periodicite===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="fld"><label>Snack</label><select id="z_sn"><option value="">— Tous</option>${S.snacks.map(s=>`<option value="${s.id}" ${z.restaurant_id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+    </div>
+    <div class="fld"><label>Produit utilisé</label><input id="z_prod" value="${z.produit_utilise||''}" placeholder="ex: Dégraissant alcalin + désinfectant"></div>
+    <div class="fld"><label>Notes</label><input id="z_notes" value="${z.notes||''}"></div>
+    <input type="hidden" id="z_id" value="${z.id||''}">
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveZone()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveZone(){
+  if(!val('z_nom')){toast('Nom requis');return;}
+  const payload={organization_id:ORG.id,nom:val('z_nom'),periodicite:val('z_per'),restaurant_id:val('z_sn')||null,produit_utilise:val('z_prod')||null,notes:val('z_notes')||null};
+  const id=val('z_id');
+  const{error}=id?await sb.from('haccp_zones_nettoyage').update(payload).eq('id',id):await sb.from('haccp_zones_nettoyage').insert(payload);
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderZones(document.getElementById('content'));
+}
+async function delZone(id){if(!confirm('Supprimer cette zone ?'))return;await sb.from('haccp_zones_nettoyage').delete().eq('id',id);await loadCommonData();renderZones(document.getElementById('content'));}
+
+// ────────────── EXPORT PDF DDPP ──────────────
+function renderExport(el){
+  const today=new Date();
+  const month=(today.getMonth()+1).toString().padStart(2,'0');
+  el.innerHTML=`<div class="section">
+    <h3>Export PDF mensuel — Registre HACCP DDPP</h3>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">Génère un registre conforme prêt à présenter aux contrôleurs sanitaires.<br>Le PDF inclut : page de garde, températures, huiles, réceptions, nettoyages du mois choisi.</p>
+    <div class="grid2">
+      <div class="fld"><label>Mois</label><input type="month" id="exp_month" value="${today.getFullYear()}-${month}"></div>
+      <div class="fld"><label>Snack (vide = tous)</label><select id="exp_snack"><option value="">Tous les snacks</option>${S.snacks.map(s=>`<option value="${s.id}" ${SNACK&&SNACK.id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+    </div>
+    <button class="btn" onclick="exportPDF()">📄 Générer le PDF</button>
+  </div>`;
+}
+async function exportPDF(){
+  toast('Génération…');
+  const month=val('exp_month');
+  if(!month){toast('Mois requis');return;}
+  const sid=val('exp_snack');
+  const [y,m]=month.split('-').map(Number);
+  const from=new Date(y,m-1,1).toISOString();
+  const to=new Date(y,m,0,23,59,59).toISOString();
+  const snackName=sid?(S.snacks.find(s=>s.id===sid)?.nom||''):'TOUS LES SNACKS';
+  // Récup data
+  let qT=sb.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
+  let qH=sb.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
+  let qR=sb.from('haccp_receptions').select('*').gte('ts',from).lte('ts',to).order('ts');
+  let qN=sb.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
+  if(sid) qR=qR.eq('restaurant_id',sid);
+  const[t,h,r,n]=await Promise.all([qT,qH,qR,qN]);
+  const filterSnack=arr=>!sid?arr:arr.filter(x=>(x.haccp_equipements?.restaurant_id||x.haccp_zones_nettoyage?.restaurant_id||x.restaurant_id)===sid);
+  const T=filterSnack(t.data||[]),H=filterSnack(h.data||[]),R=r.data||[],N=filterSnack(n.data||[]);
+  // PDF
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:'mm',format:'a4'});
+  doc.setFontSize(20);doc.text('Registre HACCP',105,30,{align:'center'});
+  doc.setFontSize(14);doc.text(`${ORG.nom||'Organisation'} — ${snackName}`,105,42,{align:'center'});
+  doc.setFontSize(11);doc.text(`Mois : ${new Date(y,m-1).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}`,105,52,{align:'center'});
+  doc.setFontSize(9);doc.setTextColor(120);doc.text(`Généré le ${new Date().toLocaleString('fr-FR')} via Eatime360`,105,60,{align:'center'});
+  doc.setTextColor(0);
+  let y2=75;
+  doc.setFontSize(12);doc.text('Synthèse',14,y2);y2+=4;
+  doc.autoTable({startY:y2,head:[['Indicateur','Valeur']],body:[
+    ['Relevés T° du mois',T.length],['Relevés T° hors seuil',T.filter(x=>x.conforme===false).length],
+    ['Contrôles huile',H.length],['Réceptions enregistrées',R.length],['Réceptions non conformes',R.filter(x=>x.conforme===false).length],
+    ['Nettoyages saisis',N.length],
+  ],theme:'grid',styles:{fontSize:9}});
+  doc.addPage();doc.setFontSize(14);doc.text('🌡 Relevés de température',14,18);
+  doc.autoTable({startY:24,head:[['Date','Équipement','T°','Plage','Statut','Salarié','Action corrective']],body:T.map(x=>{const e=x.haccp_equipements||{};return [new Date(x.ts).toLocaleString('fr-FR'),e.nom||'—',x.valeur+'°C',(e.t_min??'')+'→'+(e.t_max??'')+'°C',x.conforme===false?'HORS SEUIL':'OK',nameSal(x.salarie_id),x.action_corrective||''];}),theme:'grid',styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[200,160,53]}});
+  doc.addPage();doc.setFontSize(14);doc.text('🍳 Huiles de friture',14,18);
+  doc.autoTable({startY:24,head:[['Date','Friteuse','Action','Polarité','Marque','Statut','Salarié']],body:H.map(x=>[new Date(x.ts).toLocaleString('fr-FR'),x.haccp_equipements?.nom||'—',ACTIONS_HUILE[x.action]||x.action,x.polarite_pct??'',x.marque||'',x.conforme===false?'À VIDANGER':'OK',nameSal(x.salarie_id)]),theme:'grid',styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[200,160,53]}});
+  doc.addPage();doc.setFontSize(14);doc.text('📦 Réceptions',14,18);
+  doc.autoTable({startY:24,head:[['Date','Fournisseur','Produit','Lot','DLUO','Qté','T°','Statut','Salarié']],body:R.map(x=>[new Date(x.ts).toLocaleString('fr-FR'),x.fournisseur||'',x.produit,x.lot||'',x.dluo?new Date(x.dluo).toLocaleDateString('fr-FR'):'',(x.quantite??'')+' '+(x.unite||''),(x.t_reception??'—')+'°C',x.conforme===false?'REFUSÉ':'OK',nameSal(x.salarie_id)]),theme:'grid',styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[200,160,53]}});
+  doc.addPage();doc.setFontSize(14);doc.text('🧽 Plan de nettoyage',14,18);
+  doc.autoTable({startY:24,head:[['Date','Zone','Salarié','Notes']],body:N.map(x=>[new Date(x.ts).toLocaleString('fr-FR'),x.haccp_zones_nettoyage?.nom||'—',nameSal(x.salarie_id),x.notes||'']),theme:'grid',styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[200,160,53]}});
+  // Signature
+  const totalPages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=totalPages;i++){doc.setPage(i);doc.setFontSize(8);doc.setTextColor(150);doc.text(`Page ${i}/${totalPages} · ${ORG.nom||''} · ${snackName}`,105,290,{align:'center'});}
+  doc.save(`HACCP_${snackName.replace(/\s+/g,'_')}_${month}.pdf`);
+  toast('PDF généré ✓');
+}
+
+function closeModal(){document.getElementById('modalHost').innerHTML='';}
+</script>
+</body>
+</html>
