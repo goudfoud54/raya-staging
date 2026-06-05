@@ -52,7 +52,6 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
 </style>
 </head>
 <body>
-<div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
 
 <div id="lock" class="lock hidden">
   <h1>Paramètres</h1>
@@ -110,8 +109,58 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       <table class="perms" id="permsTable"></table>
     </div>
 
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
-      <button class="btn" onclick="saveAll()">Enregistrer tous les paramètres</button>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin:6px 0 26px">
+      <button class="btn" onclick="saveAll()">Enregistrer (identité, couleurs, permissions)</button>
+    </div>
+
+    <!-- UTILISATEURS -->
+    <div class="section">
+      <h3>Utilisateurs de l'organisation</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Liste des membres actifs et des invitations en attente.</div>
+      <div id="usersList" style="font-size:13px"></div>
+
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--line)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">Inviter un utilisateur</div>
+        <div class="grid2">
+          <div class="fld"><label>Email</label><input type="email" id="inv_email" placeholder="prenom.nom@exemple.fr"></div>
+          <div class="fld"><label>Rôle</label>
+            <select id="inv_role">
+              <option value="admin">Admin (gérance complète)</option>
+              <option value="manager">Manager (planning, stock)</option>
+              <option value="salarie" selected>Salarié (pointage, dispos)</option>
+            </select>
+          </div>
+        </div>
+        <div class="fld" id="inv_salarie_box">
+          <label>Lier à une fiche salarié (optionnel)</label>
+          <select id="inv_salarie"><option value="">— Aucune —</option></select>
+        </div>
+        <button class="btn" onclick="sendInvite()">Générer le lien d'invitation</button>
+        <div id="inv_result" style="margin-top:14px"></div>
+      </div>
+    </div>
+
+    <!-- ORGANISATIONS (super_admin only) -->
+    <div class="section hidden" id="orgsSection">
+      <h3>🛡 Organisations (super admin)</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Gestion globale du SaaS. Crée une nouvelle organisation et invite son premier admin.</div>
+      <div id="orgsList" style="font-size:13px;margin-bottom:18px"></div>
+
+      <div style="padding-top:14px;border-top:1px solid var(--line)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">+ Nouvelle organisation</div>
+        <div class="grid2">
+          <div class="fld"><label>Nom commercial</label><input id="new_org_nom" placeholder="Restaurant Le Bel Étage"></div>
+          <div class="fld"><label>Slug (URL, optionnel)</label><input id="new_org_slug" placeholder="bel-etage"></div>
+        </div>
+        <div class="grid2">
+          <div class="fld"><label>Plan</label>
+            <select id="new_org_plan"><option value="trial">Trial</option><option value="standard">Standard</option><option value="pro">Pro</option></select>
+          </div>
+          <div class="fld"><label>Email du 1er admin</label><input type="email" id="new_org_admin_email" placeholder="proprietaire@exemple.fr"></div>
+        </div>
+        <button class="btn" onclick="createOrg()">Créer l'organisation + inviter l'admin</button>
+        <div id="new_org_result" style="margin-top:14px"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -148,6 +197,9 @@ async function loadProfileAndShow(){
   document.getElementById('lock').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   renderForm();
+  loadUsers();
+  loadSalariesForInvite();
+  if(ME.role==='super_admin'){document.getElementById('orgsSection').classList.remove('hidden');loadOrgs();}
 }
 async function logout(){await sb.auth.signOut();location.reload();}
 sb.auth.getSession().then(({data})=>{
@@ -197,6 +249,149 @@ async function uploadLogo(ev){
   toast('Logo chargé — n\'oublie pas d\'enregistrer');
 }
 function removeLogo(){ORG.logo_url=null;document.getElementById('logoBox').innerHTML='<span style="color:var(--muted);font-size:11px">Aucun</span>';document.getElementById('rmLogoBtn').style.display='none';}
+
+// ────────────────────────────────  UTILISATEURS  ────────────────────────────────
+const ROLE_TAG={super_admin:'#c45a5a',admin:'#c8a035',manager:'#5b9cff',salarie:'#7b7b8a'};
+async function loadUsers(){
+  const{data:profiles}=await sb.from('profiles').select('id,full_name,email,role,salarie_id').eq('organization_id',ORG.id).order('role').order('full_name');
+  const{data:invs}=await sb.from('invitations').select('id,email,role,token,expires_at,accepted_at,created_at').eq('organization_id',ORG.id).is('accepted_at',null).order('created_at',{ascending:false});
+  let html='<div style="margin-bottom:6px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Membres actifs</div>';
+  if(!profiles||profiles.length===0){html+='<div style="color:var(--muted);padding:8px">Aucun membre.</div>';}
+  else{
+    html+='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+    profiles.forEach(p=>{
+      const init=(p.full_name||p.email||'?').charAt(0).toUpperCase();
+      html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)">
+        <div style="width:30px;height:30px;border-radius:50%;background:${ROLE_TAG[p.role]||'#444'};color:#111;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">${init}</div>
+        <div style="flex:1"><div style="font-weight:600">${p.full_name||'(sans nom)'}</div><div style="color:var(--muted);font-size:11.5px">${p.email||''}</div></div>
+        <span style="background:${ROLE_TAG[p.role]||'#444'}33;color:${ROLE_TAG[p.role]||'#aaa'};padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase">${p.role}</span>
+        ${p.id===ME.id?'<span style="color:var(--muted);font-size:11px">(toi)</span>':`<button class="btn ghost sm" onclick="removeUser('${p.id}','${(p.full_name||p.email||'').replace(/'/g,'')}')">Retirer</button>`}
+      </div>`;
+    });
+    html=html.replace(/<\/div>$/,'');
+    html+='</div>';
+  }
+  if(invs&&invs.length>0){
+    html+='<div style="margin:18px 0 6px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Invitations en attente</div>';
+    html+='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+    invs.forEach(i=>{
+      const link=buildInviteLink(i.token);
+      const expired=i.expires_at && new Date(i.expires_at)<new Date();
+      html+=`<div style="padding:10px 14px;border-bottom:1px solid var(--line)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="flex:1;font-weight:600">${i.email}</span>
+          <span style="background:${ROLE_TAG[i.role]||'#444'}33;color:${ROLE_TAG[i.role]||'#aaa'};padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase">${i.role}</span>
+          ${expired?'<span style="color:var(--bad);font-size:11px">expirée</span>':''}
+          <button class="btn ghost sm" onclick="copyLink('${link}')">📋 Copier</button>
+          <button class="btn ghost sm" onclick="cancelInvite('${i.id}')">✕</button>
+        </div>
+        <div style="color:var(--muted);font-size:11px;word-break:break-all">${link}</div>
+      </div>`;
+    });
+    html+='</div>';
+  }
+  document.getElementById('usersList').innerHTML=html;
+}
+async function loadSalariesForInvite(){
+  const{data}=await sb.from('salaries').select('id,nom,prenom').eq('actif',true).order('nom');
+  const sel=document.getElementById('inv_salarie');
+  sel.innerHTML='<option value="">— Aucune —</option>'+(data||[]).map(s=>`<option value="${s.id}">${s.nom} ${s.prenom||''}</option>`).join('');
+}
+function buildInviteLink(token){
+  // origine + chemin → on remonte de /parametres/ vers /invite/
+  return new URL('../invite/?token='+token,location.href).href;
+}
+function copyLink(url){navigator.clipboard.writeText(url).then(()=>toast('Lien copié ✓'));}
+async function sendInvite(){
+  const email=document.getElementById('inv_email').value.trim().toLowerCase();
+  const role=document.getElementById('inv_role').value;
+  const salarie_id=document.getElementById('inv_salarie').value||null;
+  if(!email||!email.includes('@')){toast('Email invalide');return;}
+  document.getElementById('inv_result').innerHTML='<span style="color:var(--muted)">Génération…</span>';
+  const{data,error}=await sb.from('invitations').insert({
+    organization_id:ORG.id,email,role,
+    salarie_id:role==='salarie'?salarie_id:null,
+    created_by:ME.id
+  }).select().single();
+  if(error){document.getElementById('inv_result').innerHTML='<span style="color:var(--bad)">'+error.message+'</span>';return;}
+  const link=buildInviteLink(data.token);
+  document.getElementById('inv_result').innerHTML=`
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:12px">
+      <div style="color:var(--ok);font-weight:600;margin-bottom:8px">✓ Invitation créée pour ${email}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Envoie-lui ce lien (valable 14 jours) :</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input value="${link}" readonly style="flex:1;background:#0b0b15;border:1px solid var(--line-2);color:var(--text);padding:8px 10px;border-radius:6px;font-size:12px">
+        <button class="btn sm" onclick="copyLink('${link}')">Copier</button>
+      </div>
+    </div>`;
+  document.getElementById('inv_email').value='';
+  loadUsers();
+}
+async function cancelInvite(id){
+  if(!confirm('Annuler cette invitation ?'))return;
+  const{error}=await sb.from('invitations').delete().eq('id',id);
+  if(error){toast(error.message);return;}
+  loadUsers();
+}
+async function removeUser(id,name){
+  if(!confirm('Retirer '+name+' de l\'organisation ?\n(Le compte auth reste mais perdra accès.)'))return;
+  // On désactive en mettant l'organization_id à null, ou on supprime le profil
+  const{error}=await sb.from('profiles').delete().eq('id',id);
+  if(error){toast(error.message);return;}
+  toast('Utilisateur retiré');
+  loadUsers();
+}
+
+// ────────────────────────────────  ORGANISATIONS (super_admin)  ────────────────────────────────
+async function loadOrgs(){
+  const{data:orgs}=await sb.from('organizations').select('*').order('nom');
+  let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+  (orgs||[]).forEach(o=>{
+    const here=o.id===ORG.id;
+    html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)">
+      ${o.logo_url?`<img src="${o.logo_url}" style="width:30px;height:30px;object-fit:contain;background:transparent">`:`<div style="width:30px;height:30px;border-radius:6px;background:${o.couleur_primaire||'#c8a035'};color:#111;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">${(o.nom||'?').charAt(0)}</div>`}
+      <div style="flex:1"><div style="font-weight:600">${o.nom}${here?' <span style="color:var(--gold);font-size:10.5px">(tu y es)</span>':''}</div><div style="color:var(--muted);font-size:11.5px">${o.slug||''} · plan: ${o.plan||'—'}</div></div>
+      <button class="btn ghost sm" onclick="switchOrg('${o.id}','${(o.nom||'').replace(/'/g,'')}')">${here?'Actif':'Basculer'}</button>
+    </div>`;
+  });
+  html=html.replace(/<\/div>$/,'')+'</div>';
+  document.getElementById('orgsList').innerHTML=html;
+}
+async function switchOrg(id,nom){
+  if(id===ORG.id){toast('Déjà sur '+nom);return;}
+  if(!confirm('Basculer ton compte super_admin sur l\'organisation : '+nom+' ?'))return;
+  const{error}=await sb.from('profiles').update({organization_id:id}).eq('id',ME.id);
+  if(error){toast(error.message);return;}
+  location.reload();
+}
+async function createOrg(){
+  const nom=document.getElementById('new_org_nom').value.trim();
+  const slug=(document.getElementById('new_org_slug').value.trim()||nom.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')).slice(0,60);
+  const plan=document.getElementById('new_org_plan').value;
+  const adminEmail=document.getElementById('new_org_admin_email').value.trim().toLowerCase();
+  if(!nom){toast('Nom requis');return;}
+  if(!adminEmail||!adminEmail.includes('@')){toast('Email admin requis');return;}
+  document.getElementById('new_org_result').innerHTML='<span style="color:var(--muted)">Création…</span>';
+  const{data:newOrg,error}=await sb.from('organizations').insert({nom,slug,plan,permissions:{salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],stock:['admin','manager'],facturation:['admin'],parametres:['admin']}}).select().single();
+  if(error){document.getElementById('new_org_result').innerHTML='<span style="color:var(--bad)">'+error.message+'</span>';return;}
+  // Invitation admin
+  const{data:inv,error:e2}=await sb.from('invitations').insert({organization_id:newOrg.id,email:adminEmail,role:'admin',created_by:ME.id}).select().single();
+  if(e2){document.getElementById('new_org_result').innerHTML='<span style="color:var(--warn)">Org créée mais invitation échouée: '+e2.message+'</span>';loadOrgs();return;}
+  const link=buildInviteLink(inv.token);
+  document.getElementById('new_org_result').innerHTML=`
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:12px">
+      <div style="color:var(--ok);font-weight:600;margin-bottom:8px">✓ Organisation "${nom}" créée</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Lien à transmettre à <b>${adminEmail}</b> (valable 14 jours) :</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input value="${link}" readonly style="flex:1;background:#0b0b15;border:1px solid var(--line-2);color:var(--text);padding:8px 10px;border-radius:6px;font-size:12px">
+        <button class="btn sm" onclick="copyLink('${link}')">Copier</button>
+      </div>
+    </div>`;
+  document.getElementById('new_org_nom').value='';
+  document.getElementById('new_org_slug').value='';
+  document.getElementById('new_org_admin_email').value='';
+  loadOrgs();
+}
 
 async function saveAll(){
   // Construire les permissions à partir des cases cochées
