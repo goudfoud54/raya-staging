@@ -77,14 +77,14 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
   <div class="modules" id="modules"></div>
-  <div class="footer">Eatime360 · v1.7 · module Finance complet</div>
+  <div class="footer">Eatime360 · v2.0 · mode maintenance global</div>
 </div>
 
 <script>
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-let ME=null;
+let ME=null,MAINT={};
 
 const MODULES=[
   {id:'salaries',ic:'👥',nm:'Gestion Salariés',ds:'Fiches, dispos, contraintes, docs'},
@@ -132,9 +132,13 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
-  // Charge l'org pour le thème + permissions
-  const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
-  ORG=org||{};
+  // Charge l'org pour le thème + permissions + état maintenance global
+  const[orgRes,modRes]=await Promise.all([
+    sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle(),
+    sb.from('system_modules').select('module_id,en_maintenance,message_maintenance'),
+  ]);
+  ORG=orgRes.data||{};
+  MAINT={};(modRes.data||[]).forEach(m=>{MAINT[m.module_id]={en_maintenance:m.en_maintenance,message:m.message_maintenance};});
   applyTheme();
   // BLOCAGE si org suspendue (sauf super_admin)
   if(ORG.suspended===true && ME.role!=='super_admin'){
@@ -178,7 +182,15 @@ function showApp(){
     const rs=perms[m.id]||[];
     return rs.includes('*')||rs.includes(ME.role);
   });
-  document.getElementById('modules').innerHTML=allowed.map(m=>`<a class="card" href="${m.id}/"><div class="ic">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds">${m.ds}</div></a>`).join('')||'<div style="color:var(--muted);text-align:center;padding:30px">Aucun module accessible avec ton rôle.</div>';
+  document.getElementById('modules').innerHTML=allowed.map(m=>{
+    const mt=MAINT[m.id];
+    const blocked=mt && mt.en_maintenance && !isSuper;
+    if(blocked){
+      return `<div class="card" style="opacity:.5;cursor:not-allowed;position:relative" title="${(mt.message||'Module en maintenance').replace(/"/g,'&quot;')}"><div style="position:absolute;top:8px;right:8px;background:var(--bad);color:#fff;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em">🔧 Maintenance</div><div class="ic" style="filter:grayscale(1)">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds" style="color:var(--bad);font-size:11px">${mt.message||'Indisponible'}</div></div>`;
+    }
+    const badgeSuper=mt && mt.en_maintenance && isSuper ? '<div style="position:absolute;top:8px;right:8px;background:var(--warn);color:#111;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em">🔧 Maint (super)</div>' : '';
+    return `<a class="card" href="${m.id}/" style="position:relative">${badgeSuper}<div class="ic">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds">${m.ds}</div></a>`;
+  }).join('')||'<div style="color:var(--muted);text-align:center;padding:30px">Aucun module accessible avec ton rôle.</div>';
 }
 
 sb.auth.getSession().then(({data})=>{

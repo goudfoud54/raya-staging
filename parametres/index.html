@@ -183,6 +183,13 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       </div>
     </div>
 
+    <!-- MAINTENANCE MODULES (super_admin only) -->
+    <div class="section hidden" id="maintenanceSection">
+      <h3>🔧 Maintenance des modules (super admin)</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Désactive globalement un module pour toutes les organisations (sauf super_admin qui garde accès). Utile pour les déploiements / corrections en urgence.</div>
+      <div id="modulesList"></div>
+    </div>
+
     <!-- ORGANISATIONS (super_admin only) -->
     <div class="section hidden" id="orgsSection">
       <h3>🛡 Organisations (super admin)</h3>
@@ -244,7 +251,10 @@ async function loadProfileAndShow(){
   loadSalariesForInvite();
   document.getElementById('mcpUrl').textContent=SUPA_URL+'/functions/v1/mcp';
   loadApiKeys();
-  if(ME.role==='super_admin'){document.getElementById('orgsSection').classList.remove('hidden');loadOrgs();}
+  if(ME.role==='super_admin'){
+    document.getElementById('orgsSection').classList.remove('hidden');loadOrgs();
+    document.getElementById('maintenanceSection').classList.remove('hidden');loadMaintenance();
+  }
 }
 async function logout(){await sb.auth.signOut();location.reload();}
 sb.auth.getSession().then(({data})=>{
@@ -456,6 +466,38 @@ async function revokeApiKey(id){
   if(error){toast(error.message);return;}
   toast('Clé révoquée ✓');
   loadApiKeys();
+}
+
+// ────────────────────────────────  MAINTENANCE MODULES (super_admin)  ────────────────────────────────
+async function loadMaintenance(){
+  const{data}=await sb.from('system_modules').select('*').order('module_id');
+  const list=data||[];
+  let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+  list.forEach(m=>{
+    const onM=m.en_maintenance;
+    html+=`<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);${onM?'background:rgba(196,90,90,.08)':''}">
+      <div style="flex:1">
+        <div style="font-weight:600">${m.nom} ${onM?'<span class="badge bad" style="margin-left:6px">EN MAINTENANCE</span>':'<span class="badge ok" style="margin-left:6px">ACTIF</span>'}</div>
+        <div style="color:var(--muted);font-size:11px"><code>${m.module_id}</code>${m.message_maintenance?' · '+m.message_maintenance:''}</div>
+      </div>
+      ${onM
+        ?`<button class="btn ok sm" onclick="toggleMaintenance('${m.module_id}',false)">✓ Réactiver</button>`
+        :`<button class="btn bad sm" onclick="toggleMaintenance('${m.module_id}',true)">🔧 Mettre en maintenance</button>`}
+    </div>`;
+  });
+  html=html.replace(/<\/div>$/,'')+'</div>';
+  document.getElementById('modulesList').innerHTML=html;
+}
+async function toggleMaintenance(modId,on){
+  let msg=null;
+  if(on){
+    msg=prompt('Message à afficher aux utilisateurs (optionnel) :','Module en maintenance — disponible sous peu');
+    if(msg===null)return;
+  } else if(!confirm('Réactiver ce module pour tous les utilisateurs ?'))return;
+  const{error}=await sb.from('system_modules').update({en_maintenance:on,message_maintenance:on?(msg||'Module en maintenance'):null,updated_at:new Date().toISOString(),updated_by:ME.id}).eq('module_id',modId);
+  if(error){toast(error.message);return;}
+  toast(on?'🔧 Module en maintenance':'✓ Module réactivé');
+  loadMaintenance();
 }
 
 // ────────────────────────────────  ORGANISATIONS (super_admin)  ────────────────────────────────
