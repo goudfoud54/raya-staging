@@ -696,10 +696,16 @@ function findColIdx(headers,patterns){
   for(const p of patterns){const i=H.findIndex(h=>h.includes(p));if(i>=0)return i;}
   return -1;
 }
-function parseDateFR(s){if(!s)return null;s=s.toString().trim();
-  // DD/MM/YYYY ou DD-MM-YYYY ou YYYY-MM-DD
-  let m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+function parseDateFR(s){if(s==null||s==='')return null;
+  // Si Excel retourne un Date object natif
+  if(s instanceof Date && !isNaN(s)){return s.getFullYear()+'-'+String(s.getMonth()+1).padStart(2,'0')+'-'+String(s.getDate()).padStart(2,'0');}
+  s=s.toString().trim();
+  // Si Excel retourne un serial number (jours depuis 1900)
+  if(/^\d{4,5}(\.\d+)?$/.test(s)){const n=parseFloat(s);if(n>20000&&n<60000){const d=new Date(Date.UTC(1899,11,30)+n*86400000);return d.toISOString().slice(0,10);}}
+  // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (BNP)
+  let m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
   if(m){let y=+m[3];if(y<100)y+=2000;return `${y}-${String(+m[2]).padStart(2,'0')}-${String(+m[1]).padStart(2,'0')}`;}
+  // YYYY-MM-DD
   m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if(m) return `${m[1]}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;
   return null;
