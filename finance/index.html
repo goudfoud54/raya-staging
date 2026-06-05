@@ -841,18 +841,21 @@ async function doImport(){
   // Progress UI
   const total=toInsert.length;
   document.getElementById('imp_preview').innerHTML=`
-    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:18px;text-align:center">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px" id="imp_prog_lbl">Import en cours… 0 / ${total}</div>
-      <div style="background:var(--bg);border-radius:8px;height:20px;overflow:hidden;border:1px solid var(--line-2)">
-        <div id="imp_prog_bar" style="background:var(--gold);height:100%;width:0%;transition:width .2s"></div>
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:600" id="imp_prog_lbl">Import en cours… 0 / ${total}</div>
+        <div style="font-size:18px;font-weight:800;color:var(--gold)" id="imp_prog_pct">0 %</div>
       </div>
-      <div style="color:var(--muted);font-size:11.5px;margin-top:8px" id="imp_prog_sub">Insertion par lots de 100…</div>
+      <div style="background:var(--bg);border-radius:8px;height:24px;overflow:hidden;border:1px solid var(--line-2);position:relative">
+        <div id="imp_prog_bar" style="background:linear-gradient(90deg,var(--gold) 0%,var(--ok) 100%);height:100%;width:0%;transition:width .2s"></div>
+      </div>
+      <div style="color:var(--muted);font-size:11.5px;margin-top:10px;text-align:center" id="imp_prog_sub">Préparation…</div>
     </div>`;
   document.getElementById('imp_btn').disabled=true;document.getElementById('imp_btn').style.opacity=.4;
 
-  // Batch insert par chunks de 100 (10× plus rapide que ligne par ligne)
+  // Batch insert par chunks de 20 (progression plus visible)
   let nbNew=0,nbDup=0,nbErr=0;
-  const CHUNK=100;
+  const CHUNK=20;
   for(let i=0;i<toInsert.length;i+=CHUNK){
     const batch=toInsert.slice(i,i+CHUNK).map(tx=>({...tx,import_id:imp?.id}));
     // Tente insert batch — si conflict (dup), retry une par une
@@ -869,17 +872,18 @@ async function doImport(){
       }
     }
     const done=Math.min(i+CHUNK,total);
+    const pct=Math.round(done/total*100);
     document.getElementById('imp_prog_lbl').textContent=`Import en cours… ${done} / ${total}`;
-    document.getElementById('imp_prog_bar').style.width=(done/total*100)+'%';
+    document.getElementById('imp_prog_pct').textContent=pct+' %';
+    document.getElementById('imp_prog_bar').style.width=pct+'%';
     document.getElementById('imp_prog_sub').textContent=`${nbNew} nouvelles · ${nbDup} doublons${nbErr?' · '+nbErr+' erreurs':''}`;
   }
   if(imp) await sb.from('fin_imports_bancaires').update({nb_nouvelles:nbNew,nb_dupliquees:nbDup}).eq('id',imp.id);
-  const msg=`Import terminé ✓\n${nbNew} nouvelles · ${nbDup} doublons${nbErr?' · '+nbErr+' erreurs':''}${skipped.length?'\n('+skipped.length+' lignes vides ignorées)':''}`;
-  document.getElementById('imp_preview').innerHTML=`<div style="background:rgba(63,184,127,.08);border:1px solid var(--ok);border-radius:10px;padding:18px;text-align:center"><div style="color:var(--ok);font-weight:700;font-size:16px;margin-bottom:6px">✓ Import terminé</div><div style="color:var(--text);font-size:13.5px;line-height:1.7">${nbNew} <b>nouvelles</b> transactions insérées<br>${nbDup} doublons déjà présents ${nbErr?' · '+nbErr+' erreurs':''}${skipped.length?'<br>'+skipped.length+' lignes vides ignorées':''}</div><div style="margin-top:12px;color:var(--muted);font-size:11.5px">⚠ Si tu ne vois pas tes transactions, passe la période (en haut) sur <b>"Tout"</b> ou <b>"12 derniers mois"</b>.</div></div>`;
+  document.getElementById('imp_preview').innerHTML=`<div style="background:rgba(63,184,127,.08);border:1px solid var(--ok);border-radius:10px;padding:18px;text-align:center"><div style="color:var(--ok);font-weight:700;font-size:16px;margin-bottom:6px">✓ Import terminé</div><div style="color:var(--text);font-size:13.5px;line-height:1.7">${nbNew} <b>nouvelles</b> transactions insérées<br>${nbDup} doublons déjà présents ${nbErr?' · '+nbErr+' erreurs':''}${skipped.length?'<br>'+skipped.length+' lignes vides ignorées':''}</div><div style="margin-top:12px;color:var(--muted);font-size:11.5px">Période ajustée automatiquement sur <b>"Tout"</b> pour afficher tes transactions.</div></div>`;
   toast(`Import OK · ${nbNew} nouvelles, ${nbDup} doublons`);
-  // Auto-switch period to "all" pour que l'utilisateur voie ses transactions
-  if(nbNew>0){PERIOD='all';document.getElementById('periodSelect').value='all';}
-  setTimeout(()=>{closeModal();renderBanque(document.getElementById('content'));},2500);
+  // Auto-switch period sur "all" pour montrer les trx importées (qu'elles soient nouvelles ou pré-existantes)
+  PERIOD='all';document.getElementById('periodSelect').value='all';
+  setTimeout(()=>{closeModal();renderBanque(document.getElementById('content'));},2200);
 }
 
 async function openRegles(){
