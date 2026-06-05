@@ -348,14 +348,42 @@ async function loadOrgs(){
   let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
   (orgs||[]).forEach(o=>{
     const here=o.id===ORG.id;
-    html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)">
+    const sus=o.suspended===true;
+    const susBtn=here?'':(sus
+      ?`<button class="btn sm" style="background:var(--ok);color:#111" onclick="toggleSuspend('${o.id}',false,'${(o.nom||'').replace(/'/g,'')}')">Réactiver</button>`
+      :`<button class="btn sm" style="background:var(--bad);color:#fff" onclick="toggleSuspend('${o.id}',true,'${(o.nom||'').replace(/'/g,'')}')">Suspendre</button>`);
+    html+=`<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);${sus?'opacity:.7':''}">
       ${o.logo_url?`<img src="${o.logo_url}" style="width:30px;height:30px;object-fit:contain;background:transparent">`:`<div style="width:30px;height:30px;border-radius:6px;background:${o.couleur_primaire||'#c8a035'};color:#111;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">${(o.nom||'?').charAt(0)}</div>`}
-      <div style="flex:1"><div style="font-weight:600">${o.nom}${here?' <span style="color:var(--gold);font-size:10.5px">(tu y es)</span>':''}</div><div style="color:var(--muted);font-size:11.5px">${o.slug||''} · plan: ${o.plan||'—'}</div></div>
+      <div style="flex:1">
+        <div style="font-weight:600;display:flex;align-items:center;gap:8px">
+          ${o.nom}
+          ${here?'<span style="color:var(--gold);font-size:10.5px">(tu y es)</span>':''}
+          ${sus?'<span style="background:var(--bad);color:#fff;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase">Suspendue</span>':''}
+        </div>
+        <div style="color:var(--muted);font-size:11.5px">${o.slug||''} · plan: ${o.plan||'—'}${sus&&o.suspended_reason?' · '+o.suspended_reason:''}</div>
+      </div>
       <button class="btn ghost sm" onclick="switchOrg('${o.id}','${(o.nom||'').replace(/'/g,'')}')">${here?'Actif':'Basculer'}</button>
+      ${susBtn}
     </div>`;
   });
   html=html.replace(/<\/div>$/,'')+'</div>';
   document.getElementById('orgsList').innerHTML=html;
+}
+async function toggleSuspend(id,toSuspend,nom){
+  let reason=null;
+  if(toSuspend){
+    reason=prompt('Suspendre "'+nom+'" — motif (ex: Impayé facture #X) :','Impayé');
+    if(reason===null)return; // annulé
+  } else {
+    if(!confirm('Réactiver l\'organisation "'+nom+'" ?'))return;
+  }
+  const payload=toSuspend
+    ?{suspended:true,suspended_at:new Date().toISOString(),suspended_reason:reason||'Impayé'}
+    :{suspended:false,suspended_at:null,suspended_reason:null};
+  const{error}=await sb.from('organizations').update(payload).eq('id',id);
+  if(error){toast(error.message);return;}
+  toast(toSuspend?'Organisation suspendue ✓':'Organisation réactivée ✓');
+  loadOrgs();
 }
 async function switchOrg(id,nom){
   if(id===ORG.id){toast('Déjà sur '+nom);return;}
