@@ -86,6 +86,23 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       </div>
     </div>
 
+    <!-- PAIE -->
+    <div class="section">
+      <h3>Paramètres de paie</h3>
+      <div class="grid2">
+        <div class="fld">
+          <label>Coefficient charges patronales (ex: 1.42 = +42%)</label>
+          <input type="number" step="0.001" min="1" id="f_coef" placeholder="1.420">
+        </div>
+        <div class="fld">
+          <label style="visibility:hidden">_</label>
+          <div style="color:var(--muted);font-size:11.5px;padding:11px 0">
+            Multiplie le brut hebdo pour estimer le coût total (brut + charges).
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- COULEURS -->
     <div class="section">
       <h3>Couleurs de l'interface</h3>
@@ -209,6 +226,7 @@ sb.auth.getSession().then(({data})=>{
 
 function renderForm(){
   document.getElementById('f_nom').value=ORG.nom||'';
+  document.getElementById('f_coef').value=ORG.coef_charges??1.420;
   document.getElementById('f_col1').value=ORG.couleur_primaire||'#c8a035';
   document.getElementById('f_col1_t').value=ORG.couleur_primaire||'#c8a035';
   document.getElementById('f_col2').value=ORG.couleur_secondaire||'#5b9cff';
@@ -431,6 +449,7 @@ async function saveAll(){
     logo_url:ORG.logo_url,
     couleur_primaire:document.getElementById('f_col1').value,
     couleur_secondaire:document.getElementById('f_col2').value,
+    coef_charges:parseFloat(document.getElementById('f_coef').value)||1.420,
     permissions:newPerms
   };
   const{error}=await sb.from('organizations').update(payload).eq('id',ORG.id);

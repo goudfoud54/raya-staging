@@ -93,7 +93,6 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 </style>
 </head>
 <body>
-<div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
 
 <div id="lock" class="lock hidden">
   <h1>Planning</h1>
@@ -188,8 +187,8 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.19 · auth Supabase';
-let ME=null;
+const VERSION='v0.20 · coût hebdo (brut + chargé)';
+let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -318,8 +317,9 @@ async function loadProfileAndShow(){
   if(error||!profile){document.getElementById('pwerr').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   if(!['admin','super_admin','manager'].includes(profile.role)){document.getElementById('pwerr').textContent='Accès refusé. (rôle : '+profile.role+')';await sb.auth.signOut();return;}
   ME=profile;
-  const{data:org}=await sb.from('organizations').select('couleur_primaire').eq('id',profile.organization_id).maybeSingle();
+  const{data:org}=await sb.from('organizations').select('couleur_primaire,coef_charges').eq('id',profile.organization_id).maybeSingle();
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
+  ORG=org||{};
   showApp();
 }
 async function logout(){await sb.auth.signOut();ME=null;location.reload();}
@@ -422,6 +422,7 @@ function renderTable(){
   let thead='<thead><tr><th class="salhead">Salarié</th>';
   JOURS_SH.forEach((j,i)=>{thead+=`<th colspan="4" class="dayhead">${j} <span style="color:var(--muted);font-weight:400">${dateOfDay(i).getDate()}</span></th>`;});
   thead+='<th class="dayhead" rowspan="2" style="min-width:80px;background:rgba(200,160,53,.05)">Heures<br><small style="font-weight:400;color:var(--muted)">total / cible</small></th>';
+  thead+='<th class="dayhead" rowspan="2" style="min-width:90px;background:rgba(63,184,127,.06)">Coût<br><small style="font-weight:400;color:var(--muted)">brut hebdo</small></th>';
   thead+='</tr><tr><th class="salhead"></th>';
   JOURS_SH.forEach(()=>{thead+='<th class="midi">M dbt</th><th class="midi">M fin</th><th class="soir">S dbt</th><th class="soir">S fin</th>';});
   thead+='</tr></thead>';
@@ -458,9 +459,38 @@ function renderTable(){
     else if(totH>0){recapCls='ok';recapColor='var(--ok)';}
     const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
     tbody+=`<td style="background:rgba(200,160,53,.04);font-weight:700;color:${recapColor};text-align:center">${totH.toFixed(1)}h${range}</td>`;
+    // colonne coût brut hebdo salarié
+    const taux=Number(s.taux_horaire_brut)||0;
+    const cost=totH*taux;
+    const costStr=taux>0?cost.toFixed(0)+' €':'<span style="color:var(--muted);font-weight:400">—</span>';
+    const tauxStr=taux>0?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${taux.toFixed(2)} €/h</small>`:'<small style="color:var(--warn);font-weight:400;display:block;font-size:9.5px;margin-top:1px">taux ?</small>';
+    tbody+=`<td style="background:rgba(63,184,127,.04);font-weight:700;text-align:center;color:${cost>0?'var(--text)':'var(--muted)'}">${costStr}${tauxStr}</td>`;
     tbody+='</tr>';
   });
-  if(!list.length) tbody+='<tr><td colspan="30" style="text-align:center;padding:30px;color:var(--muted)">Aucun salarié pour ce snack</td></tr>';
+  if(!list.length) tbody+='<tr><td colspan="32" style="text-align:center;padding:30px;color:var(--muted)">Aucun salarié pour ce snack</td></tr>';
+
+  // ─── ligne FOOTER : coût par jour + total hebdo
+  if(list.length){
+    const _toMin3=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
+    const _dur3=(d,f)=>{let a=_toMin3(d),b=_toMin3(f);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
+    const tauxOf=sid=>{const ss=S.salaries.find(x=>x.id===sid);return Number(ss?.taux_horaire_brut)||0;};
+    let totalBrutSem=0;
+    let footHTML='<tr style="background:rgba(63,184,127,.05);border-top:2px solid rgba(63,184,127,.3)"><td class="salname" style="font-weight:700;color:var(--ok)">💰 Coût brut / jour</td>';
+    JOURS_SH.forEach((_,i)=>{
+      const date=fmtDate(dateOfDay(i));
+      let dayCost=0;
+      S.creneaux.filter(c=>c.date===date).forEach(c=>{ dayCost += (_dur3(c.heure_debut,c.heure_fin)/60) * tauxOf(c.salarie_id); });
+      totalBrutSem += dayCost;
+      footHTML+=`<td colspan="4" style="text-align:center;font-weight:700;color:${dayCost>0?'var(--ok)':'var(--muted)'};font-size:12px">${dayCost>0?dayCost.toFixed(0)+' €':'—'}</td>`;
+    });
+    const coef=Number(ORG.coef_charges)||1.420;
+    const charge=totalBrutSem*coef;
+    footHTML+=`<td style="text-align:center;font-weight:700;color:var(--ok);background:rgba(63,184,127,.1);font-size:13px">${totalBrutSem.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">brut</small></td>`;
+    footHTML+=`<td style="text-align:center;font-weight:700;color:var(--ok);background:rgba(63,184,127,.15);font-size:13px">${charge.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">chargé ×${coef}</small></td>`;
+    footHTML+='</tr>';
+    tbody+=footHTML;
+  }
+
   tbody+='</tbody>';
   document.getElementById('planTbl').innerHTML=thead+tbody;
 }

@@ -344,6 +344,7 @@ function openExportModal(){
   </div>`;
 }
 function closeExportModal(){document.getElementById('modalHost').innerHTML='';}
+function closeModal(){document.getElementById('modalHost').innerHTML='';}
 
 async function doExport(){
   const from=document.getElementById('ex_from').value;
@@ -579,6 +580,7 @@ function renderFiche(){
           <div class="fld"><label>Type de contrat</label><input id="f_contrat" oninput="toggleSortie(this.value)" value="${s.type_contrat||''}" placeholder="CDI, CDD, extra, alternant…"></div>
           <div class="fld"><label>Date d'entrée</label><input type="date" id="f_entree" value="${s.date_entree||''}"></div>
           <div class="fld" id="fldSortie" style="${(((s.type_contrat||'').toUpperCase().includes('CDD'))||s.actif===false||s.date_sortie)?'':'display:none'}"><label>Date de sortie</label><input type="date" id="f_sortie" value="${s.date_sortie||''}"></div>
+          <div class="fld"><label>Taux horaire brut (€/h)</label><input type="number" step="0.01" min="0" id="f_taux" value="${s.taux_horaire_brut??''}" placeholder="11.88"></div>
           <div class="fld"><label>Couleur</label><input type="color" id="f_couleur" value="${s.couleur||'#888888'}"></div>
         </div>
         <div class="chkrow">
@@ -785,7 +787,7 @@ async function saveSalarie(){
     telephone:'f_tel',adresse:'f_adr',code_postal:'f_cp',ville:'f_ville',poste_intitule:'f_poste',
     pin_badgeuse:'f_pin'};
   const DATE={date_naissance:'f_naiss',date_entree:'f_entree',date_sortie:'f_sortie'};
-  const NUM={plafond_heures:'f_plafond',heures_min:'f_hmin',heures_max:'f_hmax'};
+  const NUM={plafond_heures:'f_plafond',heures_min:'f_hmin',heures_max:'f_hmax',taux_horaire_brut:'f_taux'};
   const CHK={est_multi:'f_multi',est_mineur:'f_mineur',actif:'f_actif'};
   const SEL={snack_origine_id:'f_snack'};
   const COL={couleur:'f_couleur'};
