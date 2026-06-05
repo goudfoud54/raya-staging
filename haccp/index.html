@@ -347,23 +347,40 @@ async function renderReceptions(el){
       <button class="btn" onclick="openReception()">+ Nouvelle réception</button>
     </div>
     <div id="recList">Chargement…</div>`;
-  let q=sb.from('haccp_receptions').select('*').order('ts',{ascending:false}).limit(500);
+  let q=sb.from('haccp_receptions').select('*,haccp_reception_controles(type_produit,lot,dluo,temperature,conforme,produit)').order('ts',{ascending:false}).limit(500);
   if(SNACK) q=q.eq('restaurant_id',SNACK.id);
   const search=val('filtProd');
   const{data}=await q;
   let list=data||[];
   if(search) list=list.filter(x=>((x.produit||'')+' '+(x.fournisseur||'')).toLowerCase().includes(search.toLowerCase()));
-  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Fournisseur</th><th>Produit</th><th>Lot</th><th>DLUO</th><th>Qté</th><th>T° réception</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
-  if(!list.length) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:30px">Aucune réception</td></tr>';
+  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Fournisseur</th><th>BL / Réf</th><th>Contrôles (🥩❄🧀)</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px">Aucune réception</td></tr>';
   else list.forEach(x=>{
-    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.fournisseur||'—'}</td><td><b>${x.produit}</b></td><td>${x.lot||'—'}</td><td>${fmtD(x.dluo)}</td><td>${x.quantite??''} ${x.unite||''}</td><td>${x.t_reception??'—'}°C</td><td>${x.conforme===false?'<span class="badge bad">Refusé</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delReception('${x.id}')">✕</button></td></tr>`;
+    const ctrls=x.haccp_reception_controles||[];
+    const ctrlHtml=ctrls.length?ctrls.map(c=>{const emoji={viande:'🥩',surgele:'❄',fromage:'🧀',autre:'•'}[c.type_produit]||'•';return `<span class="badge ${c.conforme===false?'bad':'ok'}" title="${c.type_produit} · lot ${c.lot} · DLC ${fmtD(c.dluo)} · ${c.temperature}°C">${emoji} ${c.temperature}°</span>`;}).join(' '):'<span style="color:var(--muted);font-size:11px">—</span>';
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.fournisseur||'—'}</td><td><b>${x.produit||'—'}</b></td><td>${ctrlHtml}</td><td>${x.conforme===false?'<span class="badge bad">Refusé</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delReception('${x.id}')">✕</button></td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('recList').innerHTML=html;
 }
 function openReception(){
   const snackOpts=S.snacks.map(s=>`<option value="${s.id}" ${SNACK&&SNACK.id===s.id?'selected':''}>${s.nom}</option>`).join('');
-  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+  const ctrlCard=(type,emoji,nom,defaultT)=>`
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-weight:700;font-size:14px">${emoji} ${nom} <span style="color:var(--bad);font-size:11px">*</span></div>
+        <label style="font-size:11.5px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px"><input type="checkbox" id="c_${type}_na" onchange="toggleCtrlNA('${type}')"> N/A (pas dans cette livraison)</label>
+      </div>
+      <div id="c_${type}_box">
+        <div class="fld"><label>Produit précis (optionnel)</label><input id="c_${type}_prod" placeholder="ex: Steak haché 5%MG 2kg"></div>
+        <div class="grid3">
+          <div class="fld"><label>N° de lot *</label><input id="c_${type}_lot" placeholder="LOT12345"></div>
+          <div class="fld"><label>DLC / DLUO *</label><input type="date" id="c_${type}_dluo"></div>
+          <div class="fld"><label>T° relevée (°C) *</label><input type="number" step="0.1" id="c_${type}_t" placeholder="${defaultT}"></div>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:680px">
     <h2>Nouvelle réception</h2>
     <div class="grid2">
       <div class="fld"><label>Snack</label><select id="re_sn">${snackOpts}</select></div>
@@ -371,28 +388,51 @@ function openReception(){
     </div>
     <div class="grid2">
       <div class="fld"><label>Fournisseur</label><input id="re_four" placeholder="Metro, Promocash…"></div>
-      <div class="fld"><label>Produit *</label><input id="re_prod" placeholder="ex: Filet de poulet 5kg" autofocus></div>
+      <div class="fld"><label>Bon de livraison / N°</label><input id="re_prod" placeholder="ex: BL #2026-1234"></div>
     </div>
-    <div class="grid3">
-      <div class="fld"><label>Numéro de lot</label><input id="re_lot"></div>
-      <div class="fld"><label>DLUO</label><input type="date" id="re_dluo"></div>
-      <div class="fld"><label>Qté + unité</label><div style="display:flex;gap:5px"><input type="number" step="0.1" id="re_qte" style="flex:1"><input id="re_un" placeholder="kg" style="width:60px"></div></div>
-    </div>
+    <div style="margin:14px 0 10px"><h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Contrôles obligatoires (DLC + T° + lot)</h3></div>
+    ${ctrlCard('viande','🥩','Viande / Charcuterie','&lt; 4')}
+    ${ctrlCard('surgele','❄','Produit surgelé','&lt; -18')}
+    ${ctrlCard('fromage','🧀','Fromage / Lait','&lt; 6')}
+    <div style="margin:14px 0 8px"><h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Validation globale</h3></div>
     <div class="grid2">
-      <div class="fld"><label>T° à réception (°C)</label><input type="number" step="0.1" id="re_t"></div>
-      <div class="fld"><label>Conforme ?</label><select id="re_conf"><option value="true">Oui</option><option value="false">Non — refusé</option></select></div>
+      <div class="fld"><label>Conforme globalement ?</label><select id="re_conf"><option value="true">Oui — accepté</option><option value="false">Non — refusé</option></select></div>
+      <div class="fld"><label>Salarié</label><select id="re_sal"><option value="">—</option>${S.salaries.map(s=>`<option value="${s.id}">${s.prenom||''} ${s.nom}</option>`).join('')}</select></div>
     </div>
-    <div class="fld"><label>Salarié</label><select id="re_sal"><option value="">—</option>${S.salaries.map(s=>`<option value="${s.id}">${s.prenom||''} ${s.nom}</option>`).join('')}</select></div>
     <div class="fld"><label>Action corrective (si non conforme)</label><input id="re_act"></div>
-    <div class="fld"><label>Notes</label><input id="re_notes"></div>
+    <div class="fld"><label>Notes générales</label><input id="re_notes"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveReception()">Enregistrer</button></div>
   </div></div>`;
 }
+function toggleCtrlNA(type){
+  const na=document.getElementById('c_'+type+'_na').checked;
+  document.getElementById('c_'+type+'_box').style.opacity=na?'.35':'1';
+  document.getElementById('c_'+type+'_box').style.pointerEvents=na?'none':'auto';
+}
+function ctrlSeuil(type){return type==='surgele'?{max:-18}:type==='viande'?{max:4}:type==='fromage'?{max:6}:{};}
 async function saveReception(){
-  if(!val('re_prod')){toast('Produit requis');return;}
-  const payload={organization_id:ORG.id,restaurant_id:val('re_sn')||null,ts:val('re_ts')?new Date(val('re_ts')).toISOString():new Date().toISOString(),fournisseur:val('re_four')||null,produit:val('re_prod'),lot:val('re_lot')||null,dluo:val('re_dluo')||null,quantite:num('re_qte'),unite:val('re_un')||null,t_reception:num('re_t'),conforme:val('re_conf')==='true',action_corrective:val('re_act')||null,salarie_id:val('re_sal')||null,notes:val('re_notes')||null};
-  const{error}=await sb.from('haccp_receptions').insert(payload);
-  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderReceptions(document.getElementById('content'));
+  // Validation 3 contrôles obligatoires
+  const types=['viande','surgele','fromage'];
+  const controles=[];
+  for(const t of types){
+    const na=document.getElementById('c_'+t+'_na').checked;
+    if(na) continue;
+    const lot=val('c_'+t+'_lot'), dluo=val('c_'+t+'_dluo'), tp=num('c_'+t+'_t');
+    if(!lot || !dluo || tp===null){toast(`Contrôle ${t} : lot + DLC + T° requis (ou coche N/A)`);return;}
+    const seuil=ctrlSeuil(t);
+    const conforme=!(seuil.max!=null && tp>seuil.max);
+    controles.push({type_produit:t,produit:val('c_'+t+'_prod')||null,lot,dluo,temperature:tp,conforme,organization_id:ORG.id});
+  }
+  if(controles.length===0){toast('Au moins un contrôle requis (sinon coche N/A pour les 3 et utilise les notes)');return;}
+  // Insert réception parente
+  const payload={organization_id:ORG.id,restaurant_id:val('re_sn')||null,ts:val('re_ts')?new Date(val('re_ts')).toISOString():new Date().toISOString(),fournisseur:val('re_four')||null,produit:val('re_prod')||'Réception '+new Date().toLocaleDateString('fr-FR'),conforme:val('re_conf')==='true' && controles.every(c=>c.conforme),action_corrective:val('re_act')||null,salarie_id:val('re_sal')||null,notes:val('re_notes')||null};
+  const{data:rec,error}=await sb.from('haccp_receptions').insert(payload).select().single();
+  if(error){toast(error.message);return;}
+  // Insert contrôles
+  const ctrlInsert=controles.map(c=>({...c,reception_id:rec.id}));
+  const{error:e2}=await sb.from('haccp_reception_controles').insert(ctrlInsert);
+  if(e2){toast('Réception créée mais erreur contrôles : '+e2.message);return;}
+  toast(`Réception enregistrée + ${controles.length} contrôles ✓`);closeModal();renderReceptions(document.getElementById('content'));
 }
 async function delReception(id){if(!confirm('Supprimer ?'))return;await sb.from('haccp_receptions').delete().eq('id',id);renderReceptions(document.getElementById('content'));}
 

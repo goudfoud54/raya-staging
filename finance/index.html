@@ -8,6 +8,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
@@ -114,6 +116,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
     <button data-tab="ca" onclick="setTab('ca')">💰 CA quotidien</button>
     <button data-tab="depenses" onclick="setTab('depenses')">📤 Dépenses</button>
     <button data-tab="treso" onclick="setTab('treso')">🏦 Trésorerie</button>
+    <button data-tab="banque" onclick="setTab('banque')">💳 Banque (import)</button>
     <button data-tab="marge" onclick="setTab('marge')">📈 Marge & Ratios</button>
     <button data-tab="categories" onclick="setTab('categories')">🏷 Catégories</button>
   </div>
@@ -201,6 +204,7 @@ function render(){
   if(TAB==='ca') return renderCA(el);
   if(TAB==='depenses') return renderDepenses(el);
   if(TAB==='treso') return renderTreso(el);
+  if(TAB==='banque') return renderBanque(el);
   if(TAB==='marge') return renderMarge(el);
   if(TAB==='categories') return renderCategories(el);
 }
@@ -586,6 +590,281 @@ async function saveCat(){
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderCategories(document.getElementById('content'));
 }
 async function delCat(id){if(!confirm('Supprimer cette catégorie ?'))return;await sb.from('fin_categories').delete().eq('id',id);await loadCommonData();renderCategories(document.getElementById('content'));}
+
+// ─────── BANQUE (import + transactions + règles) ───────
+async function renderBanque(el){
+  el.innerHTML='Chargement…';
+  const r=periodRange();
+  const[c,t,reg]=await Promise.all([
+    sb.from('fin_comptes_bancaires').select('*').eq('actif',true).order('nom'),
+    sb.from('fin_transactions_bancaires').select('*,fin_categories(nom)').gte('date_operation',r.from).lte('date_operation',r.to).order('date_operation',{ascending:false}).limit(1000),
+    sb.from('fin_regles_catego').select('*,fin_categories(nom)').eq('actif',true).order('priorite',{ascending:false}),
+  ]);
+  const COMPTES=c.data||[],TRX=t.data||[],REGLES=reg.data||[];
+  // Comptes summary
+  let comptesHtml='';
+  COMPTES.forEach(co=>{
+    const trxOfCo=TRX.filter(x=>x.compte_id===co.id);
+    const solde=Number(co.solde_initial||0)+trxOfCo.reduce((a,x)=>a+(Number(x.credit)||0)-(Number(x.debit)||0),0);
+    comptesHtml+=`<div class="kpi"><div class="lbl">${co.nom}</div><div class="val" style="font-size:22px">${eur(solde)}</div><div class="sub">${co.banque||'—'} · ${trxOfCo.length} trx${co.iban?' · '+co.iban.slice(-6):''}</div></div>`;
+  });
+  if(!COMPTES.length) comptesHtml='<div style="color:var(--muted);padding:20px;background:var(--card);border-radius:12px;border:1px solid var(--line)">Aucun compte bancaire. Crée-en un d\'abord.</div>';
+  // KPI catégorisation
+  const nbNc=TRX.filter(x=>x.statut==='non_categorisee').length;
+  const nbCat=TRX.filter(x=>x.statut==='categorisee'||x.statut==='rapprochee').length;
+  el.innerHTML=`
+    <div class="toolbar">
+      <button class="btn" onclick="openCompte()">+ Nouveau compte</button>
+      <button class="btn" onclick="openImport()" ${COMPTES.length?'':'disabled style="opacity:.5"'}>📥 Importer relevé</button>
+      <button class="btn ghost" onclick="openRegles()">⚙ Règles auto (${REGLES.length})</button>
+      <div style="flex:1"></div>
+      <select id="bk_filt_compte" onchange="renderBanque(document.getElementById('content'))"><option value="">Tous comptes</option>${COMPTES.map(co=>`<option value="${co.id}">${co.nom}</option>`).join('')}</select>
+      <select id="bk_filt_stat" onchange="renderBanque(document.getElementById('content'))"><option value="">Tous statuts</option><option value="non_categorisee">Non catégorisées</option><option value="categorisee">Catégorisées</option><option value="rapprochee">Rapprochées</option><option value="ignoree">Ignorées</option></select>
+    </div>
+    <div class="grid cards" style="margin-bottom:18px">${comptesHtml}</div>
+    <div class="grid cards" style="margin-bottom:18px">
+      <div class="kpi ${nbNc>0?'warn':'ok'}"><div class="lbl">Non catégorisées</div><div class="val">${nbNc}</div></div>
+      <div class="kpi ok"><div class="lbl">Catégorisées</div><div class="val">${nbCat}</div></div>
+      <div class="kpi"><div class="lbl">Total trx période</div><div class="val">${TRX.length}</div></div>
+    </div>
+    <div id="bk_trx_list"></div>`;
+  // Filter trx
+  const fc=val('bk_filt_compte'),fs=val('bk_filt_stat');
+  let trxList=TRX;
+  if(fc) trxList=trxList.filter(x=>x.compte_id===fc);
+  if(fs) trxList=trxList.filter(x=>x.statut===fs);
+  let html=`<table class="tbl"><thead><tr><th>Date</th><th>Compte</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Catégorie</th><th>Statut</th><th></th></tr></thead><tbody>`;
+  if(!trxList.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucune transaction</td></tr>';
+  else trxList.slice(0,500).forEach(x=>{
+    const co=COMPTES.find(c=>c.id===x.compte_id);
+    const stat=x.statut==='non_categorisee'?'<span class="badge warn">À catégoriser</span>':x.statut==='categorisee'?'<span class="badge info">Catégorisée</span>':x.statut==='rapprochee'?'<span class="badge ok">Rapprochée</span>':'<span class="badge">Ignorée</span>';
+    const catSel=`<select onchange="categoriserTrx('${x.id}',this.value)" style="padding:5px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:11.5px;max-width:180px"><option value="">— Choisir —</option>${S.categories.map(c=>`<option value="${c.id}" ${x.categorie_id===c.id?'selected':''}>${c.nom}</option>`).join('')}</select>`;
+    html+=`<tr><td style="font-size:12px">${fmtD(x.date_operation)}</td><td style="color:var(--muted);font-size:11.5px">${co?.nom||'—'}</td><td style="max-width:280px;word-break:break-word;font-size:12.5px">${x.libelle}</td><td style="color:var(--bad);font-weight:600">${x.debit>0?eur(x.debit):''}</td><td style="color:var(--ok);font-weight:600">${x.credit>0?eur(x.credit):''}</td><td>${catSel}</td><td>${stat}</td><td><button class="btn ghost sm" onclick="ignoreTrx('${x.id}')">⊘</button> <button class="btn ghost sm" onclick="delTrx('${x.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('bk_trx_list').innerHTML=html;
+}
+async function categoriserTrx(id,catId){
+  if(!catId)return;
+  const{error}=await sb.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).eq('id',id);
+  if(error){toast(error.message);return;}
+  // Proposer création règle
+  const trx=document.querySelector(`button[onclick*="${id}"]`)?.closest('tr');
+  const lib=trx?.children[2]?.textContent.trim();
+  if(lib && confirm(`Créer une règle pour catégoriser auto les futures transactions contenant "${lib.slice(0,40)}…" ?`)){
+    const pattern=prompt('Pattern (le texte à détecter dans le libellé) :',lib.slice(0,30));
+    if(pattern){await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pattern.toLowerCase(),categorie_id:catId,priorite:1});toast('Règle créée ✓');}
+  }
+  toast('Catégorisé ✓');renderBanque(document.getElementById('content'));
+}
+async function ignoreTrx(id){await sb.from('fin_transactions_bancaires').update({statut:'ignoree'}).eq('id',id);renderBanque(document.getElementById('content'));}
+async function delTrx(id){if(!confirm('Supprimer cette transaction ?'))return;await sb.from('fin_transactions_bancaires').delete().eq('id',id);renderBanque(document.getElementById('content'));}
+
+function openCompte(){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Nouveau compte bancaire</h2>
+    <div class="fld"><label>Nom du compte *</label><input id="co_nom" placeholder="ex: CIC Pro Carnot" autofocus></div>
+    <div class="grid2">
+      <div class="fld"><label>Banque</label><input id="co_bk" placeholder="CIC, BNP, Crédit Agricole…"></div>
+      <div class="fld"><label>IBAN (optionnel)</label><input id="co_iban" placeholder="FR76 1234 5678 9012 3456 7890 123"></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Solde initial (€)</label><input type="number" step="0.01" id="co_si" value="0"></div>
+      <div class="fld"><label>Date de ce solde</label><input type="date" id="co_dsi" value="${new Date().toISOString().slice(0,10)}"></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCompte()">Créer</button></div>
+  </div></div>`;
+}
+async function saveCompte(){
+  if(!val('co_nom')){toast('Nom requis');return;}
+  const{error}=await sb.from('fin_comptes_bancaires').insert({organization_id:ORG.id,nom:val('co_nom'),banque:val('co_bk')||null,iban:val('co_iban')||null,solde_initial:num('co_si')||0,date_solde_initial:val('co_dsi')||null});
+  if(error){toast(error.message);return;}toast('Compte créé ✓');closeModal();renderBanque(document.getElementById('content'));
+}
+
+// ─── Parser flexible relevés ───
+function detectBankFormat(headers){
+  const H=headers.map(h=>(h||'').toString().toLowerCase().trim());
+  const has=k=>H.some(h=>h.includes(k));
+  if(has('date opération')&&has('libellé opération')) return 'bnp';
+  if(has('date')&&has('libellé')&&has('débit')&&has('crédit')) return 'ca_lcl_sg';
+  if(has('dateop')&&has('label')) return 'boursobank';
+  if(has('date d\'opération')&&has('montant')) return 'generic_signed';
+  return 'unknown';
+}
+function findColIdx(headers,patterns){
+  const H=headers.map(h=>(h||'').toString().toLowerCase().trim());
+  for(const p of patterns){const i=H.findIndex(h=>h.includes(p));if(i>=0)return i;}
+  return -1;
+}
+function parseDateFR(s){if(!s)return null;s=s.toString().trim();
+  // DD/MM/YYYY ou DD-MM-YYYY ou YYYY-MM-DD
+  let m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if(m){let y=+m[3];if(y<100)y+=2000;return `${y}-${String(+m[2]).padStart(2,'0')}-${String(+m[1]).padStart(2,'0')}`;}
+  m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return `${m[1]}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;
+  return null;
+}
+function parseAmount(s){if(s==null||s==='')return 0;
+  let str=s.toString().trim().replace(/\s/g,'').replace(/€/g,'').replace(/EUR/gi,'');
+  // FR: virgule = decimal, point = thousand separator
+  if(str.includes(',')) str=str.replace(/\./g,'').replace(',','.');
+  const n=parseFloat(str);return isNaN(n)?0:n;}
+
+function openImport(){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:780px">
+    <h2>📥 Importer un relevé bancaire</h2>
+    <div class="grid2">
+      <div class="fld"><label>Compte *</label><select id="imp_co"></select></div>
+      <div class="fld"><label>Fichier (CSV / Excel)</label><input type="file" id="imp_file" accept=".csv,.tsv,.txt,.xls,.xlsx" onchange="parseImportFile(event)"></div>
+    </div>
+    <div id="imp_preview" style="color:var(--muted);font-size:12.5px;margin-top:10px">Sélectionne un fichier pour voir l'aperçu.</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" id="imp_btn" onclick="doImport()" disabled style="opacity:.4">Importer</button></div>
+  </div></div>`;
+  // Charger comptes
+  sb.from('fin_comptes_bancaires').select('id,nom').eq('actif',true).order('nom').then(({data})=>{
+    document.getElementById('imp_co').innerHTML=(data||[]).map(c=>`<option value="${c.id}">${c.nom}</option>`).join('');
+  });
+}
+let IMP_DATA=null,IMP_HEADERS=null,IMP_MAPPING=null,IMP_FORMAT=null;
+async function parseImportFile(ev){
+  const f=ev.target.files[0];if(!f)return;
+  const ext=f.name.split('.').pop().toLowerCase();
+  let rows;
+  if(ext==='csv'||ext==='tsv'||ext==='txt'){
+    // Lecture comme texte, détection séparateur
+    const text=await f.text();
+    const sep=text.includes(';')?';':text.includes('\t')?'\t':',';
+    const parsed=Papa.parse(text,{delimiter:sep,skipEmptyLines:true});
+    rows=parsed.data;
+  } else {
+    // Excel
+    const buf=await f.arrayBuffer();
+    const wb=XLSX.read(buf,{type:'array'});
+    const sheet=wb.Sheets[wb.SheetNames[0]];
+    rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+  }
+  if(!rows||rows.length<2){document.getElementById('imp_preview').innerHTML='<span style="color:var(--bad)">Fichier vide ou illisible</span>';return;}
+  // Détection ligne d'en-tête (cherche celle qui contient "date" ou "libellé")
+  let headerIdx=0;
+  for(let i=0;i<Math.min(10,rows.length);i++){
+    const r=rows[i].map(c=>(c||'').toString().toLowerCase());
+    if(r.some(c=>c.includes('date'))&&r.some(c=>c.includes('lib')||c.includes('label')||c.includes('montant')||c.includes('débit')||c.includes('credit'))){headerIdx=i;break;}
+  }
+  const headers=rows[headerIdx];
+  const data=rows.slice(headerIdx+1).filter(r=>r.some(c=>c!==''&&c!=null));
+  IMP_HEADERS=headers;IMP_DATA=data;IMP_FORMAT=detectBankFormat(headers);
+  // Auto mapping
+  IMP_MAPPING={
+    date:findColIdx(headers,['date opération','date d\'opération','date op','dateop','date']),
+    libelle:findColIdx(headers,['libellé opération','libellé','label','description','intitulé']),
+    debit:findColIdx(headers,['débit','debit']),
+    credit:findColIdx(headers,['crédit','credit']),
+    montant:findColIdx(headers,['montant','amount']),
+    reference:findColIdx(headers,['référence','reference','ref','n° opération']),
+  };
+  let preview=`<div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:12px;margin-top:8px">
+    <div style="font-size:13px;margin-bottom:8px"><b>${data.length} lignes détectées</b> · Format : <span style="color:var(--gold)">${IMP_FORMAT==='unknown'?'générique':IMP_FORMAT.toUpperCase()}</span></div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div class="fld"><label>Colonne Date</label><select id="map_date" onchange="updateMapping()">${headers.map((h,i)=>`<option value="${i}" ${i===IMP_MAPPING.date?'selected':''}>${h||'(col '+i+')'}</option>`).join('')}</select></div>
+      <div class="fld"><label>Colonne Libellé</label><select id="map_lib" onchange="updateMapping()">${headers.map((h,i)=>`<option value="${i}" ${i===IMP_MAPPING.libelle?'selected':''}>${h||'(col '+i+')'}</option>`).join('')}</select></div>
+      <div class="fld"><label>Référence (opt)</label><select id="map_ref" onchange="updateMapping()"><option value="-1">—</option>${headers.map((h,i)=>`<option value="${i}" ${i===IMP_MAPPING.reference?'selected':''}>${h||'(col '+i+')'}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div class="fld"><label>Débit (si séparé)</label><select id="map_deb" onchange="updateMapping()"><option value="-1">—</option>${headers.map((h,i)=>`<option value="${i}" ${i===IMP_MAPPING.debit?'selected':''}>${h||'(col '+i+')'}</option>`).join('')}</select></div>
+      <div class="fld"><label>Crédit (si séparé)</label><select id="map_cre" onchange="updateMapping()"><option value="-1">—</option>${headers.map((h,i)=>`<option value="${i}" ${i===IMP_MAPPING.credit?'selected':''}>${h||'(col '+i+')'}</option>`).join('')}</select></div>
+      <div class="fld"><label>OU Montant signé</label><select id="map_mt" onchange="updateMapping()"><option value="-1">—</option>${headers.map((h,i)=>`<option value="${i}" ${i===IMP_MAPPING.montant?'selected':''}>${h||'(col '+i+')'}</option>`).join('')}</select></div>
+    </div>
+    <div style="margin-top:10px"><b>Aperçu (5 premières lignes) :</b></div>
+    <table class="tbl" style="margin-top:6px"><thead><tr><th>Date</th><th>Libellé</th><th>Débit</th><th>Crédit</th></tr></thead><tbody>
+      ${data.slice(0,5).map(r=>{const d=parseDateFR(r[IMP_MAPPING.date]);const lib=r[IMP_MAPPING.libelle]||'';let deb=0,cre=0;if(IMP_MAPPING.debit>=0)deb=parseAmount(r[IMP_MAPPING.debit]);if(IMP_MAPPING.credit>=0)cre=parseAmount(r[IMP_MAPPING.credit]);if(IMP_MAPPING.montant>=0){const m=parseAmount(r[IMP_MAPPING.montant]);if(m<0)deb=-m;else cre=m;}return `<tr><td style="font-size:11.5px">${d||'<span style=\"color:var(--bad)\">?</span>'}</td><td style="font-size:11.5px;max-width:280px;word-break:break-word">${lib}</td><td style="color:var(--bad);font-size:11.5px">${deb>0?eur(deb):''}</td><td style="color:var(--ok);font-size:11.5px">${cre>0?eur(cre):''}</td></tr>`;}).join('')}
+    </tbody></table>
+  </div>`;
+  document.getElementById('imp_preview').innerHTML=preview;
+  document.getElementById('imp_btn').disabled=false;
+  document.getElementById('imp_btn').style.opacity=1;
+}
+function updateMapping(){
+  IMP_MAPPING.date=+document.getElementById('map_date').value;
+  IMP_MAPPING.libelle=+document.getElementById('map_lib').value;
+  IMP_MAPPING.reference=+document.getElementById('map_ref').value;
+  IMP_MAPPING.debit=+document.getElementById('map_deb').value;
+  IMP_MAPPING.credit=+document.getElementById('map_cre').value;
+  IMP_MAPPING.montant=+document.getElementById('map_mt').value;
+  // Re-render preview
+  const ev={target:{files:[document.getElementById('imp_file').files[0]]}};
+  // Just refresh preview rows
+  const data=IMP_DATA||[];
+  const preview=`<table class="tbl" style="margin-top:6px"><thead><tr><th>Date</th><th>Libellé</th><th>Débit</th><th>Crédit</th></tr></thead><tbody>${data.slice(0,5).map(r=>{const d=parseDateFR(r[IMP_MAPPING.date]);const lib=r[IMP_MAPPING.libelle]||'';let deb=0,cre=0;if(IMP_MAPPING.debit>=0)deb=parseAmount(r[IMP_MAPPING.debit]);if(IMP_MAPPING.credit>=0)cre=parseAmount(r[IMP_MAPPING.credit]);if(IMP_MAPPING.montant>=0){const m=parseAmount(r[IMP_MAPPING.montant]);if(m<0)deb=-m;else cre=m;}return `<tr><td style="font-size:11.5px">${d||'?'}</td><td style="font-size:11.5px;max-width:280px;word-break:break-word">${lib}</td><td style="color:var(--bad);font-size:11.5px">${deb>0?eur(deb):''}</td><td style="color:var(--ok);font-size:11.5px">${cre>0?eur(cre):''}</td></tr>`;}).join('')}</tbody></table>`;
+  const cont=document.getElementById('imp_preview');
+  const tbl=cont.querySelector('table');if(tbl)tbl.outerHTML=preview;
+}
+async function doImport(){
+  const compteId=val('imp_co');if(!compteId){toast('Compte requis');return;}
+  if(!IMP_DATA||!IMP_DATA.length){toast('Aucune donnée à importer');return;}
+  // Charger règles pour catégorisation auto
+  const{data:reglesData}=await sb.from('fin_regles_catego').select('*').eq('actif',true).eq('organization_id',ORG.id).order('priorite',{ascending:false});
+  const regles=reglesData||[];
+  // Construire transactions
+  const toInsert=[];
+  IMP_DATA.forEach(r=>{
+    const d=parseDateFR(r[IMP_MAPPING.date]);
+    const lib=(r[IMP_MAPPING.libelle]||'').toString().trim();
+    if(!d||!lib)return;
+    let deb=0,cre=0;
+    if(IMP_MAPPING.debit>=0)deb=Math.abs(parseAmount(r[IMP_MAPPING.debit]));
+    if(IMP_MAPPING.credit>=0)cre=Math.abs(parseAmount(r[IMP_MAPPING.credit]));
+    if(IMP_MAPPING.montant>=0 && deb===0 && cre===0){
+      const m=parseAmount(r[IMP_MAPPING.montant]);
+      if(m<0)deb=-m;else cre=m;
+    }
+    if(deb===0 && cre===0)return;
+    const ref=IMP_MAPPING.reference>=0?(r[IMP_MAPPING.reference]||'').toString().trim():null;
+    // Catégorisation auto via règles
+    const libLower=lib.toLowerCase();
+    let catId=null,statut='non_categorisee';
+    for(const rule of regles){if(libLower.includes(rule.pattern.toLowerCase())){catId=rule.categorie_id;statut='categorisee';break;}}
+    toInsert.push({organization_id:ORG.id,compte_id:compteId,date_operation:d,libelle:lib,reference:ref,debit:deb,credit:cre,categorie_id:catId,statut});
+  });
+  if(!toInsert.length){toast('Aucune ligne valide');return;}
+  // Créer import record
+  const{data:imp}=await sb.from('fin_imports_bancaires').insert({organization_id:ORG.id,compte_id:compteId,nom_fichier:document.getElementById('imp_file').files[0].name,format_detecte:IMP_FORMAT,nb_lignes:toInsert.length,imported_by:ME.id}).select().single();
+  // Insert trx (upsert pour dédup)
+  let nbNew=0,nbDup=0;
+  // On insère ligne par ligne pour gérer les conflicts (unique index)
+  for(const tx of toInsert){
+    const{error}=await sb.from('fin_transactions_bancaires').insert({...tx,import_id:imp?.id});
+    if(error){if(error.code==='23505')nbDup++;else console.error(error);}
+    else nbNew++;
+  }
+  if(imp) await sb.from('fin_imports_bancaires').update({nb_nouvelles:nbNew,nb_dupliquees:nbDup}).eq('id',imp.id);
+  toast(`Import OK · ${nbNew} nouvelles, ${nbDup} doublons ignorés`);closeModal();renderBanque(document.getElementById('content'));
+}
+
+async function openRegles(){
+  const{data:regles}=await sb.from('fin_regles_catego').select('*,fin_categories(nom)').order('priorite',{ascending:false});
+  const list=regles||[];
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:680px">
+    <h2>⚙ Règles de catégorisation auto</h2>
+    <p style="color:var(--muted);font-size:12.5px;margin-bottom:14px">Si un libellé de transaction contient le pattern, la catégorie est appliquée automatiquement à l'import.</p>
+    <table class="tbl" style="margin-bottom:14px"><thead><tr><th>Pattern (contenu dans libellé)</th><th>Catégorie</th><th>Priorité</th><th>Actif</th><th></th></tr></thead><tbody>
+    ${list.map(r=>`<tr><td><code style="background:var(--surface);padding:2px 6px;border-radius:4px;font-size:11.5px">${r.pattern}</code></td><td>${r.fin_categories?.nom||'—'}</td><td>${r.priorite}</td><td>${r.actif?'<span class="badge ok">Oui</span>':'<span class="badge bad">Non</span>'}</td><td><button class="btn ghost sm" onclick="delRegle('${r.id}')">✕</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:18px">Aucune règle</td></tr>'}
+    </tbody></table>
+    <h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;font-weight:600">+ Ajouter une règle</h3>
+    <div class="grid3">
+      <div class="fld"><label>Pattern (en minuscules)</label><input id="rg_pat" placeholder="ex: edf, urssaf, metro"></div>
+      <div class="fld"><label>Catégorie</label><select id="rg_cat">${S.categories.map(c=>`<option value="${c.id}">${c.nom}</option>`).join('')}</select></div>
+      <div class="fld"><label>Priorité</label><input type="number" id="rg_pri" value="1"></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveRegle()">Créer la règle</button></div>
+  </div></div>`;
+}
+async function saveRegle(){
+  const pat=val('rg_pat').toLowerCase();
+  if(!pat){toast('Pattern requis');return;}
+  const{error}=await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pat,categorie_id:val('rg_cat'),priorite:num('rg_pri')||1});
+  if(error){toast(error.message);return;}toast('Règle créée ✓');openRegles();
+}
+async function delRegle(id){if(!confirm('Supprimer cette règle ?'))return;await sb.from('fin_regles_catego').delete().eq('id',id);openRegles();}
 
 function closeModal(){document.getElementById('modalHost').innerHTML='';}
 </script>
