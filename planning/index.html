@@ -95,7 +95,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 <body>
 <div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
 
-<div id="lock" class="lock">
+<div id="lock" class="lock hidden">
   <h1>Planning</h1>
   <div id="lockSub" style="color:var(--muted);font-size:13px;margin-bottom:6px">Connexion à ton compte</div>
   <div id="loginBlock" style="display:flex;flex-direction:column;gap:10px;align-items:center">
@@ -317,7 +317,10 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('pwerr').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   if(!['admin','super_admin','manager'].includes(profile.role)){document.getElementById('pwerr').textContent='Accès refusé. (rôle : '+profile.role+')';await sb.auth.signOut();return;}
-  ME=profile;showApp();
+  ME=profile;
+  const{data:org}=await sb.from('organizations').select('couleur_primaire').eq('id',profile.organization_id).maybeSingle();
+  if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
+  showApp();
 }
 async function logout(){await sb.auth.signOut();ME=null;location.reload();}
 function showApp(){document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('ver').textContent=VERSION;setZoom(zoom);buildTimeList();init();}
@@ -328,7 +331,10 @@ function buildTimeList(){
   for(let h=0;h<4;h++){opts.push(`${String(h).padStart(2,'0')}:00`);opts.push(`${String(h).padStart(2,'0')}:30`);}
   document.getElementById('t-list').innerHTML=opts.map(t=>`<option value="${t}">`).join('');
 }
-sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();});
+sb.auth.getSession().then(({data})=>{
+  if(data.session) loadProfileAndShow();
+  else document.getElementById('lock').classList.remove('hidden');
+});
 
 function getMonday(d){d=new Date(d);const day=d.getDay();const diff=day===0?-6:1-day;d.setDate(d.getDate()+diff);d.setHours(0,0,0,0);return d;}
 function fmtDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}

@@ -48,7 +48,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 <div class="test">ENVIRONNEMENT DE TEST</div>
 
 <!-- LOGIN -->
-<div id="loginView">
+<div id="loginView" class="hidden">
   <div class="logo">Raya Group<span id="lblView">Connexion à ton compte</span></div>
   <div id="loginBlock" class="auth">
     <input type="email" id="loginEmail" placeholder="Email" autocomplete="email">
@@ -147,8 +147,10 @@ function showApp(){
   document.getElementById('userEmail').textContent=ME.email||'';
   document.getElementById('userRole').textContent=ROLE_LBL[ME.role]||ME.role;
   document.getElementById('userAv').textContent=(ME.full_name||ME.email||'?').charAt(0).toUpperCase();
-  // Logo (remplace l'avatar si défini)
-  if(ORG.logo_url){document.getElementById('userAv').innerHTML=`<img src="${ORG.logo_url}" style="max-width:32px;max-height:32px;border-radius:50%">`;}
+  // Logo (remplace l'avatar si défini, sans fond coloré)
+  const avEl=document.getElementById('userAv');
+  if(ORG.logo_url){avEl.innerHTML=`<img src="${ORG.logo_url}" style="max-width:32px;max-height:32px;object-fit:contain">`;avEl.style.background='transparent';}
+  else{avEl.style.background='';}
   // Permissions depuis l'org (ou defaults)
   const perms=ORG.permissions||DEFAULT_PERMS;
   const isSuper=ME.role==='super_admin';
@@ -160,7 +162,10 @@ function showApp(){
   document.getElementById('modules').innerHTML=allowed.map(m=>`<a class="card" href="${m.id}/"><div class="ic">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds">${m.ds}</div></a>`).join('')||'<div style="color:var(--muted);text-align:center;padding:30px">Aucun module accessible avec ton rôle.</div>';
 }
 
-sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();});
+sb.auth.getSession().then(({data})=>{
+  if(data.session) loadProfileAndShow();
+  else document.getElementById('loginView').classList.remove('hidden');
+});
 </script>
 </body>
 </html>

@@ -139,7 +139,7 @@ button{cursor:pointer;border:none;background:none}
 <div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
 
 <!-- VERROU -->
-<div class="lock" id="lock">
+<div class="lock hidden" id="lock">
   <div class="brand">Gestion Salariés</div>
   <div class="sub" id="lockSub">Connexion à ton compte</div>
   <div id="loginBlock" style="display:flex;flex-direction:column;gap:10px;align-items:center">
@@ -253,7 +253,10 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('loginErr').textContent='Profil introuvable. Réessaye dans 2 secondes (création en cours).';await sb.auth.signOut();return;}
   if(!['admin','super_admin'].includes(profile.role)){document.getElementById('loginErr').textContent='Accès refusé. Ce module est réservé aux admins (ton rôle : '+profile.role+').';await sb.auth.signOut();return;}
-  ME=profile;showApp();
+  ME=profile;
+  const{data:org}=await sb.from('organizations').select('couleur_primaire,logo_url').eq('id',profile.organization_id).maybeSingle();
+  if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
+  showApp();
 }
 async function logout(){await sb.auth.signOut();ME=null;location.reload();}
 function showApp(){
@@ -263,7 +266,10 @@ function showApp(){
   loadAll();
 }
 // Auto-login si session existante
-sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();});
+sb.auth.getSession().then(({data})=>{
+  if(data.session) loadProfileAndShow();
+  else document.getElementById('lock').classList.remove('hidden');
+});
 
 // ===== TOAST =====
 let tt;
