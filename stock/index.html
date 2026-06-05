@@ -1,0 +1,1986 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raya — Gestion</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#c8a035;--dark:#1a1a2e;--orange:#c8651a}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#1a1a1a;background:#f0f0ec;overflow-x:hidden}
+
+/* ── LAYOUT ── */
+.app{display:flex;min-height:100vh}
+.sidebar{background:var(--dark);width:220px;position:fixed;height:100vh;display:flex;flex-direction:column;gap:2px;padding:16px 12px;overflow-y:auto;z-index:100;flex-shrink:0}
+.main{margin-left:220px;padding:28px 32px;width:calc(100% - 220px);min-height:100vh}
+
+/* ── SIDEBAR ── */
+.sidebar-logo{color:var(--gold);font-size:15px;font-weight:700;padding:10px 10px 14px;border-bottom:1px solid rgba(255,255,255,.1);margin-bottom:10px;line-height:1.3}
+.sidebar-logo span{display:block;font-size:11px;color:#777;font-weight:400;margin-top:3px}
+.nav-section{font-size:9px;color:#555;text-transform:uppercase;letter-spacing:.1em;padding:10px 10px 4px;margin-top:6px}
+.nav-btn{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;border:none;background:transparent;color:#9a9ab0;cursor:pointer;font-size:13px;width:100%;text-align:left;transition:all .15s;white-space:nowrap}
+.nav-btn:hover{background:rgba(255,255,255,.08);color:#fff}
+.nav-btn.active{background:rgba(200,160,53,.18);color:var(--gold);font-weight:600}
+.sidebar-footer{padding:12px 10px;font-size:11px;color:#666;border-top:1px solid rgba(255,255,255,.1);margin-top:auto;line-height:1.9}
+.accueil-link{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;color:#555;font-size:12px;text-decoration:none;margin-bottom:6px;border:1px solid rgba(255,255,255,.07);transition:all .15s}
+.accueil-link:hover{color:#aaa;background:rgba(255,255,255,.07)}
+
+/* ── PAGES ── */
+.page{display:none;flex-direction:column;gap:18px;width:100%;max-width:1200px}
+.page.active{display:flex}
+.ph{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.pt{font-size:22px;font-weight:700}
+
+/* ── CARDS & TABLES ── */
+.card{background:#fff;border:1px solid #e8e8e4;border-radius:14px;padding:18px;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.metric{background:#fff;border:1px solid #e8e8e4;border-radius:12px;padding:16px 18px;box-shadow:0 1px 4px rgba(0,0,0,.05);min-width:0}
+.ml{font-size:11px;color:#999;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+.mv{font-size:24px;font-weight:700;white-space:nowrap}
+.mv-g{color:#2e7d32}.mv-o{color:var(--orange)}.mv-r{color:#c62828}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 14px;background:#f8f8f6;font-weight:600;font-size:11px;color:#999;border-bottom:1px solid #eee;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid #f0f0ee;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafaf8}
+
+/* ── BUTTONS ── */
+.btn{padding:8px 16px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#1a1a1a;cursor:pointer;font-size:13px;font-weight:500;transition:all .15s;white-space:nowrap}
+.btn:hover{background:#f5f5f5}
+.btn-dark{background:var(--dark);color:#fff;border-color:var(--dark)}.btn-dark:hover{background:#2c2c54}
+.btn-gold{background:var(--gold);color:#fff;border-color:var(--gold)}.btn-gold:hover{background:#b08020}
+.btn-orange{background:var(--orange);color:#fff;border-color:var(--orange)}
+.btn-green{background:#2e7d32;color:#fff;border-color:#2e7d32}.btn-green:hover{background:#1b5e20}
+.btn-red{border-color:#e53935;color:#c62828}.btn-red:hover{background:#ffebee}
+.btn-sm{padding:5px 10px;font-size:12px}
+
+/* ── BADGES ── */
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+.b-green{background:#e8f5e9;color:#2e7d32}.b-amber{background:#fff8e1;color:#e65100}
+.b-red{background:#ffebee;color:#c62828}.b-blue{background:#e3f2fd;color:#1565c0}
+.b-gray{background:#f5f5f5;color:#666}.b-purple{background:#f3e5f5;color:#6a1b9a}
+.b-orange{background:#fff3e0;color:#e65100}
+
+/* ── FORMS ── */
+.fg{display:flex;flex-direction:column;gap:4px}
+label{font-size:12px;color:#666;font-weight:500}
+input,select,textarea{width:100%;padding:8px 11px;border:1px solid #ddd;border-radius:8px;font-size:13px;background:#fff;color:#1a1a1a;transition:border .15s}
+input:focus,select:focus{outline:none;border-color:var(--dark)}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}
+.fr4{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:13px}
+
+/* ── MODAL ── */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(3px);padding:20px}
+.modal{background:#fff;border-radius:16px;padding:24px;width:520px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.25)}
+.modal-lg{width:720px}
+.modal-xl{width:900px}
+.modal-title{font-weight:700;font-size:17px;margin-bottom:18px;display:flex;align-items:center;gap:8px}
+
+/* ── MISC ── */
+.loader{display:flex;align-items:center;justify-content:center;padding:48px;color:#bbb;font-size:13px;gap:10px}
+.spinner{width:20px;height:20px;border:2px solid #eee;border-top-color:var(--dark);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty-state{text-align:center;padding:40px 20px;color:#aaa;font-size:13px;line-height:1.6}
+.empty-state-icon{font-size:36px;margin-bottom:10px;display:block}
+.notif{position:fixed;top:24px;right:24px;padding:13px 20px;border-radius:12px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 6px 24px rgba(0,0,0,.18);animation:slideIn .3s ease}
+.notif-success{background:#2e7d32;color:#fff}.notif-error{background:#c62828;color:#fff}
+@keyframes slideIn{from{transform:translateX(120px);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* ── STOCK SPECIFIC ── */
+.resto-card{background:#fff;border:2px solid #e8e8e4;border-radius:14px;padding:20px;cursor:pointer;transition:all .2s;text-align:center}
+.resto-card:hover{border-color:var(--dark);box-shadow:0 4px 16px rgba(0,0,0,.1)}
+.resto-card.active-card{border-color:var(--orange);background:#fff8f0}
+.resto-avatar{width:56px;height:56px;border-radius:50%;background:var(--dark);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 10px}
+.resto-name{font-weight:700;font-size:15px;margin-bottom:4px}
+.resto-meta{font-size:12px;color:#999}
+
+/* PIN Screen */
+.pin-screen{position:fixed;inset:0;background:var(--dark);display:flex;align-items:center;justify-content:center;z-index:2000;flex-direction:column;gap:24px}
+.pin-logo{color:var(--gold);font-size:28px;font-weight:700;text-align:center}
+.pin-logo span{display:block;font-size:13px;color:#777;font-weight:400;margin-top:4px}
+.pin-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:280px}
+.pin-btn{padding:18px;border-radius:12px;border:none;background:rgba(255,255,255,.08);color:#fff;font-size:22px;font-weight:600;cursor:pointer;transition:all .15s}
+.pin-btn:hover{background:rgba(255,255,255,.15)}
+.pin-display{background:rgba(255,255,255,.08);border-radius:12px;padding:16px 24px;font-size:28px;font-weight:700;color:#fff;letter-spacing:8px;text-align:center;min-width:200px}
+.pin-restos{display:flex;flex-direction:column;gap:8px;margin-top:8px;width:280px}
+.pin-resto-btn{padding:12px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;cursor:pointer;font-size:14px;text-align:left;display:flex;justify-content:space-between;align-items:center;transition:all .15s}
+.pin-resto-btn:hover{background:rgba(255,255,255,.12)}
+
+/* Tablette saisie */
+.saisie-wrap{max-width:600px;margin:0 auto}
+.saisie-header{background:var(--dark);color:#fff;border-radius:14px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.saisie-cat{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#888;padding:12px 0 6px;font-weight:600}
+.saisie-item{background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.saisie-nom{flex:1;font-weight:500;font-size:14px}
+.saisie-cond{font-size:11px;color:#999}
+.saisie-max{font-size:11px;color:#aaa;flex-shrink:0}
+.saisie-input{width:80px;text-align:center;font-size:16px;font-weight:600;padding:8px;border:2px solid #ddd;border-radius:8px}
+.saisie-input:focus{border-color:var(--orange);outline:none}
+.saisie-input.ok{border-color:#2e7d32;background:#f1f8e9}
+.saisie-input.low{border-color:#ff9800;background:#fff8e1}
+.saisie-input.crit{border-color:#c62828;background:#ffebee}
+
+/* Feuille de besoin */
+.besoin-row-ok td{background:#f1f8e9}
+.besoin-row-low td{background:#fff8e1}
+.besoin-row-crit td{background:#ffebee}
+
+/* Stock dashboard charts */
+.stock-bar{height:8px;border-radius:4px;background:#eee;overflow:hidden;margin-top:4px}
+.stock-bar-fill{height:100%;border-radius:4px;transition:width .3s}
+
+/* Mobile responsive */
+@media(max-width:768px){
+  .sidebar{width:0;padding:0;overflow:hidden;transition:width .25s}
+  .sidebar.open{width:220px;padding:16px 12px}
+  .main{margin-left:0;width:100%;padding:16px}
+  .saisie-wrap{max-width:100%}
+  .g4{grid-template-columns:1fr 1fr}
+  .saisie-header{flex-wrap:wrap;gap:10px}
+  .hamburger{display:flex}
+}
+@media(min-width:769px){.hamburger{display:none}}
+.hamburger{position:fixed;top:14px;left:14px;z-index:200;background:var(--dark);border:none;border-radius:8px;padding:8px 10px;cursor:pointer;flex-direction:column;gap:5px;align-items:center}
+.hamburger span{display:block;width:20px;height:2px;background:#fff;border-radius:2px}
+
+/* Admin-only items hidden by default until access level set */
+.admin-only{display:none}
+</style>
+</head>
+<body>
+<div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
+
+<!-- ── PIN SCREEN ── -->
+<div class="pin-screen" id="pin-screen">
+  <div class="pin-logo">
+  <div id="pin-logo-wrap" style="display:flex;align-items:center;justify-content:center;margin-bottom:6px;min-height:48px">
+    <span id="pin-logo-emoji" style="font-size:36px">🍽</span>
+    <img id="pin-logo-img" style="display:none;height:52px;width:auto;object-fit:contain">
+  </div>
+  <span id="pin-logo-name" style="display:block">Raya</span>
+  <span>Saisie du stock soir</span>
+</div>
+  <div id="pin-step1">
+    <div style="color:#aaa;font-size:13px;text-align:center;margin-bottom:16px">Choisissez votre restaurant</div>
+    <div class="pin-restos" id="pin-restos-list"></div>
+  </div>
+  <div id="pin-step2" style="display:none;flex-direction:column;align-items:center;gap:16px">
+    <div style="color:#aaa;font-size:13px" id="pin-resto-label">Restaurant choisi</div>
+    <div class="pin-display" id="pin-display">····</div>
+    <div class="pin-grid">
+      <button class="pin-btn" onclick="pinKey('1')">1</button><button class="pin-btn" onclick="pinKey('2')">2</button><button class="pin-btn" onclick="pinKey('3')">3</button>
+      <button class="pin-btn" onclick="pinKey('4')">4</button><button class="pin-btn" onclick="pinKey('5')">5</button><button class="pin-btn" onclick="pinKey('6')">6</button>
+      <button class="pin-btn" onclick="pinKey('7')">7</button><button class="pin-btn" onclick="pinKey('8')">8</button><button class="pin-btn" onclick="pinKey('9')">9</button>
+      <button class="pin-btn" onclick="pinKey('back')" style="font-size:16px">⌫</button><button class="pin-btn" onclick="pinKey('0')">0</button><button class="pin-btn" style="background:transparent;border:none;cursor:default"></button>
+    </div>
+    <button class="btn" style="background:transparent;color:#666;border:none" onclick="backToRestos()">← Changer de restaurant</button>
+  </div>
+</div>
+
+<!-- ── MAIN APP ── -->
+<div class="app" id="main-app" style="display:none">
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-logo">Raya Group<span>Gestion stock</span></div>
+  <a href="/" class="accueil-link" id="nav-accueil">&#x2B21; Accueil modules</a>
+  <div class="nav-section">Stock</div>
+  <button class="nav-btn active" onclick="nav('stock-saisie')" id="nav-saisie">✏️ Saisie du stock</button>
+  <button class="nav-btn admin-only" onclick="nav('stock-dash')" id="nav-dash">📦 Vue d'ensemble</button>
+  <button class="nav-btn admin-only" onclick="nav('stock-besoin')" id="nav-besoin">📄 Feuille de besoin</button>
+  <button class="nav-btn admin-only" onclick="nav('stock-admin')" id="nav-admin">⚙️ Admin stock</button>
+  <div class="sidebar-footer">
+    RCS Nancy · 92172054600057<br>
+    <span id="sync-status" style="color:var(--gold);font-weight:600">● Connexion...</span>
+  </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="main">
+  <button class="hamburger" id="hamburger-btn" onclick="toggleSidebar()" style="display:none">
+    <span></span><span></span><span></span>
+  </button>
+
+<!-- STOCK DASHBOARD -->
+<div class="page" id="page-stock-dash">
+  <div class="ph"><div class="pt">📦 Stock — Vue d'ensemble</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="sd-search" placeholder="🔍 Rechercher un produit..." oninput="renderStockDash()" style="flex:1;min-width:160px">
+      <select id="sd-resto" onchange="renderStockDash()" style="width:180px"><option value="">Tous les restaurants</option></select>
+      <select id="sd-date" onchange="renderStockDash()" style="width:160px"></select>
+    </div>
+  </div>
+  <div class="g4" id="sd-metrics">
+    <div class="metric"><div class="ml">Produits saisis</div><div class="mv" id="sd-saisis">—</div></div>
+    <div class="metric"><div class="ml">En rupture</div><div class="mv mv-r" id="sd-rupture">—</div></div>
+    <div class="metric"><div class="ml">Stock faible (&lt;50%)</div><div class="mv mv-o" id="sd-faible">—</div></div>
+    <div class="metric"><div class="ml">Valeur stock estimée</div><div class="mv mv-g" id="sd-valeur">—</div></div>
+  </div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <table><thead><tr><th>Produit</th><th>Catégorie</th><th>Conditionnement</th><th style="text-align:right">Stock actuel</th><th style="text-align:right">Stock max</th><th>Niveau</th></tr></thead>
+    <tbody id="sd-table"></tbody></table>
+    <div id="sd-empty" class="empty-state" style="display:none"><div class="empty-state-icon">📊</div>Aucune saisie pour cette période.</div>
+  </div>
+</div>
+
+<!-- STOCK SAISIE TABLETTE -->
+<div class="page" id="page-stock-saisie">
+  <div class="saisie-wrap" id="saisie-wrap">
+    <div class="saisie-header">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="height:44px;display:flex;align-items:center;flex-shrink:0" id="saisie-logo">
+          <span id="saisie-logo-emoji" style="font-size:22px">🍽</span>
+          <img id="saisie-logo-img" style="display:none;height:44px;width:auto;object-fit:contain">
+        </div>
+        <div>
+          <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:.08em">Restaurant</div>
+          <div style="font-weight:700;font-size:16px" id="saisie-resto-nom">—</div>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:.05em">Date</div>
+        <div id="saisie-date-display" style="color:var(--gold);font-weight:600;font-size:13px">—</div>
+        <input type="date" id="saisie-date" style="display:none" onchange="updateDateDisplay()">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap" id="saisie-resto-row">
+      <select id="saisie-resto-sel" onchange="loadSaisie()" style="flex:1;min-width:160px"></select>
+      <select id="saisie-cat-filter" onchange="renderSaisieItems()" style="flex:1;min-width:140px"><option value="">Toutes catégories</option></select>
+    </div>
+    <div id="saisie-items"><div class="loader"><div class="spinner"></div>Chargement...</div></div>
+    <div style="margin-top:20px;padding:14px;background:#fff;border:1px solid #e8e8e4;border-radius:12px">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#888;font-weight:600;margin-bottom:8px">💬 Commentaire / Anomalie</div>
+      <textarea id="saisie-commentaire" oninput="saveSaisieLocal()" placeholder="Signaler une anomalie, une rupture inattendue, un problème qualite..." rows="3" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:13px;resize:vertical;font-family:inherit"></textarea>
+    </div>
+    <div style="position:sticky;bottom:16px;margin-top:16px">
+      <button class="btn btn-orange" style="width:100%;font-size:15px;padding:14px" onclick="validerSaisie()">✓ Valider le stock du soir</button>
+    </div>
+  </div>
+</div>
+
+<!-- FEUILLE DE BESOIN -->
+<div class="page" id="page-stock-besoin">
+  <div class="ph"><div class="pt">📄 Feuille de besoin</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="btn-copy-cmd" onclick="copierCommande()">📋 Copier commande</button>
+      <button class="btn btn-dark" onclick="downloadBesoinPDF()">⬇️ Télécharger PDF</button>
+    </div>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <select id="fb-resto" onchange="renderBesoin()" style="flex:1;max-width:220px"><option value="">Tous les restaurants</option></select>
+    <select id="fb-fourn" onchange="renderBesoin()" style="flex:1;max-width:200px"><option value="">Tous fournisseurs</option></select>
+    <input id="fb-search" placeholder="🔍 Rechercher..." oninput="renderBesoin()" style="flex:1;min-width:140px">
+    <input type="date" id="fb-date" onchange="renderBesoin()" style="max-width:160px">
+  </div>
+  <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+    <table id="fb-table" style="min-width:700px">
+      <thead><tr><th>Restaurant</th><th>Produit</th><th>Fournisseur</th><th>Conditionnement</th><th style="text-align:right">Stock soir</th><th style="text-align:right">Max</th><th style="text-align:right;color:#c62828">À commander</th><th style="text-align:right">Coût/u</th><th style="text-align:right">Coût total</th><th style="text-align:center">✓</th></tr></thead>
+      <tbody id="fb-body"></tbody>
+    </table>
+    <div id="fb-empty" class="empty-state" style="display:none"><div class="empty-state-icon">📄</div>Sélectionnez un restaurant et une date.</div>
+  </div>
+  <div class="card">
+    <div style="display:flex;justify-content:flex-end;gap:32px">
+      <div><div class="ml">Articles à commander</div><div class="mv mv-r" id="fb-count">—</div></div>
+      <div><div class="ml">Coût estimé total</div><div class="mv mv-o" id="fb-cout">—</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- STOCK ADMIN -->
+<div class="page" id="page-stock-admin">
+  <div class="pt" style="margin-bottom:4px">⚙️ Admin stock</div>
+  <div style="display:flex;gap:0;border-bottom:2px solid #f0f0ee;margin-bottom:18px">
+    <button class="tab active" id="sa-tab-prod" onclick="saTab('prod')">Produits</button>
+    <button class="tab" id="sa-tab-max" onclick="saTab('max')">Quantités max</button>
+    <button class="tab" id="sa-tab-restos" onclick="saTab('restos')">Restaurants</button>
+    <button class="tab" id="sa-tab-fourn" onclick="saTab('fourn')">Fournisseurs</button>
+    <button class="tab" id="sa-tab-comments" onclick="saTab('comments')">💬 Commentaires</button>
+    <button class="tab" id="sa-tab-notifs" onclick="saTab('notifs')">🔔 Notifications</button>
+  </div>
+  <!-- Produits -->
+  <div id="sa-prod-c">
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <input id="sa-search" placeholder="Rechercher..." oninput="renderAdminProd()" style="flex:1;min-width:160px">
+      <select id="sa-cat-f" onchange="renderAdminProd()" style="max-width:160px"><option value="">Toutes categories</option></select>
+      <button class="btn" onclick="openMercurialeModal()">📊 Mercuriale</button>
+      <button class="btn btn-dark" onclick="openAddProd()">+ Produit</button>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+      <table style="min-width:900px;table-layout:fixed;width:100%"><thead><tr><th style="width:25%">Produit</th><th style="width:12%">Catégorie</th><th style="width:13%">Conditionnement</th><th style="width:9%;text-align:right">Coût/u</th><th style="width:22%">Fournisseurs</th><th style="width:10%">Note</th><th style="width:5%;text-align:center">Actif</th><th style="width:4%">Actions</th></tr></thead>
+      <tbody id="sa-prod-list"></tbody></table>
+    </div>
+  </div>
+  <!-- Max -->
+  <div id="sa-max-c" style="display:none">
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <select id="sa-max-resto" onchange="renderAdminMax()" style="max-width:220px"><option value="">Choisir un restaurant...</option></select>
+      <input id="sa-max-search" placeholder="🔍 Filtrer produit..." oninput="renderAdminMax()" style="flex:1">
+    </div>
+    <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+      <table style="min-width:700px"><thead><tr><th>Produit</th><th>Catégorie</th><th>Conditionnement</th><th style="text-align:right">Qté max</th><th style="text-align:center">Actif</th><th>Actions</th></tr></thead>
+      <tbody id="sa-max-list"></tbody></table>
+    </div>
+  </div>
+  <!-- Restaurants -->
+  <div id="sa-restos-c" style="display:none">
+    <div class="card" style="margin-bottom:14px">
+      <div style="font-weight:600;font-size:14px;margin-bottom:12px">🖼 Logo affiché dans la saisie</div>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="height:56px;display:flex;align-items:center;flex-shrink:0;background:#f5f5f0;border-radius:10px;padding:6px 10px" id="admin-logo-preview">
+          <span id="admin-logo-emoji-prev" style="font-size:26px">🍽</span>
+          <img id="admin-logo-img-prev" style="display:none;height:44px;width:auto;object-fit:contain">
+        </div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:12px;color:#666;margin-bottom:6px">Téléverser un logo (PNG, JPG, SVG)</div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <label style="cursor:pointer;flex:1">
+              <input type="file" id="admin-logo-file" accept="image/*" style="display:none" onchange="previewLogo(this)">
+              <div id="admin-logo-file-label" class="btn" style="width:100%;text-align:center;display:block">📁 Choisir un fichier</div>
+            </label>
+            <button class="btn btn-dark" id="admin-logo-save-btn" onclick="saveLogo()" disabled>Enregistrer</button>
+          </div>
+          <div style="font-size:11px;color:#aaa">Ou coller une URL directement :</div>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <input id="admin-logo-url" placeholder="https://..." style="flex:1" oninput="previewLogoUrl(this.value)">
+            <button class="btn" onclick="saveLogo()">OK</button>
+          </div>
+          <div id="admin-logo-status" style="font-size:11px;color:#666;margin-top:4px"></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px" id="sa-restos-list"></div>
+  </div>
+  <!-- Notifications -->
+  <div id="sa-notifs-c" style="display:none">
+    <div class="card" style="max-width:500px">
+      <div style="font-weight:700;font-size:15px;margin-bottom:16px">🔔 Alertes feuille de stock</div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Email destinataire</label>
+        <input id="notif-email" type="email" placeholder="vous@exemple.com" style="width:100%">
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Heure limite de saisie</label>
+        <input id="notif-heure" type="time" value="22:00" style="width:160px">
+        <div style="font-size:11px;color:#aaa;margin-top:4px">Si un resto n'a pas validé à cette heure → alerte email</div>
+      </div>
+      <div style="margin-bottom:18px;display:flex;align-items:center;gap:10px">
+        <label style="font-size:13px;font-weight:600">Notifications actives</label>
+        <input type="checkbox" id="notif-active" checked style="width:18px;height:18px;cursor:pointer">
+      </div>
+      <button class="btn btn-dark" onclick="saveNotifParams()" style="width:100%;margin-bottom:8px">💾 Enregistrer</button>
+      <button class="btn" onclick="testNotif()" id="btn-test-notif" style="width:100%">📧 Tester l'envoi</button>
+      <div id="notif-status" style="margin-top:10px;font-size:12px;color:#2e7d32"></div>
+    </div>
+    <div class="card" style="max-width:500px;margin-top:14px">
+      <div style="font-weight:700;font-size:14px;margin-bottom:10px">📋 Statut du soir (aujourd'hui)</div>
+      <div id="notif-statut-list">Chargement...</div>
+    </div>
+  </div>
+
+  <!-- Commentaires -->
+  <div id="sa-comments-c" style="display:none">
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <select id="sc-resto" onchange="renderComments()" style="max-width:220px"><option value="">Tous les restaurants</option></select>
+      <input type="date" id="sc-date-from" onchange="renderComments()" style="max-width:150px">
+      <input type="date" id="sc-date-to" onchange="renderComments()" style="max-width:150px">
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table><thead><tr><th>Date</th><th>Restaurant</th><th>Commentaire</th></tr></thead>
+      <tbody id="sc-list"></tbody></table>
+      <div id="sc-empty" class="empty-state" style="display:none"><span class="empty-state-icon">💬</span>Aucun commentaire.</div>
+    </div>
+  </div>
+  <!-- Fournisseurs -->
+  <div id="sa-fourn-c" style="display:none">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <button class="btn btn-dark" onclick="openAddFourn()">+ Fournisseur</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px" id="sa-fourn-list"></div>
+  </div>
+</div>
+
+</div><!-- /main content facturation (placeholder) -->
+</div><!-- /app -->
+
+<!-- ── MODALS ── -->
+<div id="modal-historique" class="modal-bg" style="display:none" onclick="if(event.target===this)closeModal('modal-historique')">
+  <div class="modal modal-lg">
+    <div class="modal-title">📈 <span id="mh-titre">Historique</span></div>
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <select id="mh-resto" onchange="loadHistorique()" style="flex:1;max-width:200px"><option value="">Tous les restaurants</option></select>
+      <select id="mh-jours" onchange="loadHistorique()" style="max-width:140px">
+        <option value="7">7 derniers jours</option>
+        <option value="14" selected>14 derniers jours</option>
+        <option value="30">30 derniers jours</option>
+      </select>
+    </div>
+    <div id="mh-chart-wrap" style="width:100%;height:220px;position:relative;margin-bottom:16px">
+      <canvas id="mh-canvas" style="width:100%;height:220px"></canvas>
+    </div>
+    <div id="mh-table-wrap" style="overflow-x:auto">
+      <table><thead><tr><th>Date</th><th id="mh-th-restos"></th></tr></thead><tbody id="mh-tbody"></tbody></table>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-historique')">Fermer</button>
+    </div>
+  </div>
+</div>
+<div id="modal-prod-stock" class="modal-bg" style="display:none" onclick="if(event.target===this)closeModal('modal-prod-stock')">
+  <div class="modal">
+    <div class="modal-title" id="mps-title">📦 Nouveau produit stock</div>
+    <input type="hidden" id="mps-id">
+    <div class="fr"><div class="fg"><label>Nom</label><input id="mps-nom" placeholder="Coca rouge canette"></div><div class="fg"><label>Catégorie</label><input id="mps-cat" list="mps-cats"><datalist id="mps-cats"></datalist></div></div>
+    <div class="fr" style="margin-top:10px"><div class="fg"><label>Conditionnement</label><input id="mps-cond" placeholder="Pack 24"></div><div class="fg"><label>Coût unitaire (€)</label><input id="mps-cout" type="number" step="0.01" placeholder="0.00"></div></div>
+    <div class="fg" style="margin-top:10px"><label>Note / Alerte</label><input id="mps-note" placeholder="Ex: Faire attention, peut expirer"></div>
+    <div class="fr" style="margin-top:10px">
+      <div class="fg"><label>Grammage / Contenance</label><input id="mps-grammage" placeholder="ex: 2kg, 1L, x50..."></div>
+      <div class="fg"><label>Unite de base</label><select id="mps-unite"><option value="">Choisir</option><option value="g">g</option><option value="kg">kg</option><option value="mL">mL</option><option value="L">L</option><option value="unite">unite</option><option value="portion">portion</option></select></div>
+    </div>
+    <div style="font-size:12px;color:#666;font-weight:600;margin-top:14px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Fournisseurs & Prix d'achat</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 100px;gap:8px;align-items:end;margin-bottom:8px">
+      <div class="fg"><label>Principal</label><select id="mps-fourn1"><option value="">— Aucun —</option></select></div>
+      <div class="fg"><label>Conditionnement fourn. 1</label><input id="mps-cond-fourn1" placeholder="ex: carton x12"></div>
+      <div class="fg"><label>Prix HT (€)</label><input id="mps-prix-fourn1" type="number" step="0.001" placeholder="0.00"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 100px;gap:8px;align-items:end;margin-bottom:8px">
+      <div class="fg"><label>Secondaire</label><select id="mps-fourn2"><option value="">— Aucun —</option></select></div>
+      <div class="fg"><label>Conditionnement fourn. 2</label><input id="mps-cond-fourn2" placeholder="ex: sac 5kg"></div>
+      <div class="fg"><label>Prix HT (€)</label><input id="mps-prix-fourn2" type="number" step="0.001" placeholder="0.00"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 100px;gap:8px;align-items:end">
+      <div class="fg"><label>Secours</label><select id="mps-fourn3"><option value="">— Aucun —</option></select></div>
+      <div class="fg"><label>Conditionnement fourn. 3</label><input id="mps-cond-fourn3" placeholder="ex: palette"></div>
+      <div class="fg"><label>Prix HT (€)</label><input id="mps-prix-fourn3" type="number" step="0.001" placeholder="0.00"></div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px">
+      <button class="btn btn-red" id="btn-delete-prod" onclick="deleteProdStock()" style="display:none">🗑 Supprimer</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn" onclick="closeModal('modal-prod-stock')">Annuler</button>
+        <button class="btn btn-dark" onclick="saveProdStock()">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-max" class="modal-bg" style="display:none" onclick="if(event.target===this)closeModal('modal-max')">
+  <div class="modal">
+    <div class="modal-title">✏️ Quantité maximum</div>
+    <input type="hidden" id="mmax-rid"><input type="hidden" id="mmax-pid">
+    <div style="font-size:13px;color:#666;margin-bottom:14px" id="mmax-label">—</div>
+    <div class="fg"><label>Quantité maximum</label><input id="mmax-val" type="number" step="0.5" min="0" placeholder="0"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" onclick="closeModal('modal-max')">Annuler</button>
+      <button class="btn btn-dark" onclick="saveMax()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SUPABASE ──
+const SUPA_URL = 'https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// ── STATE ──
+var S = {
+  restos:[], sproducts:[], maxes:[], saisies:[], fournisseurs:[],
+  pinResto:null, pinCode:'',
+  saisieResto:null, saisieData:{},
+  isAdmin:false,
+};
+var fm = n => Number(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+var fmn = n => Number(n||0).toLocaleString('fr-FR',{minimumFractionDigits:0,maximumFractionDigits:2});
+
+function notif(msg,type='success'){var el=document.createElement('div');el.className='notif notif-'+type;el.textContent=msg;document.body.appendChild(el);setTimeout(()=>el.remove(),3000);}
+function openModal(id){document.getElementById(id).style.display='flex';}
+function closeModal(id){document.getElementById(id).style.display='none';}
+
+// ── PIN SYSTEM ──
+async function initPin() {
+  // Load logo before showing PIN screen
+  var {data:logoData} = await sb.from('parametres').select('valeur').eq('cle','stock_logo').limit(1);
+  if(logoData && logoData[0] && logoData[0].valeur) applyLogo(logoData[0].valeur);
+  var {data} = await sb.from('restaurants').select('*').eq('actif',true).order('nom');
+  S.restos = data || [];
+  var list = document.getElementById('pin-restos-list');
+  list.innerHTML = S.restos.map(r =>
+    '<button class="pin-resto-btn" onclick="selectResto(\''+r.id+'\',\''+r.nom+'\')">'+
+    '<span>'+r.nom+'</span><span style="color:var(--gold)">→</span></button>'
+  ).join('');
+}
+
+function selectResto(id, nom) {
+  S.pinResto = S.restos.find(r=>r.id===id);
+  S.pinCode = '';
+  document.getElementById('pin-step1').style.display='none';
+  document.getElementById('pin-step2').style.display='flex';
+  document.getElementById('pin-resto-label').textContent = nom;
+  document.getElementById('pin-display').textContent = '····';
+}
+
+function backToRestos() {
+  S.pinResto=null; S.pinCode='';
+  document.getElementById('pin-step1').style.display='block';
+  document.getElementById('pin-step2').style.display='none';
+}
+
+function pinKey(k) {
+  if(k==='back'){
+    S.pinCode=S.pinCode.slice(0,-1);
+    document.getElementById('pin-display').textContent = S.pinCode.replace(/./g,'●').padEnd(4,'·');
+  } else if(S.pinCode.length<4){
+    S.pinCode+=k;
+    document.getElementById('pin-display').textContent = S.pinCode.replace(/./g,'●').padEnd(4,'·');
+    if(S.pinCode.length===4){ setTimeout(function(){checkPin();},150); }
+  }
+}
+
+function checkPin() {
+  if(!S.pinResto) return;
+  if(S.pinCode === S.pinResto.code_pin) {
+    document.getElementById('pin-screen').style.display='none';
+    document.getElementById('main-app').style.display='flex';
+    S.saisieResto = S.pinResto;
+    init();
+  } else {
+    document.getElementById('pin-display').style.color='#ef9a9a';
+    setTimeout(()=>{
+      S.pinCode='';
+      document.getElementById('pin-display').textContent='····';
+      document.getElementById('pin-display').style.color='#fff';
+    }, 800);
+    notif('Code PIN incorrect','error');
+  }
+}
+
+// Admin access via PIN 1301
+document.querySelector('.pin-logo').ondblclick = () => {
+  var code = prompt('Code administrateur :');
+  if(code === '1301') {
+    document.getElementById('pin-screen').style.display='none';
+    document.getElementById('main-app').style.display='flex';
+    S.isAdmin = true;
+    S.saisieResto = null;
+    init();
+  } else if(code !== null) {
+    alert('Code incorrect.');
+  }
+};
+
+// ── NAVIGATION ──
+var PAGES = ['dash','bl','fac','rent','stock-dash','stock-saisie','stock-besoin','stock-admin','clients','produits','settings'];
+function nav(p) {
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(x=>x.classList.remove('active'));
+  var pg = document.getElementById('page-'+p);
+  if(pg) pg.classList.add('active');
+  var idx = PAGES.indexOf(p);
+  var btns = document.querySelectorAll('.nav-btn');
+  if(btns[idx]) btns[idx].classList.add('active');
+  if(p==='stock-dash') renderStockDash();
+  if(p==='stock-saisie') initSaisie();
+  if(p==='stock-besoin') initBesoin();
+  if(p==='stock-admin') { saTab('prod'); }
+}
+
+// ── INIT ──
+async function init() {
+  try {
+    await loadRestos();
+    await loadFournisseurs();
+    await loadStockProducts();
+    await loadMaxes();
+    document.getElementById('sync-status').textContent='● Connecté';
+    document.getElementById('sync-status').style.color='var(--gold)';
+    applyAccessLevel();
+    await loadLogo();
+    nav(S.isAdmin ? 'stock-dash' : 'stock-saisie');
+  } catch(err) {
+    console.error(err);
+    document.getElementById('sync-status').textContent='● Erreur';
+    document.getElementById('sync-status').style.color='#ef9a9a';
+  }
+}
+
+async function loadRestos() {
+  var {data,error} = await sb.from('restaurants').select('*').eq('actif',true).order('nom');
+  if(error) throw error;
+  S.restos = data||[];
+  // Populate selects
+  var opts = '<option value="">Tous les restaurants</option>'+S.restos.map(r=>'<option value="'+r.id+'">'+r.nom+'</option>').join('');
+  ['sd-resto','fb-resto'].forEach(id=>{var el=document.getElementById(id);if(el)el.innerHTML=opts;});
+  var saisieOpts = S.restos.map(r=>'<option value="'+r.id+'" '+(S.saisieResto&&S.saisieResto.id===r.id?'selected':'')+'>'+r.nom+'</option>').join('');
+  var ssel=document.getElementById('saisie-resto-sel');if(ssel)ssel.innerHTML='<option value="">Choisir...</option>'+saisieOpts;
+  var saOpts=S.restos.map(r=>'<option value="'+r.id+'">'+r.nom+'</option>').join('');
+  var sasel=document.getElementById('sa-max-resto');if(sasel)sasel.innerHTML='<option value="">Choisir un restaurant...</option>'+saOpts;
+}
+
+async function loadStockProducts() {
+  var {data,error} = await sb.from('stock_produits').select('*').order('categorie').order('nom');
+  if(error) throw error;
+  S.sproducts = data||[];
+}
+
+async function loadMaxes() {
+  var {data,error} = await sb.from('stock_max').select('*');
+  if(error) throw error;
+  S.maxes = data||[];
+}
+
+async function loadFournisseurs() {
+  var {data,error} = await sb.from('fournisseurs').select('*').eq('actif',true).order('nom');
+  if(error) return;
+  S.fournisseurs = data||[];
+  // Populate fournisseur selects
+  var opts = '<option value="">Tous fournisseurs</option>'+S.fournisseurs.map(f=>'<option value="'+f.id+'">'+f.nom+'</option>').join('');
+  var el = document.getElementById('fb-fourn');
+  if(el) el.innerHTML = opts;
+  // Populate product modal selects
+  ['mps-fourn1','mps-fourn2','mps-fourn3'].forEach(id=>{
+    var sel=document.getElementById(id);
+    if(sel) sel.innerHTML='<option value="">— Aucun —</option>'+S.fournisseurs.map(f=>'<option value="'+f.id+'">'+f.nom+'</option>').join('');
+  });
+}
+
+async function loadSaisies(date, restoId) {
+  var q = sb.from('stock_saisies').select('*').eq('date_saisie', date);
+  if(restoId) q = q.eq('restaurant_id', restoId);
+  var {data} = await q;
+  return data||[];
+}
+
+// ── STOCK DASHBOARD ──
+async function renderStockDash() {
+  var restoId = document.getElementById('sd-resto').value;
+  var dateEl = document.getElementById('sd-date');
+  
+  // Populate date options (last 14 days)
+  if(!dateEl.options.length) {
+    var today = new Date();
+    for(var i=0;i<14;i++){
+      var d = new Date(today); d.setDate(d.getDate()-i);
+      var ds = d.toISOString().split('T')[0];
+      var opt = document.createElement('option');
+      opt.value=ds; opt.textContent=i===0?'Aujourd\'hui — '+fd(ds):fd(ds);
+      if(i===0)opt.selected=true;
+      dateEl.appendChild(opt);
+    }
+  }
+  var date = dateEl.value || new Date().toISOString().split('T')[0];
+  var saisies = await loadSaisies(date, restoId||null);
+
+  // Build lookup
+  var saisieMap = {};
+  saisies.forEach(s=>saisieMap[s.restaurant_id+'_'+s.produit_id]=s.quantite);
+  var maxMap = {};
+  S.maxes.forEach(m=>maxMap[m.restaurant_id+'_'+m.produit_id]=m.quantite_max);
+
+  // Stats
+  var rupture=0, faible=0, valeur=0;
+  var rows = [];
+  var restoFilter = restoId ? [S.restos.find(r=>r.id===restoId)].filter(Boolean) : S.restos;
+
+  restoFilter.forEach(resto => {
+    S.sproducts.filter(p=>p.actif).forEach(p => {
+      var key = resto.id+'_'+p.id;
+      var qte = saisieMap[key];
+      if(qte==null) return; // not saisie
+      var max = maxMap[key]||0;
+      var pct = max>0 ? (qte/max*100) : 100;
+      var cout = p.cout_unitaire||0;
+      valeur += qte*cout;
+      if(pct<1) rupture++;
+      else if(pct<50) faible++;
+      var color = pct<20?'#c62828':pct<50?'#ff9800':'#2e7d32';
+      rows.push({resto, p, qte, max, pct, color});
+    });
+  });
+
+  document.getElementById('sd-saisis').textContent = saisies.length;
+  document.getElementById('sd-rupture').textContent = rupture;
+  document.getElementById('sd-faible').textContent = faible;
+  document.getElementById('sd-valeur').textContent = fm(valeur);
+
+  var tbody = document.getElementById('sd-table');
+  var empty = document.getElementById('sd-empty');
+  if(!rows.length){tbody.innerHTML='';empty.style.display='block';return;}
+  empty.style.display='none';
+  tbody.innerHTML = rows.map(r=>
+    '<tr>'+
+    (restoId?'':'<td style="font-size:11px;color:#999">'+r.resto.nom+'</td>')+
+    '<td style="font-weight:500">'+r.p.nom+'</td>'+
+    '<td><span class="badge b-blue">'+r.p.categorie+'</span></td>'+
+    '<td style="font-size:11px;color:#888">'+r.p.conditionnement+'</td>'+
+    '<td style="text-align:right;font-weight:700">'+fmn(r.qte)+'</td>'+
+    '<td style="text-align:right;color:#999">'+fmn(r.max)+'</td>'+
+    '<td style="min-width:120px"><div style="font-size:11px;color:'+r.color+';font-weight:600">'+Math.round(r.pct)+'%</div><div class="stock-bar"><div class="stock-bar-fill" style="width:'+Math.min(r.pct,100)+'%;background:'+r.color+'"></div></div></td>'+
+    '</tr>'
+  ).join('');
+  // Add resto column header if needed
+  var thead = document.querySelector('#page-stock-dash table thead tr');
+  if(!restoId && !thead.querySelector('.th-resto')) {
+    var th=document.createElement('th');th.textContent='Restaurant';th.className='th-resto';
+    thead.insertBefore(th, thead.firstChild);
+  } else if(restoId) {
+    var tr=thead.querySelector('.th-resto');if(tr)tr.remove();
+  }
+}
+
+var fd = d=>{if(!d)return'';var p=d.split('-');return p[2]+'/'+p[1]+'/'+p[0];};
+
+// ── SAISIE TABLETTE ──
+async function initSaisie() {
+  var dateEl = document.getElementById('saisie-date');
+  if(!dateEl.value) dateEl.value = new Date().toISOString().split('T')[0];
+  updateDateDisplay();
+  var nomEl = document.getElementById('saisie-resto-nom');
+  // Non-admin: hide restaurant selector, lock to their restaurant
+  var selRow = document.getElementById('saisie-resto-row');
+  if(!S.isAdmin && S.saisieResto) {
+    selRow.style.display = 'none';
+    // Also hide date for non-admin (they saisie for today only)
+    document.getElementById('saisie-date').style.display = 'none';
+  } else {
+    selRow.style.display = 'flex';
+    document.getElementById('saisie-date').style.display = '';
+  }
+  if(S.saisieResto) {
+    nomEl.textContent = S.saisieResto.nom;
+    document.getElementById('saisie-resto-sel').value = S.saisieResto.id;
+    await loadSaisie();
+  }
+  // Populate cat filter
+  var cats = [...new Set(S.sproducts.map(p=>p.categorie))].sort();
+  var cf = document.getElementById('saisie-cat-filter');
+  cf.innerHTML = '<option value="">Toutes catégories</option>'+cats.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+}
+
+async function loadSaisie() {
+  var restoId = document.getElementById('saisie-resto-sel').value;
+  if(!restoId) return;
+  var resto = S.restos.find(r=>r.id===restoId);
+  if(resto) document.getElementById('saisie-resto-nom').textContent = resto.nom;
+  var date = document.getElementById('saisie-date').value;
+
+  // Load existing saisies from Supabase
+  var {data} = await sb.from('stock_saisies').select('*').eq('restaurant_id',restoId).eq('date_saisie',date);
+  S.saisieData = {};
+  (data||[]).forEach(s=>S.saisieData[s.produit_id]=s.quantite);
+
+  // Merge with localStorage (draft not yet validated)
+  var restored = restoreSaisieLocal();
+  if(restored > 0) notif('✅ '+restored+' valeurs en brouillon restaurées');
+
+  renderSaisieItems();
+}
+
+function renderSaisieItems() {
+  var restoId = document.getElementById('saisie-resto-sel').value;
+  var catF = document.getElementById('saisie-cat-filter').value;
+  var el = document.getElementById('saisie-items');
+
+  // Filter products active for this restaurant (have a max defined)
+  var maxForResto = S.maxes.filter(m=>m.restaurant_id===restoId&&m.actif);
+  var prodIds = new Set(maxForResto.map(m=>m.produit_id));
+  var prods = S.sproducts.filter(p=>p.actif&&prodIds.has(p.id)&&(!catF||p.categorie===catF));
+
+  if(!prods.length){el.innerHTML='<div class="empty-state"><div class="empty-state-icon">📦</div>Aucun produit configuré pour ce restaurant.</div>';return;}
+
+  // Group by category
+  var bycat = {};
+  prods.forEach(p=>{if(!bycat[p.categorie])bycat[p.categorie]=[];bycat[p.categorie].push(p);});
+
+  el.innerHTML = Object.entries(bycat).sort().map(([cat,items])=>
+    '<div class="saisie-cat">'+cat+'</div>'+
+    items.map(p=>{
+      var max = S.maxes.find(m=>m.restaurant_id===restoId&&m.produit_id===p.id);
+      var qmax = max?max.quantite_max:0;
+      var qactuel = S.saisieData[p.id]!=null?S.saisieData[p.id]:'';
+      var pct = qmax>0&&qactuel!==''?(qactuel/qmax*100):100;
+      var cls = qactuel===''?'':pct<20?'crit':pct<50?'low':'ok';
+      return '<div class="saisie-item">'+
+        '<div style="flex:1"><div class="saisie-nom histo-link" data-pid="'+p.id+'" data-nom="'+p.nom.replace(/"/g,'&quot;')+'" style="cursor:pointer" title="Voir historique">'+p.nom+'</div>'+
+        '<div class="saisie-cond">'+p.conditionnement+(p.note?'<span style="color:#e65100;margin-left:6px">⚠ '+p.note+'</span>':'')+'</div></div>'+
+        +(S.isAdmin?'<div class="saisie-max">Max: '+fmn(qmax)+'</div>':'')+
+        '<input class="saisie-input '+cls+'" type="number" min="0" step="0.5" value="'+qactuel+'" placeholder="?" '+
+        'oninput="updateSaisie(\''+p.id+'\',this)" data-max="'+qmax+'" data-pid="'+p.id+'">'+
+      '</div>';
+    }).join('')
+  ).join('');
+}
+
+function updateSaisie(pid, input) {
+  var val = parseFloat(input.value);
+  S.saisieData[pid] = isNaN(val)?null:val;
+  var max = parseFloat(input.dataset.max)||0;
+  var pct = max>0&&!isNaN(val)?(val/max*100):100;
+  input.className = 'saisie-input '+(isNaN(val)?'':pct<20?'crit':pct<50?'low':'ok');
+  // Sauvegarde auto en localStorage
+  saveSaisieLocal();
+}
+
+function getSaisieKey() {
+  // Priorité: S.saisieResto (set après PIN) ou select
+  var restoId = 'unknown';
+  if(S.saisieResto && S.saisieResto.id) {
+    restoId = S.saisieResto.id;
+  } else {
+    var sel = document.getElementById('saisie-resto-sel');
+    if(sel && sel.value) restoId = sel.value;
+  }
+  // Date: champ ou aujourd'hui
+  var dateEl = document.getElementById('saisie-date');
+  var date = (dateEl && dateEl.value) ? dateEl.value : new Date().toISOString().split('T')[0];
+  return 'saisie_'+restoId+'_'+date;
+}
+
+function saveSaisieLocal() {
+  try {
+    if(!S.saisieResto || !S.saisieResto.id) return;
+    var key = getSaisieKey();
+    // Sauvegarder S.saisieData directement (déjà mis à jour par updateSaisie)
+    var data = {};
+    Object.keys(S.saisieData).forEach(function(pid) {
+      if(S.saisieData[pid] !== null && S.saisieData[pid] !== undefined) {
+        data[pid] = S.saisieData[pid];
+      }
+    });
+    var com = document.getElementById('saisie-commentaire');
+    if(com && com.value) data['__commentaire__'] = com.value;
+    localStorage.setItem(key, JSON.stringify(data));
+    // Pas de fallback global - chaque resto a sa propre clé
+  } catch(e) {}
+}
+
+function restoreSaisieLocal() {
+  try {
+    var key = getSaisieKey();
+    if(!key || key.indexOf('unknown') !== -1) return 0;
+    var saved = localStorage.getItem(key);
+    if(!saved) return 0; // Pas de brouillon pour CE resto à CETTE date
+    var data = JSON.parse(saved);
+    var count = 0;
+    // Restaurer dans S.saisieData ET dans les inputs DOM
+    Object.keys(data).forEach(function(pid) {
+      if(pid.startsWith('__')) return;
+      S.saisieData[pid] = parseFloat(data[pid]);
+    });
+    // Remplir les inputs visuels
+    document.querySelectorAll('.saisie-input').forEach(function(inp) {
+      var pid = inp.dataset.pid;
+      if(pid && data[pid] !== undefined) {
+        inp.value = data[pid];
+        updateSaisie(pid, inp);
+        count++;
+      }
+    });
+    var com = document.getElementById('saisie-commentaire');
+    if(com && data['__commentaire__']) com.value = data['__commentaire__'];
+    return count;
+  } catch(e) { return 0; }
+}
+
+function clearSaisieLocal() {
+  try { localStorage.removeItem(getSaisieKey()); } catch(e) {}
+}
+
+async function validerSaisie() {
+  var restoId = document.getElementById('saisie-resto-sel').value;
+  var date = document.getElementById('saisie-date').value;
+  if(!restoId){notif('Choisissez un restaurant','error');return;}
+
+  // Check all visible products are filled
+  var inputs = document.querySelectorAll('.saisie-input');
+  var manquants = [];
+  inputs.forEach(inp=>{
+    if(inp.value===''||inp.value===null) {
+      manquants.push(inp.closest('.saisie-item').querySelector('.saisie-nom').textContent);
+      inp.style.borderColor='#c62828';inp.style.background='#ffebee';
+    }
+  });
+  if(manquants.length>0){
+    notif(manquants.length+' produit(s) non renseigné(s) — remplir par 0 si vide','error');
+    // Scroll to first missing
+    var first=document.querySelector('.saisie-input[value=""]');
+    if(first)first.scrollIntoView({behavior:'smooth',block:'center'});
+    return;
+  }
+
+  var entries = Object.entries(S.saisieData).filter(([pid,q])=>q!=null);
+  if(!entries.length){notif('Aucune quantité saisie','error');return;}
+
+  if(!confirm('Valider le stock du soir pour '+date+' ? ('+entries.length+' produits)')) return;
+
+  // Delete existing for this date/resto, then insert
+  await sb.from('stock_saisies').delete().eq('restaurant_id',restoId).eq('date_saisie',date);
+  var inserts = entries.map(([pid,q])=>({restaurant_id:restoId,produit_id:pid,quantite:q,date_saisie:date}));
+  var {error} = await sb.from('stock_saisies').insert(inserts);
+  if(error){notif('Erreur: '+error.message,'error');return;}
+  // Save commentaire if any
+  var commentEl = document.getElementById('saisie-commentaire');
+  var commentaire = commentEl ? commentEl.value.trim() : '';
+  if(commentaire) {
+    await sb.from('stock_commentaires').insert({restaurant_id:restoId, date_saisie:date, commentaire:commentaire});
+    if(commentEl) commentEl.value = '';
+  }
+  clearSaisieLocal();
+  notif('Stock valide — '+entries.length+' produits enregistres'+(commentaire?' + commentaire':''));
+  // Notif email temps réel
+  envoyerNotifValidation(restoId, date, entries.length, commentaire);
+}
+
+// ── FEUILLE DE BESOIN ──
+function initBesoin() {
+  var dateEl=document.getElementById('fb-date');
+  if(!dateEl.value) dateEl.value=new Date().toISOString().split('T')[0];
+  renderBesoin();
+}
+
+async function renderBesoin() {
+  var restoId=document.getElementById('fb-resto').value;
+  var date=document.getElementById('fb-date').value;
+  var fournId=document.getElementById('fb-fourn')?document.getElementById('fb-fourn').value:'';
+  if(!date){document.getElementById('fb-empty').style.display='block';return;}
+
+  var saisies=await loadSaisies(date, restoId||null);
+  var saisieMap={};
+  saisies.forEach(s=>saisieMap[s.restaurant_id+'_'+s.produit_id]=s.quantite);
+
+  var rows=[];
+  var restoFilter = restoId?[S.restos.find(r=>r.id===restoId)].filter(Boolean):S.restos;
+
+  restoFilter.forEach(resto=>{
+    S.maxes.filter(m=>m.restaurant_id===resto.id&&m.actif&&m.quantite_max>0).forEach(m=>{
+      var p=S.sproducts.find(x=>x.id===m.produit_id); if(!p||!p.actif) return;
+      // Filter by search
+      var searchFb = (document.getElementById('fb-search')||{value:''}).value.toLowerCase().trim();
+      if(searchFb && p.nom.toLowerCase().indexOf(searchFb)===-1) return;
+      // Filter by fournisseur
+      if(fournId && p.fournisseur_principal_id!==fournId && p.fournisseur_secondaire_id!==fournId && p.fournisseur_secours_id!==fournId) return;
+      var key=resto.id+'_'+p.id;
+      var qte=saisieMap[key]!=null?saisieMap[key]:null;
+      var aCommander=qte!=null?Math.max(0,m.quantite_max-qte):null;
+      if(aCommander===null||aCommander<=0) return;
+      // Prix selon fournisseur sélectionné
+      var prixUnit = p.cout_unitaire||0;
+      var fNom='—';
+      if(fournId) {
+        var f=S.fournisseurs.find(function(x){return x.id===fournId;});
+        fNom=f?f.nom:'—';
+        if(p.fournisseur_principal_id===fournId && p.prix_fourn1) prixUnit=p.prix_fourn1;
+        else if(p.fournisseur_secondaire_id===fournId && p.prix_fourn2) prixUnit=p.prix_fourn2;
+        else if(p.fournisseur_secours_id===fournId && p.prix_fourn3) prixUnit=p.prix_fourn3;
+      } else if(p.fournisseur_principal_id) {
+        var f=S.fournisseurs.find(function(x){return x.id===p.fournisseur_principal_id;});
+        fNom=f?f.nom:'—';
+        if(p.prix_fourn1) prixUnit=p.prix_fourn1;
+      }
+      var cout=prixUnit*aCommander;
+      rows.push({resto,p,qte,max:m.quantite_max,aCommander,cout,pct:qte!=null?(qte/m.quantite_max*100):0,fNom,prixUnit});
+    });
+  });
+
+  rows.sort((a,b)=>a.pct-b.pct);
+
+  var tbody=document.getElementById('fb-body');
+  var empty=document.getElementById('fb-empty');
+  if(!rows.length){tbody.innerHTML='';empty.style.display='block';document.getElementById('fb-count').textContent='0';document.getElementById('fb-cout').textContent=fm(0);return;}
+  empty.style.display='none';
+
+  var totalCout=rows.reduce((s,r)=>s+r.cout,0);
+  document.getElementById('fb-count').textContent=rows.length+' articles';
+  document.getElementById('fb-cout').textContent=fm(totalCout);
+
+  tbody.innerHTML=rows.map((r,i)=>{
+    var cls=r.pct<20?'besoin-row-crit':r.pct<50?'besoin-row-low':'besoin-row-ok';
+    return '<tr class="'+cls+'" id="fb-row-'+i+'">'+
+      '<td style="font-size:12px;color:#666">'+r.resto.nom+'</td>'+
+      '<td style="font-weight:600">'+r.p.nom+(r.p.note?'<br><small style="color:#e65100;font-weight:400">⚠ '+r.p.note+'</small>':'')+'</td>'+
+      '<td><span class="badge b-blue" style="font-size:10px">'+r.fNom+'</span></td>'+
+      '<td style="font-size:12px;color:#888">'+r.p.conditionnement+'</td>'+
+      '<td style="text-align:right">'+(r.qte!=null?fmn(r.qte):'—')+'</td>'+
+      '<td style="text-align:right;color:#666">'+fmn(r.max)+'</td>'+
+      '<td style="text-align:right;font-weight:700;color:#c62828;font-size:15px">'+fmn(r.aCommander)+'</td>'+
+      '<td style="text-align:right;color:#888">'+(r.prixUnit>0?fm(r.prixUnit):'—')+'</td>'+
+      '<td style="text-align:right;font-weight:600">'+(r.cout>0?fm(r.cout):'—')+'</td>'+
+      '<td style="text-align:center"><input type="checkbox" class="fb-check" id="fbc-'+i+'" onchange="toggleBesoinCheck('+i+',this.checked)" style="width:18px;height:18px;accent-color:#2e7d32;cursor:pointer"></td>'+
+    '</tr>';
+  }).join('');
+}
+
+function toggleBesoinCheck(i, checked) {
+  var row = document.getElementById('fb-row-'+i);
+  if(row) {
+    row.style.opacity = checked ? '0.45' : '1';
+    row.style.textDecoration = checked ? 'line-through' : '';
+    var cells = row.querySelectorAll('td:not(:last-child)');
+    cells.forEach(td=>td.style.color=checked?'#aaa':'');
+  }
+}
+
+function copierCommande() {
+  var btn = document.getElementById('btn-copy-cmd');
+  var rows = document.querySelectorAll('#fb-body tr');
+  if(!rows.length) { notif('Aucune commande', 'error'); return; }
+  var restoId = document.getElementById('fb-resto').value;
+  var fournId = document.getElementById('fb-fourn') ? document.getElementById('fb-fourn').value : '';
+  var date = document.getElementById('fb-date').value;
+  var restoNom = restoId ? (S.restos.find(function(r){return r.id===restoId;})||{nom:'Tous'}).nom : 'Tous';
+  var fournNom = fournId ? (S.fournisseurs.find(function(f){return f.id===fournId;})||{nom:''}).nom : '';
+  var sep = '---------------------';
+  var lignes = [];
+  lignes.push('*COMMANDE RAYA - ' + restoNom.toUpperCase() + '*');
+  lignes.push('Date : ' + fd(date));
+  if(fournNom) lignes.push('Fournisseur : ' + fournNom);
+  lignes.push(sep);
+  // Grouper par catégorie
+  var bycat = {};
+  rows.forEach(function(row) {
+    var cells = row.querySelectorAll('td');
+    if(cells.length < 7) return;
+    var produit = '';
+    if(cells[1]) {
+      var firstNode = cells[1].firstChild;
+      produit = firstNode ? firstNode.textContent.trim() : cells[1].textContent.trim();
+    }
+    var cond = cells[3] ? cells[3].textContent.trim() : '';
+    var qty = cells[6] ? cells[6].textContent.trim() : '0';
+    if(!produit || parseFloat(qty) <= 0) return;
+    // Trouver la catégorie du produit
+    var prod = S.sproducts.find(function(p){return p.nom===produit;});
+    var cat = prod ? prod.categorie : 'Autres';
+    if(!bycat[cat]) bycat[cat] = [];
+    bycat[cat].push('- ' + produit + ' : *' + qty + ' ' + cond + '*');
+  });
+  // Ajouter par catégorie triée
+  Object.keys(bycat).sort().forEach(function(cat) {
+    lignes.push('*' + cat.toUpperCase() + '*');
+    bycat[cat].forEach(function(l){ lignes.push(l); });
+    lignes.push('');
+  });
+  lignes.push(sep);
+  var countEl = document.getElementById('fb-count');
+  if(countEl) lignes.push(countEl.textContent);
+  var texte = lignes.join('\n');
+  function doCopy() {
+    var ta = document.createElement('textarea');
+    ta.value = texte;
+    ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(texte).catch(function(){ doCopy(); });
+  } else { doCopy(); }
+  if(btn) { btn.textContent = 'Copie OK !'; btn.style.background = '#2e7d32'; btn.style.color = '#fff'; }
+  setTimeout(function(){ if(btn){ btn.textContent = 'Copier commande'; btn.style.background = ''; btn.style.color = ''; }}, 2500);
+  notif('Commande copiee !');
+}
+
+async function downloadBesoinPDF() {
+  // Simple print window for now
+  var table=document.getElementById('fb-table').outerHTML;
+  var w=window.open('','_blank');
+  var date=document.getElementById('fb-date').value;
+  var restoId=document.getElementById('fb-resto').value;
+  var restoNom=restoId?(S.restos.find(r=>r.id===restoId)||{nom:'Tous'}).nom:'Tous les restaurants';
+  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Feuille de besoin</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:20px;font-size:12px}h2{margin-bottom:6px}p{color:#666;margin-bottom:16px;font-size:11px}table{width:100%;border-collapse:collapse}th{background:#1a1a2e;color:#fff;padding:8px 10px;font-size:10px;text-align:left}td{padding:7px 10px;border-bottom:1px solid #eee}.besoin-row-crit td{background:#ffebee}.besoin-row-low td{background:#fff8e1}.besoin-row-ok td{background:#f1f8e9}.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;background:#eee}@page{size:A4 landscape;margin:10mm}@media print{body{padding:0}}</style></head><body>'+
+    '<h2>Feuille de besoin — '+restoNom+'</h2><p>Date inventaire : '+fd(date)+' · Généré le '+fd(new Date().toISOString().split("T")[0])+'</p>'+
+    table+
+    '<script>window.onload=function(){window.print();window.onafterprint=function(){window.close();}};<\/script></body></html>');
+  w.document.close();
+}
+
+// ── ADMIN STOCK ──
+function saTab(t) {
+  ['prod','max','restos','fourn','comments','notifs'].forEach(x=>{
+    var el=document.getElementById('sa-'+x+'-c');if(el)el.style.display=t===x?'block':'none';
+    var btn=document.getElementById('sa-tab-'+x);if(btn)btn.classList.toggle('active',t===x);
+  });
+  if(t==='prod') renderAdminProd();
+  if(t==='max') renderAdminMax();
+  if(t==='restos') renderAdminRestos();
+  if(t==='fourn') renderAdminFourn();
+  if(t==='comments') renderComments();
+  if(t==='notifs') { loadNotifParams(); renderNotifStatut(); }
+}
+function renderAdminFourn() {
+  document.getElementById('sa-fourn-list').innerHTML=S.fournisseurs.map(f=>
+    '<div class="card" style="text-align:center">'+
+    '<div style="font-size:28px;margin-bottom:8px">🏭</div>'+
+    '<div style="font-weight:700;font-size:15px;margin-bottom:8px">'+f.nom+'</div>'+
+    '<span class="badge b-green">● Actif</span>'+
+    '</div>'
+  ).join('');
+}
+async function openAddFourn() {
+  var nom=prompt('Nom du fournisseur :');
+  if(!nom||!nom.trim())return;
+  var {error}=await sb.from('fournisseurs').insert({nom:nom.trim()});
+  if(error){notif('Erreur: '+error.message,'error');return;}
+  await loadFournisseurs();renderAdminFourn();
+  notif('Fournisseur ajouté');
+}
+
+function renderAdminProd() {
+  var q=(document.getElementById('sa-search')||{value:''}).value.toLowerCase();
+  var cf=(document.getElementById('sa-cat-f')||{value:''}).value;
+  var cats=[...new Set(S.sproducts.map(p=>p.categorie))].sort();
+  var sel=document.getElementById('sa-cat-f');
+  if(sel){var cur=sel.value;sel.innerHTML='<option value="">Toutes catégories</option>'+cats.map(c=>'<option value="'+c+'" '+(c===cur?'selected':'')+'>'+c+'</option>').join('');sel.value=cur;}
+  var dl=document.getElementById('mps-cats');if(dl)dl.innerHTML=cats.map(c=>'<option value="'+c+'">').join('');
+  var list=S.sproducts.filter(p=>(!q||p.nom.toLowerCase().includes(q)||p.categorie.toLowerCase().includes(q))&&(!cf||p.categorie===cf));
+  document.getElementById('sa-prod-list').innerHTML=list.map(p=>
+    '<tr><td style="font-weight:500;cursor:pointer;color:#1a1a2e" class="histo-link" data-pid="'+p.id+'" data-nom="'+p.nom.replace(/"/g,'&quot;')+'" title="Voir historique">'+p.nom+' <span style="font-size:10px;color:#bbb">&#x1F4C8;</span></td>'+
+    '<td><span class="badge b-blue">'+p.categorie+'</span></td>'+
+    '<td style="color:#888;font-size:12px">'+p.conditionnement+'</td>'+
+    '<td style="text-align:right">'+(p.cout_unitaire>0?fm(p.cout_unitaire):'—')+'</td>'+
+    '<td style="font-size:10px;line-height:1.7">'+
+      [['fournisseur_principal_id','prix_fourn1'],['fournisseur_secondaire_id','prix_fourn2'],['fournisseur_secours_id','prix_fourn3']].map(function(pair){
+        var fid=p[pair[0]]; var prix=p[pair[1]];
+        if(!fid) return '';
+        var f=S.fournisseurs.find(function(x){return x.id===fid;});
+        return f?'<span style="display:inline-flex;align-items:center;gap:3px;margin-right:4px"><span class="badge b-gray" style="font-size:9px">'+f.nom+'</span>'+(prix?'<span style="color:#2e7d32;font-weight:600">'+fm(prix)+'</span>':'')+'</span>':'';
+      }).join('')+
+    '</td>'+
+    '<td style="font-size:11px;color:#e65100;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+( p.note||'')+'</td>'+
+    '<td><input type="checkbox" '+(p.actif?'checked':'')+' onchange="toggleProdStock(\''+p.id+'\',this.checked)"></td>'+
+    '<td><button class="btn btn-sm" onclick="editProdStock(\''+p.id+'\')">Modifier</button></td></tr>'
+  ).join('');
+}
+
+async function toggleProdStock(id, actif) {
+  await sb.from('stock_produits').update({actif}).eq('id',id);
+  var p=S.sproducts.find(x=>x.id===id);if(p)p.actif=actif;
+  notif(actif?'Produit activé':'Produit désactivé');
+}
+
+function openAddProd() {
+  document.getElementById('mps-id').value='';
+  document.getElementById('mps-title').textContent='Nouveau produit stock';
+  ['mps-nom','mps-cat','mps-cond','mps-note','mps-grammage','mps-prix-fourn1','mps-prix-fourn2','mps-prix-fourn3','mps-cond-fourn1','mps-cond-fourn2','mps-cond-fourn3'].forEach(function(i){var el=document.getElementById(i);if(el)el.value='';});
+  document.getElementById('mps-cout').value='0';
+  var delBtn = document.getElementById('btn-delete-prod');
+  if(delBtn) delBtn.style.display='none';
+  openModal('modal-prod-stock');
+}
+
+function editProdStock(id) {
+  var p=S.sproducts.find(x=>x.id===id);if(!p)return;
+  document.getElementById('mps-id').value=id;
+  document.getElementById('mps-title').textContent='✏️ Modifier le produit';
+  document.getElementById('mps-nom').value=p.nom;
+  document.getElementById('mps-cat').value=p.categorie;
+  document.getElementById('mps-cond').value=p.conditionnement||'';
+  document.getElementById('mps-cout').value=p.cout_unitaire||0;
+  document.getElementById('mps-note').value=p.note||'';
+  var s1=document.getElementById('mps-fourn1');if(s1)s1.value=p.fournisseur_principal_id||'';
+  var s2=document.getElementById('mps-fourn2');if(s2)s2.value=p.fournisseur_secondaire_id||'';
+  var s3=document.getElementById('mps-fourn3');if(s3)s3.value=p.fournisseur_secours_id||'';
+  var gEl=document.getElementById('mps-grammage');if(gEl)gEl.value=p.grammage||'';
+  var uEl=document.getElementById('mps-unite');if(uEl)uEl.value=p.unite||'';
+  var pf1=document.getElementById('mps-prix-fourn1');if(pf1)pf1.value=p.prix_fourn1||'';
+  var pf2=document.getElementById('mps-prix-fourn2');if(pf2)pf2.value=p.prix_fourn2||'';
+  var pf3=document.getElementById('mps-prix-fourn3');if(pf3)pf3.value=p.prix_fourn3||'';
+  var cf1=document.getElementById('mps-cond-fourn1');if(cf1)cf1.value=p.cond_fourn1||'';
+  var cf2=document.getElementById('mps-cond-fourn2');if(cf2)cf2.value=p.cond_fourn2||'';
+  var cf3=document.getElementById('mps-cond-fourn3');if(cf3)cf3.value=p.cond_fourn3||'';
+  var delBtn = document.getElementById('btn-delete-prod');
+  if(delBtn) delBtn.style.display='inline-flex';
+  openModal('modal-prod-stock');
+}
+
+async function deleteProdStock() {
+  var id = document.getElementById('mps-id').value;
+  var nom = document.getElementById('mps-nom').value;
+  if(!id) return;
+  if(!confirm('Supprimer "'+nom+'" ? Cette action est irreversible.')) return;
+  // Supprimer les dependances d'abord
+  await sb.from('stock_max').delete().eq('produit_id', id);
+  await sb.from('stock_saisies').delete().eq('produit_id', id);
+  var {error} = await sb.from('stock_produits').delete().eq('id', id);
+  if(error){notif('Erreur: '+error.message,'error');return;}
+  closeModal('modal-prod-stock');
+  await loadStockProducts();
+  renderAdminProd();
+  notif('Produit supprime');
+}
+
+async function saveProdStock() {
+  var nom=document.getElementById('mps-nom').value.trim();if(!nom){notif('Nom requis','error');return;}
+  var eid=document.getElementById('mps-id').value;
+  var f1=document.getElementById('mps-fourn1').value||null;
+  var f2=document.getElementById('mps-fourn2').value||null;
+  var f3=document.getElementById('mps-fourn3').value||null;
+  var g = document.getElementById('mps-grammage'); var u = document.getElementById('mps-unite');
+  var pf1 = document.getElementById('mps-prix-fourn1'); var pf2 = document.getElementById('mps-prix-fourn2'); var pf3 = document.getElementById('mps-prix-fourn3');
+  var cf1 = document.getElementById('mps-cond-fourn1'); var cf2 = document.getElementById('mps-cond-fourn2'); var cf3 = document.getElementById('mps-cond-fourn3');
+  var data={
+    nom: nom,
+    categorie: document.getElementById('mps-cat').value||'Divers',
+    conditionnement: document.getElementById('mps-cond').value||'Unite',
+    cout_unitaire: parseFloat(document.getElementById('mps-cout').value)||0,
+    note: document.getElementById('mps-note').value||null,
+    fournisseur_principal_id: f1,
+    fournisseur_secondaire_id: f2,
+    fournisseur_secours_id: f3,
+    grammage: g && g.value ? parseFloat(g.value)||null : null,
+    unite: u && u.value ? u.value : null,
+    prix_fourn1: pf1 && pf1.value ? parseFloat(pf1.value)||null : null,
+    prix_fourn2: pf2 && pf2.value ? parseFloat(pf2.value)||null : null,
+    prix_fourn3: pf3 && pf3.value ? parseFloat(pf3.value)||null : null,
+    cond_fourn1: cf1 && cf1.value ? cf1.value.trim()||null : null,
+    cond_fourn2: cf2 && cf2.value ? cf2.value.trim()||null : null,
+    cond_fourn3: cf3 && cf3.value ? cf3.value.trim()||null : null
+  };
+  if(eid){var{error}=await sb.from('stock_produits').update(data).eq('id',eid);if(error){notif('Erreur: '+error.message,'error');return;}notif('Produit modifié');}
+  else{var{error}=await sb.from('stock_produits').insert(data);if(error){notif('Erreur: '+error.message,'error');return;}notif('Produit ajouté');}
+  // Sync vers produits (facturation)
+  var syncFact = {};
+  if(data.cout_unitaire > 0) syncFact.prix_achat = data.cout_unitaire;
+  if(data.grammage) syncFact.grammage = data.grammage;
+  if(data.unite) syncFact.unite = data.unite;
+  if(Object.keys(syncFact).length > 0) {
+    await sb.from('produits').update(syncFact).eq('nom', nom);
+  }
+  closeModal('modal-prod-stock');
+  await loadStockProducts();renderAdminProd();
+}
+
+async function renderAdminMax() {
+  var restoId=document.getElementById('sa-max-resto').value;
+  var q=(document.getElementById('sa-max-search')||{value:''}).value.toLowerCase();
+  if(!restoId){document.getElementById('sa-max-list').innerHTML='<tr><td colspan="6" class="empty-state">Choisissez un restaurant</td></tr>';return;}
+  var prods=S.sproducts.filter(p=>p.actif&&(!q||p.nom.toLowerCase().includes(q)));
+  var list = document.getElementById('sa-max-list');
+  list.innerHTML = '';
+  prods.forEach(function(p) {
+    var m = S.maxes.find(function(x){return x.restaurant_id===restoId&&x.produit_id===p.id;});
+    var qmax = m ? m.quantite_max : 0;
+    var mActif = m ? (m.actif !== false) : false;
+    var tr = document.createElement('tr');
+    tr.style.opacity = mActif ? '1' : '0.4';
+    tr.innerHTML =
+      '<td style="font-weight:500">'+p.nom+'</td>'+
+      '<td><span class="badge b-blue">'+p.categorie+'</span></td>'+
+      '<td style="color:#888;font-size:12px">'+p.conditionnement+'</td>'+
+      '<td style="text-align:right;font-weight:700;color:'+(qmax>0&&mActif?'#1a1a2e':'#ccc')+'">'+fmn(qmax)+'</td>'+
+      '<td style="text-align:center">'+
+        '<label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-size:12px;color:'+(mActif?'#2e7d32':'#aaa')+'">'+
+        '<input type="checkbox" '+(mActif?'checked':'')+' style="width:15px;height:15px;accent-color:#2e7d32;cursor:pointer"> '+
+        (mActif?'Actif':'Inactif')+'</label></td>'+
+      '<td><button class="btn btn-sm">Modifier</button></td>';
+    // Use addEventListener for checkbox - no inline onclick needed
+    var cb = tr.querySelector('input[type=checkbox]');
+    cb.addEventListener('change', (function(rid,pid,qm){
+      return function(){
+        var actif = this.checked;
+        var row = this.closest('tr');
+        if(row) row.style.opacity = actif ? '1' : '0.4';
+        var lbl = this.parentElement;
+        if(lbl) { lbl.style.color = actif?'#2e7d32':'#aaa'; lbl.lastChild.textContent = ' '+(actif?'Actif':'Inactif'); }
+        sb.from('stock_max').upsert({restaurant_id:rid,produit_id:pid,quantite_max:qm,actif:actif},{onConflict:'restaurant_id,produit_id'}).then(function(){
+          var mx=S.maxes.find(function(x){return x.restaurant_id===rid&&x.produit_id===pid;});
+          if(mx) mx.actif=actif; else S.maxes.push({restaurant_id:rid,produit_id:pid,quantite_max:qm,actif:actif});
+          notif(actif?'Actif pour ce restaurant':'Desactive');
+        });
+      };
+    })(restoId, p.id, qmax));
+    // Modifier button
+    var btn = tr.querySelector('.btn-sm');
+    btn.addEventListener('click', (function(rid,pid,qm,nom,cond){
+      return function(){ openEditMax(rid,pid,qm,nom,cond); };
+    })(restoId, p.id, qmax, p.nom, p.conditionnement));
+    list.appendChild(tr);
+  });
+}
+
+function openEditMax(rid,pid,qmax,nom,cond) {
+  document.getElementById('mmax-rid').value=rid;
+  document.getElementById('mmax-pid').value=pid;
+  document.getElementById('mmax-val').value=qmax||'';
+  var resto=S.restos.find(r=>r.id===rid);
+  document.getElementById('mmax-label').textContent=(resto?resto.nom:'?')+' — '+nom+' ('+cond+')';
+  openModal('modal-max');
+}
+
+async function toggleMaxActif(cb) {
+  var rid = cb.dataset.rid, pid = cb.dataset.pid;
+  var qmax = parseFloat(cb.dataset.qmax)||0, actif = cb.checked;
+  var row = cb.closest('tr');
+  if(row) row.style.opacity = actif ? '1' : '0.4';
+  var lbl = cb.parentElement;
+  if(lbl) lbl.style.color = actif ? '#2e7d32' : '#aaa';
+  await sb.from('stock_max').upsert({restaurant_id:rid,produit_id:pid,quantite_max:qmax,actif:actif},{onConflict:'restaurant_id,produit_id'});
+  var m=S.maxes.find(function(x){return x.restaurant_id===rid&&x.produit_id===pid;});
+  if(m) m.actif=actif; else S.maxes.push({restaurant_id:rid,produit_id:pid,quantite_max:qmax,actif:actif});
+  notif(actif?'Actif pour ce restaurant':'Desactive');
+}
+async function saveMax() {
+  var rid=document.getElementById('mmax-rid').value;
+  var pid=document.getElementById('mmax-pid').value;
+  var val=parseFloat(document.getElementById('mmax-val').value)||0;
+  var {error}=await sb.from('stock_max').upsert({restaurant_id:rid,produit_id:pid,quantite_max:val,actif:true},{onConflict:'restaurant_id,produit_id'});
+  if(error){notif('Erreur: '+error.message,'error');return;}
+  closeModal('modal-max');
+  await loadMaxes();renderAdminMax();
+  notif('Quantité max enregistrée');
+}
+
+function renderAdminRestos() {
+  document.getElementById('sa-restos-list').innerHTML=S.restos.map(r=>
+    '<div class="card" style="text-align:center">'+
+    '<div style="font-size:32px;margin-bottom:8px">🏪</div>'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:4px">'+r.nom+'</div>'+
+    '<div style="font-size:12px;color:#999;margin-bottom:8px">Code PIN actuel : <strong style="font-family:monospace;font-size:18px;color:var(--dark);letter-spacing:4px">'+r.code_pin+'</strong></div>'+
+    '<div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:10px">'+
+      '<input id="pin-edit-'+r.id+'" type="number" maxlength="4" placeholder="Nouveau PIN" '+
+      'style="width:120px;text-align:center;font-size:18px;letter-spacing:4px;font-family:monospace" '+
+      'oninput="this.value=this.value.slice(0,4)">'+
+      '<button class="btn btn-dark" style="padding:8px 14px" onclick="savePin(this)" data-id="'+r.id+'" data-nom="'+r.nom+'">💾</button>'+
+    '</div>'+
+    '<span class="badge b-green">● Actif</span>'+
+    '</div>'
+  ).join('');
+}
+
+async function savePin(btn) {
+  var restoId = btn.getAttribute('data-id');
+  var restoNom = btn.getAttribute('data-nom');
+  var inp = document.getElementById('pin-edit-'+restoId);
+  var newPin = (inp.value||'').trim();
+  if(newPin.length !== 4 || isNaN(newPin)) {
+    notif('Le PIN doit etre exactement 4 chiffres','error'); return;
+  }
+  var {error} = await sb.from('restaurants').update({code_pin: newPin}).eq('id', restoId);
+  if(error){notif('Erreur: '+error.message,'error');return;}
+  // Update local state
+  var r = S.restos.find(function(x){return x.id===restoId;});
+  if(r) r.code_pin = newPin;
+  inp.value = '';
+  notif('PIN de '+restoNom+' mis a jour : '+newPin);
+  renderAdminRestos();
+}
+
+// ── TAB STYLE ──
+var tabStyle='.tab{padding:10px 18px;border:none;background:transparent;cursor:pointer;font-size:13px;color:#aaa;border-bottom:2px solid transparent;margin-bottom:-2px;font-weight:500;transition:all .15s}.tab:hover{color:#666}.tab.active{color:var(--dark);font-weight:700;border-bottom-color:var(--dark)}';
+var styleEl=document.createElement('style');styleEl.textContent=tabStyle;document.head.appendChild(styleEl);
+
+function applyAccessLevel() {
+  var adminEls = document.querySelectorAll('.admin-only');
+  adminEls.forEach(function(el) {
+    // Must set explicit value - '' would revert to CSS class 'none'
+    el.style.display = S.isAdmin ? 'flex' : 'none';
+    // nav-btn are flex, but regular divs need block
+    if(S.isAdmin && !el.classList.contains('nav-btn')) {
+      el.style.display = 'block';
+    }
+  });
+  var accueil = document.getElementById('nav-accueil');
+  if(accueil) accueil.style.display = S.isAdmin ? '' : 'none';
+  var footer = document.querySelector('.sidebar-footer');
+  if(footer) footer.style.display = S.isAdmin ? '' : 'none';
+  // Mobile: show hamburger, sidebar starts closed for employees on mobile
+  var isMobile = window.innerWidth <= 768;
+  var hbtn = document.getElementById('hamburger-btn');
+  var sidebar = document.querySelector('.sidebar');
+  if(isMobile) {
+    if(hbtn) hbtn.style.display = 'flex';
+    if(sidebar) sidebar.classList.remove('open');
+  } else {
+    if(hbtn) hbtn.style.display = 'none';
+    if(sidebar) sidebar.classList.add('open');
+  }
+}
+
+function toggleSidebar() {
+  var sidebar = document.querySelector('.sidebar');
+  if(sidebar) sidebar.classList.toggle('open');
+}
+
+function updateDateDisplay() {
+  var v = document.getElementById('saisie-date').value;
+  var el = document.getElementById('saisie-date-display');
+  if(!el) return;
+  if(!v) { el.textContent = '—'; return; }
+  var p = v.split('-');
+  var jours = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+  var mois = ['jan','fev','mar','avr','mai','juin','juil','aout','sep','oct','nov','dec'];
+  var d = new Date(v+'T12:00:00');
+  el.textContent = jours[d.getDay()]+' '+p[2]+' '+mois[d.getMonth()]+' '+p[0];
+}
+
+// ── MERCURIALE ──
+
+
+
+
+
+
+
+
+
+
+
+// ── LOGO ──
+var _logoFileData = null; // base64 of selected file
+
+async function loadLogo() {
+  var {data} = await sb.from('parametres').select('valeur').eq('cle','stock_logo').limit(1);
+  var url = data && data[0] ? data[0].valeur : '';
+  applyLogo(url);
+  var inp = document.getElementById('admin-logo-url');
+  if(inp && url && !url.startsWith('data:')) inp.value = url;
+}
+
+function applyLogo(url) {
+  var ids = [
+    ['saisie-logo-emoji','saisie-logo-img'],
+    ['admin-logo-emoji-prev','admin-logo-img-prev'],
+    ['pin-logo-emoji','pin-logo-img']
+  ];
+  ids.forEach(function(pair) {
+    var emoji = document.getElementById(pair[0]);
+    var img = document.getElementById(pair[1]);
+    if(url && url.trim()) {
+      if(emoji) emoji.style.display = 'none';
+      if(img) { img.src = url; img.style.display = 'block'; }
+    } else {
+      if(emoji) emoji.style.display = '';
+      if(img) img.style.display = 'none';
+    }
+  });
+  // Also update PIN name: hide "Raya" text when logo image is shown
+  var pinName = document.getElementById('pin-logo-name');
+  if(pinName) pinName.style.display = (url && url.trim()) ? 'none' : 'block';
+}
+
+function previewLogo(input) {
+  var file = input.files[0];
+  if(!file) return;
+  var label = document.getElementById('admin-logo-file-label');
+  var status = document.getElementById('admin-logo-status');
+  var saveBtn = document.getElementById('admin-logo-save-btn');
+  if(file.size > 500000) {
+    if(status) status.textContent = 'Fichier trop lourd (max 500ko). Compresser le logo.';
+    if(status) status.style.color = '#c62828';
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _logoFileData = e.target.result; // base64 data URL
+    applyLogo(_logoFileData);
+    if(label) label.textContent = file.name;
+    if(status) { status.textContent = 'Pret a enregistrer'; status.style.color = '#2e7d32'; }
+    if(saveBtn) saveBtn.disabled = false;
+  };
+  reader.readAsDataURL(file);
+}
+
+function previewLogoUrl(url) {
+  if(url && url.startsWith('http')) applyLogo(url);
+}
+
+async function saveLogo() {
+  var status = document.getElementById('admin-logo-status');
+  var urlInput = document.getElementById('admin-logo-url');
+  // Priority: file upload > URL input
+  var logoVal = _logoFileData || (urlInput ? urlInput.value.trim() : '');
+  if(status) { status.textContent = 'Enregistrement...'; status.style.color = '#888'; }
+  var {error} = await sb.from('parametres').upsert({cle:'stock_logo', valeur:logoVal},{onConflict:'cle'});
+  if(error) {
+    if(status) { status.textContent = 'Erreur: '+error.message; status.style.color='#c62828'; }
+    notif('Erreur','error'); return;
+  }
+  applyLogo(logoVal);
+  _logoFileData = null;
+  var saveBtn = document.getElementById('admin-logo-save-btn');
+  if(saveBtn) saveBtn.disabled = true;
+  if(status) { status.textContent = 'Logo mis a jour !'; status.style.color = '#2e7d32'; }
+  notif('Logo mis a jour');
+}
+
+// ── COMMENTAIRES ──
+async function renderComments() {
+  var restoId = (document.getElementById('sc-resto')||{value:''}).value;
+  var dateFrom = (document.getElementById('sc-date-from')||{value:''}).value;
+  var dateTo = (document.getElementById('sc-date-to')||{value:''}).value;
+  // Populate resto select
+  var sel = document.getElementById('sc-resto');
+  if(sel && sel.options.length <= 1) {
+    sel.innerHTML = '<option value="">Tous les restaurants</option>' +
+      S.restos.map(function(r){return '<option value="'+r.id+'">'+r.nom+'</option>';}).join('');
+  }
+  var q = sb.from('stock_commentaires').select('*').order('date_saisie', {ascending:false}).order('created_at', {ascending:false});
+  if(restoId) q = q.eq('restaurant_id', restoId);
+  if(dateFrom) q = q.gte('date_saisie', dateFrom);
+  if(dateTo) q = q.lte('date_saisie', dateTo);
+  var {data} = await q.limit(100);
+  var rows = data || [];
+  var tbody = document.getElementById('sc-list');
+  var empty = document.getElementById('sc-empty');
+  if(!rows.length) { tbody.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display='none';
+  tbody.innerHTML = rows.map(function(c) {
+    var resto = S.restos.find(function(r){return r.id===c.restaurant_id;});
+    var dp = c.date_saisie ? c.date_saisie.split('-') : ['','',''];
+    return '<tr>'+
+      '<td style="white-space:nowrap;font-size:12px;color:#888">'+dp[2]+'/'+dp[1]+'/'+dp[0]+'</td>'+
+      '<td style="font-size:12px;color:#666;white-space:nowrap">'+(resto?resto.nom.replace('Raya ',''):'?')+'</td>'+
+      '<td style="font-size:13px">'+c.commentaire+'</td>'+
+    '</tr>';
+  }).join('');
+}
+
+// ── HISTORIQUE ──
+var _histoProdId = null;
+
+function ouvrirHistorique(prodId, prodNom) {
+  _histoProdId = prodId;
+  document.getElementById('mh-titre').textContent = prodNom;
+  // Populate resto select
+  var sel = document.getElementById('mh-resto');
+  sel.innerHTML = '<option value="">Tous les restaurants</option>' +
+    S.restos.map(function(r){return '<option value="'+r.id+'">'+r.nom+'</option>';}).join('');
+  openModal('modal-historique');
+  loadHistorique();
+}
+
+async function loadHistorique() {
+  if(!_histoProdId) return;
+  var restoId = document.getElementById('mh-resto').value;
+  var jours = parseInt(document.getElementById('mh-jours').value)||14;
+  var tbody = document.getElementById('mh-tbody');
+  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#bbb;padding:20px">Chargement...</td></tr>';
+
+  // Compute date range
+  var dates = [];
+  for(var i=jours-1;i>=0;i--) {
+    var d = new Date(); d.setDate(d.getDate()-i);
+    dates.push(d.toISOString().split('T')[0]);
+  }
+
+  // Fetch saisies for this product
+  var q = sb.from('stock_saisies').select('*').eq('produit_id',_histoProdId)
+    .gte('date_saisie', dates[0]).lte('date_saisie', dates[dates.length-1]);
+  if(restoId) q = q.eq('restaurant_id', restoId);
+  var {data} = await q;
+  var saisies = data || [];
+
+  // Get restos to display
+  var restoFilter = restoId ? S.restos.filter(function(r){return r.id===restoId;}) : S.restos;
+
+  // Build data matrix: date -> resto -> quantite
+  var matrix = {};
+  dates.forEach(function(d){ matrix[d] = {}; });
+  saisies.forEach(function(s){ if(matrix[s.date_saisie]) matrix[s.date_saisie][s.restaurant_id] = s.quantite; });
+
+  // Get max for each resto for context
+  var maxMap = {};
+  restoFilter.forEach(function(r){
+    var m = S.maxes.find(function(x){return x.restaurant_id===r.id&&x.produit_id===_histoProdId;});
+    maxMap[r.id] = m ? m.quantite_max : 0;
+  });
+
+  // Table headers
+  document.getElementById('mh-th-restos').outerHTML = restoFilter.map(function(r){
+    return '<th style="text-align:right">'+r.nom.replace('Raya ','')+'<br><small style="color:#bbb;font-weight:400">Max:'+fmn(maxMap[r.id])+'</small></th>';
+  }).join('');
+
+  // Table rows
+  tbody.innerHTML = dates.slice().reverse().map(function(d){
+    var cells = restoFilter.map(function(r){
+      var q = matrix[d][r.id];
+      var max = maxMap[r.id];
+      var pct = (q!=null&&max>0) ? (q/max*100) : null;
+      var color = pct==null?'#ccc':pct<20?'#c62828':pct<50?'#ff9800':'#2e7d32';
+      var val = q!=null ? '<span style="font-weight:600;color:'+color+'">'+fmn(q)+'</span>' : '<span style="color:#ddd">—</span>';
+      return '<td style="text-align:right">'+val+'</td>';
+    }).join('');
+    var dp = d.split('-'); var df = dp[2]+'/'+dp[1];
+    return '<tr><td style="font-size:12px;color:#888;white-space:nowrap">'+df+'</td>'+cells+'</tr>';
+  }).join('');
+
+  // Draw simple canvas chart
+  drawHistoChart(dates, restoFilter, matrix, maxMap);
+}
+
+function drawHistoChart(dates, restos, matrix, maxMap) {
+  var canvas = document.getElementById('mh-canvas');
+  if(!canvas) return;
+  canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+  canvas.height = 220 * window.devicePixelRatio;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  var W = canvas.offsetWidth, H = 220;
+  ctx.clearRect(0,0,W,H);
+
+  var pad = {top:16,right:16,bottom:28,left:32};
+  var gW = W-pad.left-pad.right, gH = H-pad.top-pad.bottom;
+  var colors = ['#c8651a','#1a1a2e','#2e7d32','#1565c0'];
+
+  // Find max value
+  var allVals = [];
+  dates.forEach(function(d){ restos.forEach(function(r){ var v=matrix[d][r.id]; if(v!=null) allVals.push(v); }); });
+  var maxVal = Math.max.apply(null, allVals.concat(Object.values(maxMap)));
+  if(!maxVal) maxVal = 1;
+
+  // Draw grid
+  ctx.strokeStyle='#f0f0ee'; ctx.lineWidth=1;
+  for(var i=0;i<=4;i++) {
+    var y = pad.top + gH - (i/4)*gH;
+    ctx.beginPath(); ctx.moveTo(pad.left,y); ctx.lineTo(pad.left+gW,y); ctx.stroke();
+    ctx.fillStyle='#bbb'; ctx.font='10px sans-serif'; ctx.textAlign='right';
+    ctx.fillText(Math.round(maxVal*i/4), pad.left-4, y+3);
+  }
+
+  // Draw lines per resto
+  restos.forEach(function(r, ri) {
+    var pts = dates.map(function(d,i){
+      var v = matrix[d][r.id];
+      if(v==null) return null;
+      return {x: pad.left + (i/(dates.length-1||1))*gW, y: pad.top + gH - (v/maxVal)*gH};
+    });
+    ctx.strokeStyle = colors[ri%colors.length];
+    ctx.lineWidth = 2; ctx.beginPath();
+    var started = false;
+    pts.forEach(function(p){
+      if(!p) return;
+      if(!started){ ctx.moveTo(p.x,p.y); started=true; } else { ctx.lineTo(p.x,p.y); }
+    });
+    ctx.stroke();
+    // Dots
+    pts.forEach(function(p){
+      if(!p) return;
+      ctx.fillStyle = colors[ri%colors.length];
+      ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
+    });
+  });
+
+  // X labels (first, middle, last)
+  ctx.fillStyle='#aaa'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+  [0, Math.floor(dates.length/2), dates.length-1].forEach(function(i){
+    var d=dates[i]; if(!d) return;
+    var dp=d.split('-'); var df=dp[2]+'/'+dp[1];
+    var x = pad.left + (i/(dates.length-1||1))*gW;
+    ctx.fillText(df, x, H-6);
+  });
+
+  // Legend
+  ctx.textAlign='left'; ctx.font='11px sans-serif';
+  restos.forEach(function(r,ri){
+    ctx.fillStyle=colors[ri%colors.length];
+    ctx.fillRect(pad.left+ri*110, 2, 12, 8);
+    ctx.fillText(r.nom.replace('Raya ',''), pad.left+ri*110+16, 10);
+  });
+}
+
+// ── START ──
+document.addEventListener('click', function(e) {
+  var el = e.target.closest('.histo-link');
+  if(el) ouvrirHistorique(el.dataset.pid, el.dataset.nom);
+});
+initPin();
+
+
+
+
+// ── MERCURIALE ──
+function openMercurialeModal() {
+  var sel = document.getElementById('merc-cat-filter');
+  sel.innerHTML = '<option value="">Toutes les categories</option>';
+  var cats = [...new Set(S.sproducts.filter(function(p){return p.actif;}).map(function(p){return p.categorie;}))].sort();
+  cats.forEach(function(c){ var o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
+  document.getElementById('modal-mercuriale').style.display = 'flex';
+}
+
+function lancerMercuriale() {
+  var format   = document.querySelector('input[name="merc-format"]:checked').value;
+  var fourn    = document.querySelector('input[name="merc-fourn"]:checked').value;
+  var showPrix = document.getElementById('merc-col-prix').checked;
+  var showCond = document.getElementById('merc-col-cond').checked;
+  var showGram = document.getElementById('merc-col-gram').checked;
+  var showCat  = document.getElementById('merc-col-cat').checked;
+  var catFilter = document.getElementById('merc-cat-filter').value;
+  var prods = S.sproducts.filter(function(p){ return p.actif && (!catFilter||p.categorie===catFilter); });
+  document.getElementById('modal-mercuriale').style.display = 'none';
+  if(format === 'excel') { mercExcel(prods,fourn,showPrix,showCond,showGram,showCat); }
+  else { mercPDF(prods,fourn,showPrix,showCond,showGram,showCat); }
+}
+
+function mercPDF(prods, fourn, showPrix, showCond, showGram, showCat) {
+  var nbF = fourn==='tous'?3:fourn==='principal'?1:0;
+  var fLbl = ['Principal','Secondaire','Secours'];
+  var th = '<th>Produit</th>';
+  if(showCat)  th += '<th>Categorie</th>';
+  if(showCond) th += '<th>Conditionnement</th>';
+  if(showGram) th += '<th>Grammage</th>';
+  for(var fi=0;fi<nbF;fi++){ th+='<th>Fourn. '+fLbl[fi]+'</th>'; if(showPrix) th+='<th>Prix HT</th>'; }
+  var cols = 1+(showCat?1:0)+(showCond?1:0)+(showGram?1:0)+nbF*(1+(showPrix?1:0));
+  var cats = {};
+  prods.forEach(function(p){ if(!cats[p.categorie])cats[p.categorie]=[]; cats[p.categorie].push(p); });
+  var tbody = '';
+  Object.keys(cats).sort().forEach(function(cat){
+    tbody += '<tr style="background:#1a1a2e"><td colspan="'+cols+'" style="color:#c8a035;font-weight:700;padding:8px 10px">'+cat.toUpperCase()+'</td></tr>';
+    cats[cat].forEach(function(p){
+      var fids=[p.fournisseur_principal_id,p.fournisseur_secondaire_id,p.fournisseur_secours_id];
+      var fpx=[p.prix_fourn1,p.prix_fourn2,p.prix_fourn3];
+      var r='<tr><td style="font-weight:500">'+p.nom+'</td>';
+      if(showCat)  r+='<td>'+p.categorie+'</td>';
+      if(showCond) r+='<td>'+p.conditionnement+'</td>';
+      if(showGram) r+='<td>'+(p.grammage?p.grammage+' '+(p.unite||''):'')+'</td>';
+      for(var fi=0;fi<nbF;fi++){
+        var fn=fids[fi]?(S.fournisseurs.find(function(f){return f.id===fids[fi];})||{nom:''}).nom:'';
+        var px=fpx[fi];
+        r+='<td>'+fn+'</td>';
+        if(showPrix) r+='<td style="text-align:right">'+(px>0?px.toFixed(3)+' EUR':'')+'</td>';
+      }
+      tbody+=r+'</tr>';
+    });
+  });
+  var d=new Date().toLocaleDateString('fr-FR');
+  var html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Mercuriale</title><style>'
+    +'*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:11px}'
+    +'.h{background:#1a1a2e;padding:16px 20px;display:flex;justify-content:space-between;margin-bottom:14px}'
+    +'.h h1{color:#c8a035;font-size:17px;margin:0}.h span{color:#aaa;font-size:10px;align-self:center}'
+    +'table{width:100%;border-collapse:collapse}'
+    +'th{background:#f5f5f0;padding:6px 10px;font-size:10px;text-align:left;border-bottom:2px solid #ddd}'
+    +'td{padding:5px 10px;border-bottom:1px solid #f0f0ee}'
+    +'@page{size:A4 landscape;margin:8mm}'
+    +'@media print{.h,.h *,tr[style]{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
+    +'</style></head><body>'
+    +'<div class="h"><h1>Mercuriale Raya Group</h1><span>'+d+'</span></div>'
+    +'<table><thead><tr>'+th+'</tr></thead><tbody>'+tbody+'</tbody></table>'
+    +'</body></html>';
+  var w=window.open('','_blank');
+  if(w){w.document.write(html);w.document.close();}
+}
+
+function mercExcel(prods, fourn, showPrix, showCond, showGram, showCat) {
+  var nbF=fourn==='tous'?3:fourn==='principal'?1:0;
+  var fLbl=['Principal','Secondaire','Secours'];
+  var headers=['Produit'];
+  if(showCat)  headers.push('Categorie');
+  if(showCond) headers.push('Conditionnement');
+  if(showGram) headers.push('Grammage','Unite');
+  for(var fi=0;fi<nbF;fi++){ headers.push('Fournisseur '+fLbl[fi]); if(showPrix) headers.push('Prix HT '+fLbl[fi]); }
+  var rows=[headers];
+  prods.forEach(function(p){
+    var fids=[p.fournisseur_principal_id,p.fournisseur_secondaire_id,p.fournisseur_secours_id];
+    var fpx=[p.prix_fourn1,p.prix_fourn2,p.prix_fourn3];
+    var row=[p.nom];
+    if(showCat)  row.push(p.categorie||'');
+    if(showCond) row.push(p.conditionnement||'');
+    if(showGram) { row.push(p.grammage||''); row.push(p.unite||''); }
+    for(var fi=0;fi<nbF;fi++){
+      var fn=fids[fi]?(S.fournisseurs.find(function(f){return f.id===fids[fi];})||{nom:''}).nom:'';
+      row.push(fn); if(showPrix) row.push(fpx[fi]||'');
+    }
+    rows.push(row);
+  });
+  var lines=rows.map(function(r){ return r.map(function(c){ return '"'+String(c).replace(/"/g,'""')+'"'; }).join(';'); });
+  var csv='﻿'+lines.join('\n');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='mercuriale_'+new Date().toISOString().split('T')[0]+'.csv';
+  a.click(); URL.revokeObjectURL(url);
+  notif('Mercuriale Excel telechargee');
+}
+
+// ── NOTIFICATIONS ──
+async function loadNotifParams() {
+  try {
+    var {data} = await sb.from('parametres_notifs').select('*').limit(1).single();
+    if(!data) return;
+    var em = document.getElementById('notif-email');
+    var he = document.getElementById('notif-heure');
+    var ac = document.getElementById('notif-active');
+    if(em) em.value = data.email_destinataire || '';
+    if(he) he.value = data.heure_limite ? data.heure_limite.slice(0,5) : '22:00';
+    if(ac) ac.checked = data.email_active !== false;
+  } catch(e) {}
+}
+
+async function saveNotifParams() {
+  var email  = (document.getElementById('notif-email').value||'').trim();
+  var heure  = document.getElementById('notif-heure').value || '22:00';
+  var active = document.getElementById('notif-active').checked;
+  var status = document.getElementById('notif-status');
+  if(!email) { notif('Email requis','error'); return; }
+  var {data: ex} = await sb.from('parametres_notifs').select('id').limit(1).single();
+  var err;
+  if(ex) {
+    var r = await sb.from('parametres_notifs').update({email_destinataire:email,heure_limite:heure,email_active:active,updated_at:new Date().toISOString()}).eq('id',ex.id);
+    err = r.error;
+  } else {
+    var r = await sb.from('parametres_notifs').insert({email_destinataire:email,heure_limite:heure,email_active:active});
+    err = r.error;
+  }
+  if(err) { notif('Erreur: '+err.message,'error'); return; }
+  if(status) { status.textContent = 'Sauvegarde !'; status.style.color='#2e7d32'; }
+  notif('Parametres notifs sauvegardes');
+}
+
+async function renderNotifStatut() {
+  var el = document.getElementById('notif-statut-list');
+  if(!el) return;
+  var today = new Date().toISOString().split('T')[0];
+  var {data: saisies} = await sb.from('stock_saisies').select('restaurant_id').eq('date_saisie',today);
+  var saisisIds = new Set((saisies||[]).map(function(s){return s.restaurant_id;}));
+  el.innerHTML = S.restos.map(function(r) {
+    var ok = saisisIds.has(r.id);
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0">'
+      +'<span style="font-size:18px">'+(ok?'✅':'⏳')+'</span>'
+      +'<span style="flex:1;font-weight:500">'+r.nom+'</span>'
+      +'<span style="font-size:12px;color:'+(ok?'#2e7d32':'#e65100')+'">'+(ok?'Validee':'En attente')+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+async function testNotif() {
+  var btn = document.getElementById('btn-test-notif');
+  var status = document.getElementById('notif-status');
+  var email = (document.getElementById('notif-email').value||'').trim();
+  if(!email) { notif('Saisis d abord un email','error'); return; }
+  if(btn) { btn.textContent = 'Envoi en cours...'; btn.disabled = true; }
+  if(status) { status.textContent = 'Appel en cours...'; status.style.color='#888'; }
+  try {
+    var res = await fetch('https://ynnqvtfayrdteqtgxeuk.supabase.co/functions/v1/clever-responder', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({test:true, email:email})
+    });
+    var data = await res.json();
+    if(data.sent) {
+      if(status) { status.textContent = 'Email envoye a '+email+' !'; status.style.color='#2e7d32'; }
+      notif('Email de test envoye !');
+    } else {
+      if(status) { status.textContent = 'Reponse: '+JSON.stringify(data); status.style.color='#c62828'; }
+    }
+  } catch(e) {
+    if(status) { status.textContent = 'Erreur: '+e.message; status.style.color='#c62828'; }
+    notif('Erreur connexion','error');
+  }
+  if(btn) { btn.textContent = "📧 Tester l'envoi"; btn.disabled = false; }
+}
+
+// ── NOTIF VALIDATION TEMPS REEL ──
+async function envoyerNotifValidation(restoId, date, nbProduits, commentaire) {
+  try {
+    var {data: params} = await sb.from('parametres_notifs').select('*').limit(1).single();
+    if(!params || !params.email_active || !params.email_destinataire) {
+      console.log('[NOTIF] Desactivee ou pas email configure');
+      return;
+    }
+    var resto = S.restos.find(function(r){return r.id===restoId;}) || {nom:'Inconnu'};
+    var heure = new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    console.log('[NOTIF] Envoi pour '+resto.nom+' vers '+params.email_destinataire);
+    var res = await fetch('https://ynnqvtfayrdteqtgxeuk.supabase.co/functions/v1/clever-responder', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        type: 'validation',
+        email: params.email_destinataire,
+        resto: resto.nom,
+        nbProduits: nbProduits,
+        heure: heure,
+        date: date,
+        commentaire: commentaire||''
+      })
+    });
+    var data = await res.json();
+    console.log('[NOTIF] Reponse:', JSON.stringify(data));
+    if(data.sent) notif('Email notif envoye');
+  } catch(e) {
+    console.error('[NOTIF] Erreur:', e.message);
+  }
+}
+</script>
+
+
+<!-- Modal Mercuriale -->
+<div id="modal-mercuriale" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;backdrop-filter:blur(3px);align-items:center;justify-content:center;padding:20px;box-sizing:border-box" onclick="if(event.target===this)document.getElementById('modal-mercuriale').style.display='none'">
+  <div style="background:#fff;border-radius:16px;padding:26px;width:100%;max-width:420px;box-shadow:0 24px 80px rgba(0,0,0,.25);max-height:90vh;overflow-y:auto;box-sizing:border-box">
+
+    <div style="font-size:17px;font-weight:700;margin-bottom:20px">📊 Exporter la Mercuriale</div>
+
+    <!-- FORMAT -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;color:#999;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">Format</div>
+      <div style="display:flex;gap:10px">
+        <label style="flex:1;border:2px solid #c8a035;border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;box-sizing:border-box">
+          <input type="radio" name="merc-format" value="pdf" checked style="width:auto;flex-shrink:0;margin:0;padding:0;border:none;background:none">
+          📄 PDF
+        </label>
+        <label style="flex:1;border:2px solid #ddd;border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;box-sizing:border-box">
+          <input type="radio" name="merc-format" value="excel" style="width:auto;flex-shrink:0;margin:0;padding:0;border:none;background:none">
+          📊 Excel
+        </label>
+      </div>
+    </div>
+
+    <!-- FOURNISSEURS -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;color:#999;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">Fournisseurs</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:9px 12px;border-radius:8px;border:1px solid #e8e8e4;font-size:13px">
+          <input type="radio" name="merc-fourn" value="principal" checked style="width:auto;flex-shrink:0;margin:0;padding:0;border:none;background:none">
+          Principal uniquement
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:9px 12px;border-radius:8px;border:1px solid #e8e8e4;font-size:13px">
+          <input type="radio" name="merc-fourn" value="tous" style="width:auto;flex-shrink:0;margin:0;padding:0;border:none;background:none">
+          Tous (principal + secondaire + secours)
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:9px 12px;border-radius:8px;border:1px solid #e8e8e4;font-size:13px">
+          <input type="radio" name="merc-fourn" value="aucun" style="width:auto;flex-shrink:0;margin:0;padding:0;border:none;background:none">
+          Masquer les fournisseurs
+        </label>
+      </div>
+    </div>
+
+    <!-- COLONNES -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;color:#999;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">Colonnes visibles</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;border-radius:8px;border:1px solid #e8e8e4;font-size:13px">
+          <input type="checkbox" id="merc-col-prix" checked style="width:auto;flex-shrink:0;margin:0;padding:0"> Prix HT
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;border-radius:8px;border:1px solid #e8e8e4;font-size:13px">
+          <input type="checkbox" id="merc-col-cond" checked style="width:auto;flex-shrink:0;margin:0;padding:0"> Conditionnement
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;border-radius:8px;border:1px solid #e8e8e4;font-size:13px">
+          <input type="checkbox" id="merc-col-gram" checked style="width:auto;flex-shrink:0;margin:0;padding:0"> Grammage
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;border-radius:8px;border:1px solid #e8e8e4;font-size:13px">
+          <input type="checkbox" id="merc-col-cat" checked style="width:auto;flex-shrink:0;margin:0;padding:0"> Categorie
+        </label>
+      </div>
+    </div>
+
+    <!-- FILTRE CATEGORIE -->
+    <div style="margin-bottom:22px">
+      <div style="font-size:11px;color:#999;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">Filtrer par categorie</div>
+      <select id="merc-cat-filter" style="width:100%;padding:8px 11px;border:1px solid #ddd;border-radius:8px;font-size:13px;background:#fff;box-sizing:border-box"><option value="">Toutes les categories</option></select>
+    </div>
+
+    <!-- BOUTONS -->
+    <div style="display:flex;gap:10px">
+      <button onclick="document.getElementById('modal-mercuriale').style.display='none'" style="flex:1;padding:10px 16px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;font-weight:500">Annuler</button>
+      <button onclick="lancerMercuriale()" style="flex:2;padding:10px 16px;border-radius:8px;border:none;background:#1a1a2e;color:#fff;cursor:pointer;font-size:13px;font-weight:600">⬇️ Generer</button>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

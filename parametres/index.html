@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raya — Paramètres</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+a{color:var(--gold);text-decoration:none}
+.hidden{display:none!important}
+input,select,textarea,button{font-family:inherit;color:var(--text)}
+button{cursor:pointer;border:none;background:none}
+.btn{padding:10px 16px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px;border:none}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
+.btn.sm{padding:6px 12px;font-size:12px}
+
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px}
+.lock h1{color:var(--gold);font-size:22px}
+.lock input{padding:12px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:14px;width:280px;outline:none;text-align:center}
+.err{color:var(--bad);font-size:12px;min-height:16px}
+
+.header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--line)}
+.brand{color:var(--gold);font-weight:700;font-size:16px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+.wrap{max-width:880px;margin:0 auto;padding:24px 24px 60px}
+
+.section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:18px}
+.section h3{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;font-weight:600}
+.fld{margin-bottom:14px}
+.fld label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:6px;font-weight:500}
+.fld input,.fld textarea,.fld select{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13.5px;outline:none}
+.fld input:focus,.fld textarea:focus{border-color:var(--gold)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.color-picker{display:flex;align-items:center;gap:14px}
+.color-picker input[type=color]{width:60px;height:46px;padding:3px;cursor:pointer;border-radius:8px}
+.logo-preview{display:flex;align-items:center;gap:14px;background:var(--surface);padding:12px;border-radius:8px;border:1px solid var(--line-2)}
+.logo-preview img{max-height:60px;max-width:160px;background:#fff;border-radius:4px;padding:4px}
+
+table.perms{width:100%;border-collapse:collapse;font-size:12.5px}
+table.perms th,table.perms td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--line)}
+table.perms th{font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+table.perms td:first-child,table.perms th:first-child{text-align:left;font-weight:600}
+table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;border:1px solid var(--line-2);padding:11px 22px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:200}
+.toast.show{opacity:1}
+@media(max-width:600px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
+
+<div id="lock" class="lock">
+  <h1>Paramètres</h1>
+  <div style="color:var(--muted);font-size:13px">Réservé aux admins</div>
+  <input type="email" id="loginEmail" placeholder="Email">
+  <input type="password" id="loginPw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')login()">
+  <button class="btn" onclick="login()">Se connecter</button>
+  <div class="err" id="err"></div>
+  <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
+</div>
+
+<div id="app" class="hidden">
+  <div class="header">
+    <div class="brand">Raya <small>· Paramètres</small></div>
+    <div style="display:flex;gap:8px">
+      <a href="../" class="btn ghost">Portail</a>
+      <button class="btn ghost" onclick="logout()">↩</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <!-- IDENTITÉ -->
+    <div class="section">
+      <h3>Identité de l'organisation</h3>
+      <div class="fld"><label>Nom de l'organisation</label><input id="f_nom"></div>
+      <div class="fld">
+        <label>Logo</label>
+        <div class="logo-preview">
+          <div id="logoBox" style="width:80px;height:60px;background:#222;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px">Aucun</div>
+          <input type="file" id="logoFile" accept="image/png,image/jpeg,image/svg+xml" onchange="uploadLogo(event)" style="font-size:12px;color:var(--text)">
+          <button class="btn ghost sm" onclick="removeLogo()" id="rmLogoBtn" style="display:none">Retirer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- COULEURS -->
+    <div class="section">
+      <h3>Couleurs de l'interface</h3>
+      <div class="grid2">
+        <div class="fld">
+          <label>Couleur primaire (accents, boutons)</label>
+          <div class="color-picker"><input type="color" id="f_col1"><input type="text" id="f_col1_t" style="flex:1" oninput="document.getElementById('f_col1').value=this.value"></div>
+        </div>
+        <div class="fld">
+          <label>Couleur secondaire</label>
+          <div class="color-picker"><input type="color" id="f_col2"><input type="text" id="f_col2_t" style="flex:1" oninput="document.getElementById('f_col2').value=this.value"></div>
+        </div>
+      </div>
+      <div style="color:var(--muted);font-size:11.5px">Les couleurs s'appliquent au portail et progressivement aux autres modules.</div>
+    </div>
+
+    <!-- PERMISSIONS -->
+    <div class="section">
+      <h3>Accès aux modules par rôle</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Coche les rôles autorisés à voir chaque module dans le portail. <i>Super admin a toujours tous les accès.</i></div>
+      <table class="perms" id="permsTable"></table>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button class="btn" onclick="saveAll()">Enregistrer tous les paramètres</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+let ME=null,ORG=null;
+const MODULES_LIST=['salaries','planning','badgeuse','dispos','stock','facturation','parametres'];
+const MODULES_LBL={salaries:'Gestion Salariés',planning:'Planning',badgeuse:'Badgeuse',dispos:'Mes indispos',stock:'Stock',facturation:'Facturation',parametres:'Paramètres'};
+const ROLES=['admin','manager','salarie'];
+const ROLES_LBL={admin:'Admin',manager:'Manager',salarie:'Salarié'};
+
+let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
+
+async function login(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const password=document.getElementById('loginPw').value;
+  const{error}=await sb.auth.signInWithPassword({email,password});
+  if(error){document.getElementById('err').textContent=error.message;return;}
+  await loadProfileAndShow();
+}
+async function loadProfileAndShow(){
+  const{data:{session}}=await sb.auth.getSession();if(!session)return;
+  const{data:profile}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(!profile||!['admin','super_admin'].includes(profile.role)){document.getElementById('err').textContent='Accès refusé.';await sb.auth.signOut();return;}
+  ME=profile;
+  const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
+  ORG=org||{};
+  document.getElementById('lock').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  renderForm();
+}
+async function logout(){await sb.auth.signOut();location.reload();}
+sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();});
+
+function renderForm(){
+  document.getElementById('f_nom').value=ORG.nom||'';
+  document.getElementById('f_col1').value=ORG.couleur_primaire||'#c8a035';
+  document.getElementById('f_col1_t').value=ORG.couleur_primaire||'#c8a035';
+  document.getElementById('f_col2').value=ORG.couleur_secondaire||'#5b9cff';
+  document.getElementById('f_col2_t').value=ORG.couleur_secondaire||'#5b9cff';
+  if(ORG.logo_url){
+    document.getElementById('logoBox').innerHTML=`<img src="${ORG.logo_url}" style="max-width:80px;max-height:60px;border-radius:4px">`;
+    document.getElementById('rmLogoBtn').style.display='inline-block';
+  }
+  // Permissions matrix
+  const perms=ORG.permissions||{};
+  let html='<thead><tr><th>Module</th>';
+  ROLES.forEach(r=>html+=`<th>${ROLES_LBL[r]}</th>`);
+  html+='</tr></thead><tbody>';
+  MODULES_LIST.forEach(m=>{
+    const allowed=perms[m]||[];
+    const isStar=allowed.includes('*');
+    html+=`<tr><td>${MODULES_LBL[m]}</td>`;
+    ROLES.forEach(r=>{
+      const checked=isStar||allowed.includes(r);
+      html+=`<td><input type="checkbox" data-m="${m}" data-r="${r}" ${checked?'checked':''}></td>`;
+    });
+    html+='</tr>';
+  });
+  html+='</tbody>';
+  document.getElementById('permsTable').innerHTML=html;
+}
+
+async function uploadLogo(ev){
+  const f=ev.target.files[0];if(!f)return;
+  if(f.size>2*1024*1024){toast('Logo > 2 Mo');return;}
+  const path=`${ORG.id}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+  const{error}=await sb.storage.from('org-logos').upload(path,f,{contentType:f.type,upsert:true});
+  if(error){toast('Upload: '+error.message);return;}
+  const{data}=sb.storage.from('org-logos').getPublicUrl(path);
+  ORG.logo_url=data.publicUrl;
+  document.getElementById('logoBox').innerHTML=`<img src="${ORG.logo_url}" style="max-width:80px;max-height:60px;border-radius:4px">`;
+  document.getElementById('rmLogoBtn').style.display='inline-block';
+  toast('Logo chargé — n\'oublie pas d\'enregistrer');
+}
+function removeLogo(){ORG.logo_url=null;document.getElementById('logoBox').innerHTML='<span style="color:var(--muted);font-size:11px">Aucun</span>';document.getElementById('rmLogoBtn').style.display='none';}
+
+async function saveAll(){
+  // Construire les permissions à partir des cases cochées
+  const newPerms={};
+  MODULES_LIST.forEach(m=>{newPerms[m]=[];});
+  document.querySelectorAll('#permsTable input[type=checkbox]:checked').forEach(cb=>{newPerms[cb.dataset.m].push(cb.dataset.r);});
+  const payload={
+    nom:document.getElementById('f_nom').value.trim()||ORG.nom,
+    logo_url:ORG.logo_url,
+    couleur_primaire:document.getElementById('f_col1').value,
+    couleur_secondaire:document.getElementById('f_col2').value,
+    permissions:newPerms
+  };
+  const{error}=await sb.from('organizations').update(payload).eq('id',ORG.id);
+  if(error){toast('Erreur: '+error.message);return;}
+  Object.assign(ORG,payload);
+  toast('Paramètres enregistrés ✓');
+}
+</script>
+</body>
+</html>

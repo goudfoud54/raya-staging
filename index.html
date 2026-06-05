@@ -87,12 +87,17 @@ const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 let ME=null;
 
 const MODULES=[
-  {id:'salaries',ic:'👥',nm:'Gestion Salariés',ds:'Fiches, dispos, contraintes, docs',roles:['super_admin','admin']},
-  {id:'planning',ic:'📅',nm:'Planning',ds:'Grille hebdo, auto-fill, vérifs',roles:['super_admin','admin','manager']},
-  {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Kiosk de pointage (1 par snack)',roles:['*']},
-  {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes',roles:['*']}
+  {id:'salaries',ic:'👥',nm:'Gestion Salariés',ds:'Fiches, dispos, contraintes, docs'},
+  {id:'planning',ic:'📅',nm:'Planning',ds:'Grille hebdo, auto-fill, vérifs'},
+  {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Kiosk de pointage (1 par snack)'},
+  {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes'},
+  {id:'stock',ic:'📦',nm:'Stock',ds:'Inventaire, fournisseurs, feuille de besoin'},
+  {id:'facturation',ic:'🧾',nm:'Facturation',ds:'BL, factures, suivi des paiements'},
+  {id:'parametres',ic:'⚙',nm:'Paramètres',ds:'Identité, couleurs, accès, permissions'}
 ];
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
+// Defaults si org.permissions absent
+const DEFAULT_PERMS={salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],stock:['admin','manager'],facturation:['admin'],parametres:['admin']};
 
 function showSignup(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Créer un compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
 function showLogin(){document.getElementById('signupBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
@@ -117,12 +122,21 @@ async function signup(){
   await sb.auth.signInWithPassword({email,password});
   await loadProfileAndShow();
 }
+let ORG=null;
 async function loadProfileAndShow(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session)return;
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
-  ME=profile;showApp();
+  ME=profile;
+  // Charge l'org pour le thème + permissions
+  const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
+  ORG=org||{};
+  applyTheme();
+  showApp();
+}
+function applyTheme(){
+  if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
 }
 async function logout(){await sb.auth.signOut();ME=null;location.reload();}
 
@@ -133,7 +147,16 @@ function showApp(){
   document.getElementById('userEmail').textContent=ME.email||'';
   document.getElementById('userRole').textContent=ROLE_LBL[ME.role]||ME.role;
   document.getElementById('userAv').textContent=(ME.full_name||ME.email||'?').charAt(0).toUpperCase();
-  const allowed=MODULES.filter(m=>m.roles.includes('*')||m.roles.includes(ME.role));
+  // Logo (remplace l'avatar si défini)
+  if(ORG.logo_url){document.getElementById('userAv').innerHTML=`<img src="${ORG.logo_url}" style="max-width:32px;max-height:32px;border-radius:50%">`;}
+  // Permissions depuis l'org (ou defaults)
+  const perms=ORG.permissions||DEFAULT_PERMS;
+  const isSuper=ME.role==='super_admin';
+  const allowed=MODULES.filter(m=>{
+    if(isSuper)return true;
+    const rs=perms[m.id]||[];
+    return rs.includes('*')||rs.includes(ME.role);
+  });
   document.getElementById('modules').innerHTML=allowed.map(m=>`<a class="card" href="${m.id}/"><div class="ic">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds">${m.ds}</div></a>`).join('')||'<div style="color:var(--muted);text-align:center;padding:30px">Aucun module accessible avec ton rôle.</div>';
 }
 
