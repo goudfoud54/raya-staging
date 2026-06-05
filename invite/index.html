@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Invitation — Raya</title>
+<title>Invitation — Eatime360</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -26,7 +26,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;ba
 </head>
 <body>
 <div class="card">
-  <div class="logo">Raya<small>Invitation</small></div>
+  <div class="logo">Eatime360<small>Invitation</small></div>
   <div id="content"><div style="text-align:center;color:var(--muted);padding:20px">Chargement de l'invitation…</div></div>
 </div>
 <script>
@@ -40,14 +40,17 @@ async function init(){
   const params=new URLSearchParams(location.search);
   const token=params.get('token');
   if(!token){show('<div class="err">Lien d\'invitation invalide.</div>');return;}
-  const{data:inv,error}=await sb.from('invitations').select('*,organizations(nom)').eq('token',token).maybeSingle();
-  if(error||!inv){show('<div class="err">Invitation introuvable ou expirée.</div>');return;}
+  const{data:inv,error}=await sb.rpc('get_invitation_public',{p_token:token});
+  if(error){show('<div class="err">Erreur: '+error.message+'</div>');return;}
+  if(!inv){show('<div class="err">Invitation introuvable ou expirée.</div>');return;}
   if(inv.accepted_at){show('<div class="ok">✓ Invitation déjà acceptée.<br><br><a href="../" style="color:var(--gold)">Se connecter</a></div>');return;}
   if(inv.expires_at && new Date(inv.expires_at)<new Date()){show('<div class="err">Cette invitation a expiré.</div>');return;}
+  inv.token=token;
   INVITE=inv;
+  if(inv.org_couleur_primaire) document.documentElement.style.setProperty('--gold',inv.org_couleur_primaire);
   show(`
     <div class="invitee">
-      Tu as été invité à rejoindre <b>${inv.organizations.nom}</b> en tant que <span class="tag">${ROLE_LBL[inv.role]}</span>
+      Tu as été invité à rejoindre <b>${inv.org_nom}</b> en tant que <span class="tag">${ROLE_LBL[inv.role]}</span>
     </div>
     <div class="fld"><label>Nom complet</label><input type="text" id="name"></div>
     <div class="fld"><label>Email (de l'invitation)</label><input type="email" id="email" value="${inv.email}" readonly style="opacity:.6"></div>
@@ -70,7 +73,7 @@ async function accept(){
   if(error){document.getElementById('err').textContent=error.message;return;}
   // Auto-login + redirection
   await sb.auth.signInWithPassword({email:INVITE.email,password:pw});
-  show(`<div class="ok">✓ Compte créé !<br><br>Bienvenue dans <b>${INVITE.organizations.nom}</b>.<br><br><a href="../" style="color:var(--gold);font-weight:700">Accéder au tableau de bord →</a></div>`);
+  show(`<div class="ok">✓ Compte créé !<br><br>Bienvenue dans <b>${INVITE.org_nom}</b>.<br><br><a href="../" style="color:var(--gold);font-weight:700">Accéder au tableau de bord →</a></div>`);
 }
 init();
 </script>
