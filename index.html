@@ -77,7 +77,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
   <div class="modules" id="modules"></div>
-  <div class="footer">Eatime360 · v1.6 · module HACCP + MCP OAuth</div>
+  <div class="footer">Eatime360 · v1.7 · module Finance complet</div>
 </div>
 
 <script>
@@ -93,13 +93,14 @@ const MODULES=[
   {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes'},
   {id:'haccp',ic:'🌡',nm:'HACCP',ds:'T°, huiles, réception, nettoyage'},
   {id:'haccp-kiosk',ic:'📱',nm:'HACCP Kiosque',ds:'Saisie terrain par PIN salarié'},
+  {id:'finance',ic:'📈',nm:'Finance',ds:'CA, dépenses, trésorerie, marge'},
   {id:'stock',ic:'📦',nm:'Stock',ds:'Inventaire, fournisseurs, feuille de besoin'},
   {id:'facturation',ic:'🧾',nm:'Facturation',ds:'BL, factures, suivi des paiements'},
   {id:'parametres',ic:'⚙',nm:'Paramètres',ds:'Identité, couleurs, accès, permissions'}
 ];
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
 // Defaults si org.permissions absent
-const DEFAULT_PERMS={salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager','salarie'],'haccp-kiosk':['*'],stock:['admin','manager'],facturation:['admin'],parametres:['admin']};
+const DEFAULT_PERMS={salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager','salarie'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],facturation:['admin'],parametres:['admin']};
 
 function showSignup(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Créer un compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
 function showLogin(){document.getElementById('signupBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}

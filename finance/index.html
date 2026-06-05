@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eatime360 — Finance</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+a{color:var(--gold);text-decoration:none}
+.hidden{display:none!important}
+input,select,textarea,button{font-family:inherit;color:var(--text)}
+button{cursor:pointer;border:none;background:none}
+.btn{padding:9px 14px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px;border:none;display:inline-flex;align-items:center;gap:6px}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
+.btn.bad{background:var(--bad);color:#fff}
+.btn.ok{background:var(--ok);color:#111}
+.btn.sm{padding:6px 11px;font-size:12px}
+
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px}
+.lock h1{color:var(--gold);font-size:22px}
+.lock input{padding:12px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:14px;width:280px;outline:none;text-align:center}
+.err{color:var(--bad);font-size:12px;min-height:16px}
+
+.header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:10px}
+.brand{color:var(--gold);font-weight:700;font-size:16px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+
+.tabs{display:flex;gap:2px;padding:0 24px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tabs button{padding:11px 16px;border-bottom:2px solid transparent;color:var(--muted);font-weight:600;font-size:13px;white-space:nowrap}
+.tabs button.active{color:var(--gold);border-color:var(--gold)}
+.tabs button:hover{color:var(--text)}
+
+.wrap{max-width:1400px;margin:0 auto;padding:24px 24px 60px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
+.toolbar select,.toolbar input{padding:8px 12px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;outline:none}
+
+.grid{display:grid;gap:14px}
+.grid.cards{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+.kpi .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.kpi .val{font-size:28px;font-weight:800;margin-top:6px}
+.kpi .sub{color:var(--muted);font-size:11.5px;margin-top:4px}
+.kpi.ok .val{color:var(--ok)} .kpi.bad .val{color:var(--bad)} .kpi.warn .val{color:var(--warn)} .kpi.info .val{color:var(--info)}
+
+table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+table.tbl th,table.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+table.tbl th{font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;background:var(--surface)}
+table.tbl tr:last-child td{border-bottom:none}
+table.tbl tr:hover{background:rgba(255,255,255,.02)}
+table.tbl tfoot td{background:var(--surface);font-weight:700}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase}
+.badge.ok{background:rgba(63,184,127,.15);color:var(--ok)}
+.badge.bad{background:rgba(196,90,90,.15);color:var(--bad)}
+.badge.warn{background:rgba(224,169,58,.15);color:var(--warn)}
+.badge.info{background:rgba(91,156,255,.15);color:var(--info)}
+
+.section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+.section h3{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;font-weight:600}
+.fld{margin-bottom:12px}
+.fld label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;font-weight:500}
+.fld input,.fld textarea,.fld select{width:100%;padding:9px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;outline:none}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:700px){.grid2,.grid3{grid-template-columns:1fr}}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:24px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto}
+.modal h2{font-size:16px;font-weight:700;margin-bottom:14px}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;border:1px solid var(--line-2);padding:11px 22px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:200}
+.toast.show{opacity:1}
+
+.chart-box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;height:300px;position:relative}
+</style>
+</head>
+<body>
+
+<div id="lock" class="lock hidden">
+  <h1>Finance</h1>
+  <div style="color:var(--muted);font-size:13px">Réservé aux admins</div>
+  <input type="email" id="loginEmail" placeholder="Email">
+  <input type="password" id="loginPw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')login()">
+  <button class="btn" onclick="login()">Se connecter</button>
+  <div class="err" id="err"></div>
+  <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
+</div>
+
+<div id="app" class="hidden">
+  <div class="header">
+    <div class="brand">Eatime360 <small>· Finance · v0.1</small></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
+      <select id="periodSelect" onchange="onPeriodChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px">
+        <option value="month_cur">Mois en cours</option>
+        <option value="month_prev">Mois précédent</option>
+        <option value="ytd">Année en cours</option>
+        <option value="last_30">30 derniers jours</option>
+        <option value="last_90">90 derniers jours</option>
+      </select>
+      <a href="../" class="btn ghost sm">Portail</a>
+      <button class="btn ghost sm" onclick="logout()">↩</button>
+    </div>
+  </div>
+  <div class="tabs">
+    <button data-tab="dashboard" class="active" onclick="setTab('dashboard')">📊 Dashboard</button>
+    <button data-tab="ca" onclick="setTab('ca')">💰 CA quotidien</button>
+    <button data-tab="depenses" onclick="setTab('depenses')">📤 Dépenses</button>
+    <button data-tab="treso" onclick="setTab('treso')">🏦 Trésorerie</button>
+    <button data-tab="marge" onclick="setTab('marge')">📈 Marge & Ratios</button>
+    <button data-tab="categories" onclick="setTab('categories')">🏷 Catégories</button>
+  </div>
+  <div class="wrap" id="content"></div>
+</div>
+
+<div id="modalHost"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+let ME=null,ORG={},SNACK=null,PERIOD='month_cur';
+let TAB='dashboard';
+const S={snacks:[],categories:[],salaries:[]};
+
+const TYPES_CAT={achat:'Achat matière',charge_fixe:'Charge fixe',charge_variable:'Charge variable',taxe:'Taxe',autre:'Autre'};
+const MODES_DEP={virement:'Virement',cb:'CB',cheque:'Chèque',especes:'Espèces',prelevement:'Prélèvement',autre:'Autre'};
+const MODES_ENC={cb:'CB',especes:'Espèces',tickets_resto:'Tickets resto',cheque:'Chèque',virement:'Virement',autre:'Autre'};
+const STATUTS={a_payer:'À payer',paye:'Payé',retard:'En retard',litige:'Litige'};
+const SERVICES={midi:'Midi',soir:'Soir',total:'Total jour'};
+
+let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
+function val(id){const e=document.getElementById(id);return e?(e.value||'').trim():'';}
+function num(id){const v=val(id);return v===''?null:parseFloat(v);}
+function eur(n){if(n==null||isNaN(n))return'—';return Number(n).toLocaleString('fr-FR',{maximumFractionDigits:0})+' €';}
+function pct(n){if(n==null||isNaN(n))return'—';return n.toFixed(1)+' %';}
+function fmtD(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR');}
+
+async function login(){
+  const{error}=await sb.auth.signInWithPassword({email:val('loginEmail'),password:val('loginPw')});
+  if(error){document.getElementById('err').textContent=error.message;return;}
+  await loadProfileAndShow();
+}
+async function loadProfileAndShow(){
+  const{data:{session}}=await sb.auth.getSession();if(!session)return;
+  const{data:profile}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(!profile||!['admin','super_admin','manager'].includes(profile.role)){document.getElementById('err').textContent='Accès refusé.';await sb.auth.signOut();return;}
+  ME=profile;
+  const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
+  ORG=org||{};
+  if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
+  if(ORG.suspended && ME.role!=='super_admin'){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue. Contacter le service client.</div>';return;}
+  document.getElementById('lock').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  await loadCommonData();
+  render();
+}
+async function logout(){await sb.auth.signOut();location.reload();}
+sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();else document.getElementById('lock').classList.remove('hidden');});
+
+async function loadCommonData(){
+  const[r,c,sa]=await Promise.all([
+    sb.from('restaurants').select('id,nom').order('nom'),
+    sb.from('fin_categories').select('*').eq('actif',true).order('type').order('ordre'),
+    sb.from('salaries').select('id,nom,prenom,taux_horaire_brut,coef_charges_perso').eq('actif',true),
+  ]);
+  S.snacks=r.data||[];S.categories=c.data||[];S.salaries=sa.data||[];
+  const sel=document.getElementById('snackSelect');
+  sel.innerHTML='<option value="">Tous les snacks</option>'+S.snacks.map(x=>`<option value="${x.id}">${x.nom}</option>`).join('');
+}
+function onSnackChange(){const id=val('snackSelect');SNACK=id?S.snacks.find(x=>x.id===id):null;render();}
+function onPeriodChange(){PERIOD=val('periodSelect');render();}
+function setTab(t){TAB=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();}
+
+function periodRange(){
+  const now=new Date();let from,to;
+  if(PERIOD==='month_cur'){from=new Date(now.getFullYear(),now.getMonth(),1);to=new Date(now.getFullYear(),now.getMonth()+1,0);}
+  else if(PERIOD==='month_prev'){from=new Date(now.getFullYear(),now.getMonth()-1,1);to=new Date(now.getFullYear(),now.getMonth(),0);}
+  else if(PERIOD==='ytd'){from=new Date(now.getFullYear(),0,1);to=now;}
+  else if(PERIOD==='last_30'){from=new Date(now);from.setDate(from.getDate()-30);to=now;}
+  else if(PERIOD==='last_90'){from=new Date(now);from.setDate(from.getDate()-90);to=now;}
+  const iso=d=>d.toISOString().slice(0,10);
+  return {from:iso(from),to:iso(to)};
+}
+function periodLbl(){
+  const r=periodRange();const f=new Date(r.from),t=new Date(r.to);
+  return f.toLocaleDateString('fr-FR')+' → '+t.toLocaleDateString('fr-FR');
+}
+
+function render(){
+  const el=document.getElementById('content');
+  if(TAB==='dashboard') return renderDashboard(el);
+  if(TAB==='ca') return renderCA(el);
+  if(TAB==='depenses') return renderDepenses(el);
+  if(TAB==='treso') return renderTreso(el);
+  if(TAB==='marge') return renderMarge(el);
+  if(TAB==='categories') return renderCategories(el);
+}
+
+// ─────── DASHBOARD ───────
+async function renderDashboard(el){
+  el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
+  const r=periodRange();
+  let qCa=sb.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
+  let qDep=sb.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
+  let qEnc=sb.from('fin_encaissements').select('*').gte('date',r.from).lte('date',r.to);
+  if(SNACK){qCa=qCa.eq('restaurant_id',SNACK.id);qDep=qDep.eq('restaurant_id',SNACK.id);qEnc=qEnc.eq('restaurant_id',SNACK.id);}
+  const[ca,dep,enc]=await Promise.all([qCa,qDep,qEnc]);
+  const CA=ca.data||[],DEP=dep.data||[],ENC=enc.data||[];
+  // KPI
+  const sumCAttc=CA.filter(x=>x.service==='total'||x.service==null).reduce((a,x)=>a+(Number(x.ca_ttc)||0),0)
+    || CA.reduce((a,x)=>a+(Number(x.ca_ttc)||0),0); // fallback
+  const sumCAht=CA.reduce((a,x)=>a+(Number(x.ca_ht)||0),0);
+  const sumDep=DEP.reduce((a,x)=>a+(Number(x.montant_ttc)||0),0);
+  const sumAchats=DEP.filter(x=>x.fin_categories?.type==='achat').reduce((a,x)=>a+(Number(x.montant_ht)||0),0);
+  const sumChargesFixes=DEP.filter(x=>x.fin_categories?.type==='charge_fixe').reduce((a,x)=>a+(Number(x.montant_ttc)||0),0);
+  const aPayer=DEP.filter(x=>x.statut==='a_payer'||x.statut==='retard').reduce((a,x)=>a+(Number(x.montant_ttc)||0),0);
+  const retard=DEP.filter(x=>x.statut==='retard').length;
+  const foodCost=sumCAht>0?(sumAchats/sumCAht)*100:0;
+  // Salaires : approx via planning si data dispo (non implémenté côté period)
+  let html=`<h2 style="font-size:18px;font-weight:700;margin-bottom:6px">Dashboard financier</h2>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:18px">${periodLbl()}${SNACK?' · '+SNACK.nom:' · tous snacks'}</div>
+    <div class="grid cards" style="margin-bottom:24px">
+      <div class="kpi ok"><div class="lbl">CA TTC</div><div class="val">${eur(sumCAttc)}</div><div class="sub">${CA.length} saisies</div></div>
+      <div class="kpi"><div class="lbl">CA HT</div><div class="val">${eur(sumCAht)}</div></div>
+      <div class="kpi bad"><div class="lbl">Dépenses TTC</div><div class="val">${eur(sumDep)}</div><div class="sub">${DEP.length} factures</div></div>
+      <div class="kpi warn"><div class="lbl">Achats matières HT</div><div class="val">${eur(sumAchats)}</div></div>
+      <div class="kpi info"><div class="lbl">Charges fixes</div><div class="val">${eur(sumChargesFixes)}</div></div>
+      <div class="kpi ${foodCost>35?'bad':foodCost>30?'warn':'ok'}"><div class="lbl">Food cost (achats/CA HT)</div><div class="val">${pct(foodCost)}</div><div class="sub">cible &lt; 30 %</div></div>
+      <div class="kpi ${aPayer>0?'warn':''}"><div class="lbl">À payer</div><div class="val">${eur(aPayer)}</div><div class="sub">${retard} en retard</div></div>
+      <div class="kpi"><div class="lbl">Encaissements</div><div class="val">${eur(ENC.reduce((a,x)=>a+(Number(x.montant)||0),0))}</div></div>
+    </div>
+    <div class="chart-box" style="margin-bottom:16px"><canvas id="chartCa"></canvas></div>
+    <div class="grid grid2">
+      <div class="section"><h3>Prochaines échéances</h3>
+        <table class="tbl"><thead><tr><th>Échéance</th><th>Fournisseur</th><th>Montant</th><th>Statut</th></tr></thead><tbody>
+          ${(DEP.filter(x=>x.statut==='a_payer'||x.statut==='retard').sort((a,b)=>(a.date_echeance||'9').localeCompare(b.date_echeance||'9')).slice(0,8).map(x=>`<tr><td>${fmtD(x.date_echeance)}</td><td>${x.fournisseur||'—'}</td><td><b>${eur(x.montant_ttc)}</b></td><td>${x.statut==='retard'?'<span class="badge bad">Retard</span>':'<span class="badge warn">À payer</span>'}</td></tr>`).join(''))||'<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:14px">Aucune échéance en attente</td></tr>'}
+        </tbody></table>
+      </div>
+      <div class="section"><h3>Répartition des dépenses</h3>
+        <div style="position:relative;height:240px"><canvas id="chartDep"></canvas></div>
+      </div>
+    </div>`;
+  el.innerHTML=html;
+  // Graph CA par jour
+  const byDay={};CA.forEach(x=>{if(x.service==='total'||x.service==null||CA.filter(c=>c.date===x.date&&c.service!=='total').length===0){byDay[x.date]=(byDay[x.date]||0)+(Number(x.ca_ttc)||0);}});
+  const labels=Object.keys(byDay).sort();
+  new Chart(document.getElementById('chartCa').getContext('2d'),{type:'line',data:{labels:labels.map(d=>new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})),datasets:[{label:'CA TTC',data:labels.map(d=>byDay[d]),borderColor:'#c8a035',backgroundColor:'rgba(200,160,53,.15)',tension:.3,fill:true}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#e8e8ec'}},title:{display:true,text:'Évolution du CA TTC',color:'#e8e8ec'}},scales:{x:{ticks:{color:'#7b7b8a'},grid:{color:'rgba(255,255,255,.04)'}},y:{ticks:{color:'#7b7b8a',callback:v=>v.toLocaleString('fr-FR')+'€'},grid:{color:'rgba(255,255,255,.04)'}}}}});
+  // Donut dépenses
+  const byCat={};DEP.forEach(x=>{const n=x.fin_categories?.nom||'(sans catégorie)';byCat[n]=(byCat[n]||0)+(Number(x.montant_ttc)||0);});
+  const cats=Object.keys(byCat);
+  new Chart(document.getElementById('chartDep').getContext('2d'),{type:'doughnut',data:{labels:cats,datasets:[{data:cats.map(c=>byCat[c]),backgroundColor:['#c8a035','#5b9cff','#3fb87f','#c45a5a','#e0a93a','#8b5cf6','#06b6d4','#f59e0b','#10b981','#ef4444','#84cc16','#a855f7','#f97316','#06b6d4','#64748b']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{color:'#e8e8ec',font:{size:10}}}}}});
+}
+
+// ─────── CA QUOTIDIEN ───────
+async function renderCA(el){
+  el.innerHTML=`<div class="toolbar">
+    <button class="btn" onclick="openCA()">+ Saisir CA</button>
+    <button class="btn ghost sm" onclick="openCABulk()">+ Saisie rapide multi-jours</button>
+  </div><div id="caList">Chargement…</div>`;
+  const r=periodRange();
+  let q=sb.from('fin_ca_journalier').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).order('service');
+  if(SNACK) q=q.eq('restaurant_id',SNACK.id);
+  const{data}=await q;
+  const list=data||[];
+  let html=`<table class="tbl"><thead><tr><th>Date</th><th>Snack</th><th>Service</th><th>CA TTC</th><th>CA HT</th><th>Couverts</th><th>Ticket moy</th><th>Notes</th><th></th></tr></thead><tbody>`;
+  let totTtc=0,totHt=0,totCouv=0;
+  if(!list.length) html+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px">Aucune saisie sur la période</td></tr>';
+  else list.forEach(x=>{totTtc+=Number(x.ca_ttc)||0;totHt+=Number(x.ca_ht)||0;totCouv+=Number(x.nb_couverts)||0;
+    html+=`<tr><td>${fmtD(x.date)}</td><td>${x.restaurants?.nom||'—'}</td><td>${SERVICES[x.service]||x.service||'—'}</td><td><b>${eur(x.ca_ttc)}</b></td><td>${eur(x.ca_ht)}</td><td>${x.nb_couverts||'—'}</td><td>${eur(x.ticket_moyen)}</td><td style="color:var(--muted);font-size:12px">${x.notes||''}</td><td><button class="btn ghost sm" onclick='openCA(${JSON.stringify(x).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delCA('${x.id}')">✕</button></td></tr>`;});
+  html+=`</tbody><tfoot><tr><td colspan="3">TOTAL période</td><td>${eur(totTtc)}</td><td>${eur(totHt)}</td><td>${totCouv}</td><td>${totCouv>0?eur(totTtc/totCouv):'—'}</td><td colspan="2"></td></tr></tfoot></table>`;
+  document.getElementById('caList').innerHTML=html;
+}
+function openCA(ca){
+  ca=ca||{};
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>${ca.id?'Modifier':'Saisir'} CA</h2>
+    <div class="grid2">
+      <div class="fld"><label>Date *</label><input type="date" id="ca_date" value="${ca.date||new Date().toISOString().slice(0,10)}"></div>
+      <div class="fld"><label>Snack *</label><select id="ca_sn">${S.snacks.map(s=>`<option value="${s.id}" ${ca.restaurant_id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+    </div>
+    <div class="fld"><label>Service</label><select id="ca_sv">${Object.entries(SERVICES).map(([k,v])=>`<option value="${k}" ${ca.service===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    <div class="grid2">
+      <div class="fld"><label>CA TTC (€)</label><input type="number" step="0.01" id="ca_ttc" value="${ca.ca_ttc??''}" placeholder="1250.00" oninput="autoHT()" autofocus></div>
+      <div class="fld"><label>CA HT (€) <small style="color:var(--muted)">auto si TTC + TVA</small></label><input type="number" step="0.01" id="ca_ht" value="${ca.ca_ht??''}"></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Nombre de couverts</label><input type="number" id="ca_couv" value="${ca.nb_couverts??''}" oninput="autoTicket()"></div>
+      <div class="fld"><label>Ticket moyen (€)</label><input type="number" step="0.01" id="ca_tm" value="${ca.ticket_moyen??''}"></div>
+    </div>
+    <div class="fld"><label>Notes</label><input id="ca_notes" value="${ca.notes||''}" placeholder="météo, événement…"></div>
+    <input type="hidden" id="ca_id" value="${ca.id||''}">
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCA()">Enregistrer</button></div>
+  </div></div>`;
+}
+function autoHT(){const ttc=parseFloat(document.getElementById('ca_ttc').value);if(!isNaN(ttc))document.getElementById('ca_ht').value=(ttc/1.10).toFixed(2);autoTicket();}
+function autoTicket(){const ttc=parseFloat(document.getElementById('ca_ttc').value),c=parseInt(document.getElementById('ca_couv').value);if(!isNaN(ttc)&&c>0)document.getElementById('ca_tm').value=(ttc/c).toFixed(2);}
+async function saveCA(){
+  if(!val('ca_date')||!val('ca_sn')){toast('Date + snack requis');return;}
+  const payload={organization_id:ORG.id,restaurant_id:val('ca_sn'),date:val('ca_date'),service:val('ca_sv'),ca_ttc:num('ca_ttc'),ca_ht:num('ca_ht'),nb_couverts:num('ca_couv'),ticket_moyen:num('ca_tm'),notes:val('ca_notes')||null,saisi_par:ME.id};
+  const id=val('ca_id');
+  const{error}=id?await sb.from('fin_ca_journalier').update(payload).eq('id',id):await sb.from('fin_ca_journalier').upsert(payload,{onConflict:'organization_id,restaurant_id,date,service'});
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderCA(document.getElementById('content'));
+}
+async function delCA(id){if(!confirm('Supprimer cette saisie ?'))return;await sb.from('fin_ca_journalier').delete().eq('id',id);renderCA(document.getElementById('content'));}
+function openCABulk(){
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:480px">
+    <h2>Saisie rapide multi-jours</h2>
+    <div class="fld"><label>Snack</label><select id="cab_sn">${S.snacks.map(s=>`<option value="${s.id}">${s.nom}</option>`).join('')}</select></div>
+    <div class="grid2">
+      <div class="fld"><label>Du</label><input type="date" id="cab_from" value="${today}"></div>
+      <div class="fld"><label>Au</label><input type="date" id="cab_to" value="${today}"></div>
+    </div>
+    <p style="color:var(--muted);font-size:12px;margin-bottom:8px">Saisir le CA TTC pour chaque jour ci-dessous puis Enregistrer.</p>
+    <div id="cab_rows"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="generateBulkRows()">Générer les lignes</button><button class="btn ok" onclick="saveBulk()">Enregistrer tout</button></div>
+  </div></div>`;
+}
+function generateBulkRows(){
+  const from=new Date(val('cab_from')),to=new Date(val('cab_to'));
+  if(isNaN(from)||isNaN(to)||to<from){toast('Plage invalide');return;}
+  let h='';const d=new Date(from);
+  while(d<=to){h+=`<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><div style="flex:1;color:var(--muted);font-size:12px">${d.toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'})}</div><input type="number" step="0.01" data-date="${d.toISOString().slice(0,10)}" placeholder="CA TTC" style="width:130px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px"></div>`;d.setDate(d.getDate()+1);}
+  document.getElementById('cab_rows').innerHTML=h;
+}
+async function saveBulk(){
+  const inputs=document.querySelectorAll('#cab_rows input[type=number]');
+  const sn=val('cab_sn');
+  const rows=[];inputs.forEach(i=>{const v=parseFloat(i.value);if(!isNaN(v))rows.push({organization_id:ORG.id,restaurant_id:sn,date:i.dataset.date,service:'total',ca_ttc:v,ca_ht:+(v/1.10).toFixed(2),saisi_par:ME.id});});
+  if(!rows.length){toast('Rien à enregistrer');return;}
+  const{error}=await sb.from('fin_ca_journalier').upsert(rows,{onConflict:'organization_id,restaurant_id,date,service'});
+  if(error){toast(error.message);return;}toast(rows.length+' jours enregistrés ✓');closeModal();renderCA(document.getElementById('content'));
+}
+
+// ─────── DÉPENSES ───────
+async function renderDepenses(el){
+  el.innerHTML=`<div class="toolbar">
+    <select id="filtStat"><option value="">Tous statuts</option>${Object.entries(STATUTS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+    <select id="filtCat"><option value="">Toutes catégories</option>${S.categories.map(c=>`<option value="${c.id}">${c.nom}</option>`).join('')}</select>
+    <input id="filtSearch" placeholder="Rechercher fournisseur/num…">
+    <button class="btn sm" onclick="renderDepenses(document.getElementById('content'))">Filtrer</button>
+    <div style="flex:1"></div>
+    <button class="btn" onclick="openDep()">+ Nouvelle dépense</button>
+  </div><div id="depList">Chargement…</div>`;
+  const r=periodRange();
+  let q=sb.from('fin_depenses').select('*,fin_categories(nom,type),restaurants(nom)').gte('date_facture',r.from).lte('date_facture',r.to).order('date_facture',{ascending:false}).limit(1000);
+  if(SNACK) q=q.eq('restaurant_id',SNACK.id);
+  if(val('filtStat')) q=q.eq('statut',val('filtStat'));
+  if(val('filtCat')) q=q.eq('categorie_id',val('filtCat'));
+  const{data}=await q;
+  let list=data||[];
+  const search=val('filtSearch').toLowerCase();
+  if(search) list=list.filter(x=>((x.fournisseur||'')+' '+(x.num_facture||'')+' '+(x.notes||'')).toLowerCase().includes(search));
+  let totTtc=0,totHt=0;
+  let html=`<table class="tbl"><thead><tr><th>Date</th><th>Snack</th><th>Catégorie</th><th>Fournisseur</th><th>N°</th><th>HT</th><th>TVA</th><th>TTC</th><th>Échéance</th><th>Statut</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:30px">Aucune dépense</td></tr>';
+  else list.forEach(x=>{totTtc+=Number(x.montant_ttc)||0;totHt+=Number(x.montant_ht)||0;
+    const enRetard=x.statut==='a_payer' && x.date_echeance && new Date(x.date_echeance)<new Date();
+    const stat=enRetard?'<span class="badge bad">En retard</span>':(x.statut==='paye'?'<span class="badge ok">Payé</span>':x.statut==='retard'?'<span class="badge bad">Retard</span>':x.statut==='litige'?'<span class="badge warn">Litige</span>':'<span class="badge warn">À payer</span>');
+    html+=`<tr><td>${fmtD(x.date_facture)}</td><td>${x.restaurants?.nom||'—'}</td><td>${x.fin_categories?.nom||'—'}</td><td>${x.fournisseur||'—'}</td><td style="color:var(--muted);font-size:12px">${x.num_facture||''}</td><td>${eur(x.montant_ht)}</td><td>${x.tva_pct||'—'} %</td><td><b>${eur(x.montant_ttc)}</b></td><td>${fmtD(x.date_echeance)}</td><td>${stat}</td><td><button class="btn ghost sm" onclick='openDep(${JSON.stringify(x).replace(/'/g,"&#39;")})'>✎</button> ${x.statut==='a_payer'?`<button class="btn ok sm" onclick="markPaid('${x.id}')">✓ Payé</button>`:''} <button class="btn ghost sm" onclick="delDep('${x.id}')">✕</button></td></tr>`;});
+  html+=`</tbody><tfoot><tr><td colspan="5">TOTAL période</td><td>${eur(totHt)}</td><td></td><td>${eur(totTtc)}</td><td colspan="3"></td></tr></tfoot></table>`;
+  document.getElementById('depList').innerHTML=html;
+}
+function openDep(d){
+  d=d||{};
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>${d.id?'Modifier':'Nouvelle'} dépense</h2>
+    <div class="grid2">
+      <div class="fld"><label>Date facture *</label><input type="date" id="d_df" value="${d.date_facture||new Date().toISOString().slice(0,10)}"></div>
+      <div class="fld"><label>Date échéance</label><input type="date" id="d_de" value="${d.date_echeance||''}"></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Snack</label><select id="d_sn"><option value="">— Aucun</option>${S.snacks.map(s=>`<option value="${s.id}" ${d.restaurant_id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+      <div class="fld"><label>Catégorie</label><select id="d_cat"><option value="">—</option>${S.categories.map(c=>`<option value="${c.id}" ${d.categorie_id===c.id?'selected':''}>${c.nom} (${TYPES_CAT[c.type]||c.type})</option>`).join('')}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Fournisseur</label><input id="d_four" value="${d.fournisseur||''}" placeholder="Metro, EDF, URSSAF…"></div>
+      <div class="fld"><label>N° de facture</label><input id="d_num" value="${d.num_facture||''}"></div>
+    </div>
+    <div class="grid3">
+      <div class="fld"><label>HT (€)</label><input type="number" step="0.01" id="d_ht" value="${d.montant_ht??''}" oninput="autoTTC()"></div>
+      <div class="fld"><label>TVA (%)</label><input type="number" step="0.1" id="d_tva" value="${d.tva_pct??20}" oninput="autoTTC()"></div>
+      <div class="fld"><label>TTC (€) *</label><input type="number" step="0.01" id="d_ttc" value="${d.montant_ttc??''}" autofocus></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Mode de paiement</label><select id="d_mp"><option value="">—</option>${Object.entries(MODES_DEP).map(([k,v])=>`<option value="${k}" ${d.mode_paiement===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="fld"><label>Statut</label><select id="d_stat">${Object.entries(STATUTS).map(([k,v])=>`<option value="${k}" ${d.statut===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    </div>
+    <div class="fld" id="d_dp_box" style="${d.statut==='paye'?'':'display:none'}"><label>Date paiement</label><input type="date" id="d_dp" value="${d.date_paiement||''}"></div>
+    <div class="fld"><label>Notes</label><input id="d_notes" value="${d.notes||''}"></div>
+    <input type="hidden" id="d_id" value="${d.id||''}">
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveDep()">Enregistrer</button></div>
+  </div></div>`;
+  document.getElementById('d_stat').addEventListener('change',e=>{document.getElementById('d_dp_box').style.display=e.target.value==='paye'?'block':'none';if(e.target.value==='paye'&&!val('d_dp'))document.getElementById('d_dp').value=new Date().toISOString().slice(0,10);});
+}
+function autoTTC(){const ht=parseFloat(val('d_ht')),tva=parseFloat(val('d_tva'));if(!isNaN(ht)&&!isNaN(tva))document.getElementById('d_ttc').value=(ht*(1+tva/100)).toFixed(2);}
+async function saveDep(){
+  if(!val('d_df')||!val('d_ttc')){toast('Date + TTC requis');return;}
+  const payload={organization_id:ORG.id,restaurant_id:val('d_sn')||null,categorie_id:val('d_cat')||null,fournisseur:val('d_four')||null,num_facture:val('d_num')||null,date_facture:val('d_df'),date_echeance:val('d_de')||null,date_paiement:val('d_dp')||null,montant_ht:num('d_ht'),tva_pct:num('d_tva'),montant_ttc:num('d_ttc'),mode_paiement:val('d_mp')||null,statut:val('d_stat'),notes:val('d_notes')||null,saisi_par:ME.id};
+  const id=val('d_id');
+  const{error}=id?await sb.from('fin_depenses').update(payload).eq('id',id):await sb.from('fin_depenses').insert(payload);
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderDepenses(document.getElementById('content'));
+}
+async function markPaid(id){
+  const{error}=await sb.from('fin_depenses').update({statut:'paye',date_paiement:new Date().toISOString().slice(0,10)}).eq('id',id);
+  if(error){toast(error.message);return;}toast('Marqué payé ✓');renderDepenses(document.getElementById('content'));
+}
+async function delDep(id){if(!confirm('Supprimer cette dépense ?'))return;await sb.from('fin_depenses').delete().eq('id',id);renderDepenses(document.getElementById('content'));}
+
+// ─────── TRÉSORERIE ───────
+async function renderTreso(el){
+  el.innerHTML=`<div class="toolbar">
+    <button class="btn" onclick="openEnc()">+ Encaissement</button>
+    <button class="btn ghost" onclick="openVers()">+ Versement banque</button>
+  </div>
+  <div class="grid grid2"><div id="encList">Chargement…</div><div id="versList">Chargement…</div></div>`;
+  const r=periodRange();
+  let qE=sb.from('fin_encaissements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
+  let qV=sb.from('fin_versements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
+  if(SNACK){qE=qE.eq('restaurant_id',SNACK.id);qV=qV.eq('restaurant_id',SNACK.id);}
+  const[e,v]=await Promise.all([qE,qV]);
+  // Encaissements
+  const E=e.data||[];
+  let totByMode={};E.forEach(x=>{totByMode[x.mode]=(totByMode[x.mode]||0)+(Number(x.montant)||0);});
+  let h1=`<div class="section"><h3>Encaissements</h3>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${Object.entries(totByMode).map(([m,v])=>`<span class="badge info" style="font-size:11.5px">${MODES_ENC[m]||m} : ${eur(v)}</span>`).join('')}</div>
+    <table class="tbl"><thead><tr><th>Date</th><th>Snack</th><th>Mode</th><th>Montant</th><th></th></tr></thead><tbody>`;
+  if(!E.length) h1+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:18px">Aucun encaissement</td></tr>';
+  else E.forEach(x=>{h1+=`<tr><td>${fmtD(x.date)}</td><td>${x.restaurants?.nom||'—'}</td><td>${MODES_ENC[x.mode]||x.mode}</td><td><b>${eur(x.montant)}</b></td><td><button class="btn ghost sm" onclick="delEnc('${x.id}')">✕</button></td></tr>`;});
+  h1+='</tbody></table></div>';
+  document.getElementById('encList').innerHTML=h1;
+  // Versements
+  const V=v.data||[];
+  let totV=V.reduce((a,x)=>a+(Number(x.montant)||0),0);
+  let h2=`<div class="section"><h3>Versements banque</h3>
+    <div style="margin-bottom:10px"><span class="badge ok" style="font-size:11.5px">Total période : ${eur(totV)}</span></div>
+    <table class="tbl"><thead><tr><th>Date</th><th>Snack</th><th>Banque</th><th>Réf</th><th>Montant</th><th></th></tr></thead><tbody>`;
+  if(!V.length) h2+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px">Aucun versement</td></tr>';
+  else V.forEach(x=>{h2+=`<tr><td>${fmtD(x.date)}</td><td>${x.restaurants?.nom||'—'}</td><td>${x.banque||'—'}</td><td style="color:var(--muted);font-size:12px">${x.reference||''}</td><td><b>${eur(x.montant)}</b></td><td><button class="btn ghost sm" onclick="delVers('${x.id}')">✕</button></td></tr>`;});
+  h2+='</tbody></table></div>';
+  document.getElementById('versList').innerHTML=h2;
+}
+function openEnc(){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Nouvel encaissement</h2>
+    <div class="grid2">
+      <div class="fld"><label>Date *</label><input type="date" id="e_date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="fld"><label>Snack *</label><select id="e_sn">${S.snacks.map(s=>`<option value="${s.id}" ${SNACK&&SNACK.id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Mode</label><select id="e_mode">${Object.entries(MODES_ENC).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
+      <div class="fld"><label>Montant (€) *</label><input type="number" step="0.01" id="e_mt" autofocus></div>
+    </div>
+    <div class="fld"><label>Notes</label><input id="e_notes"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveEnc()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveEnc(){
+  if(!val('e_sn')||!val('e_mt')){toast('Snack + montant requis');return;}
+  const{error}=await sb.from('fin_encaissements').insert({organization_id:ORG.id,restaurant_id:val('e_sn'),date:val('e_date'),mode:val('e_mode'),montant:num('e_mt'),notes:val('e_notes')||null,saisi_par:ME.id});
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderTreso(document.getElementById('content'));
+}
+async function delEnc(id){if(!confirm('Supprimer ?'))return;await sb.from('fin_encaissements').delete().eq('id',id);renderTreso(document.getElementById('content'));}
+function openVers(){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Nouveau versement banque</h2>
+    <div class="grid2">
+      <div class="fld"><label>Date *</label><input type="date" id="v_date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="fld"><label>Snack</label><select id="v_sn"><option value="">— Aucun</option>${S.snacks.map(s=>`<option value="${s.id}" ${SNACK&&SNACK.id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Banque</label><input id="v_bk" placeholder="CIC, BPALC…"></div>
+      <div class="fld"><label>Référence</label><input id="v_ref"></div>
+    </div>
+    <div class="fld"><label>Montant (€) *</label><input type="number" step="0.01" id="v_mt" autofocus></div>
+    <div class="fld"><label>Notes</label><input id="v_notes"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveVers()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveVers(){
+  if(!val('v_mt')){toast('Montant requis');return;}
+  const{error}=await sb.from('fin_versements').insert({organization_id:ORG.id,restaurant_id:val('v_sn')||null,date:val('v_date'),banque:val('v_bk')||null,reference:val('v_ref')||null,montant:num('v_mt'),notes:val('v_notes')||null,saisi_par:ME.id});
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderTreso(document.getElementById('content'));
+}
+async function delVers(id){if(!confirm('Supprimer ?'))return;await sb.from('fin_versements').delete().eq('id',id);renderTreso(document.getElementById('content'));}
+
+// ─────── MARGE & RATIOS ───────
+async function renderMarge(el){
+  el.innerHTML='<div style="color:var(--muted)">Calcul en cours…</div>';
+  const r=periodRange();
+  let qCa=sb.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
+  let qDep=sb.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
+  let qPl=sb.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin,date').gte('date',r.from).lte('date',r.to);
+  if(SNACK){qCa=qCa.eq('restaurant_id',SNACK.id);qDep=qDep.eq('restaurant_id',SNACK.id);qPl=qPl.eq('restaurant_id',SNACK.id);}
+  const[ca,dep,pl]=await Promise.all([qCa,qDep,qPl]);
+  const CA=ca.data||[],DEP=dep.data||[],PL=pl.data||[];
+  // CA
+  const caTtc=CA.reduce((a,x)=>a+(Number(x.ca_ttc)||0),0);
+  const caHt=CA.reduce((a,x)=>a+(Number(x.ca_ht)||0),0);
+  // Achats matières
+  const achatsHt=DEP.filter(x=>x.fin_categories?.type==='achat').reduce((a,x)=>a+(Number(x.montant_ht)||0),0);
+  // Charges fixes / variables / taxes
+  const fixesTtc=DEP.filter(x=>x.fin_categories?.type==='charge_fixe').reduce((a,x)=>a+(Number(x.montant_ttc)||0),0);
+  const varTtc=DEP.filter(x=>x.fin_categories?.type==='charge_variable').reduce((a,x)=>a+(Number(x.montant_ttc)||0),0);
+  const taxesTtc=DEP.filter(x=>x.fin_categories?.type==='taxe').reduce((a,x)=>a+(Number(x.montant_ttc)||0),0);
+  // Masse salariale via planning + taux salaires
+  const tauxOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return Number(s?.taux_horaire_brut)||0;};
+  const coefOf=sid=>{const s=S.salaries.find(x=>x.id===sid);const cp=Number(s?.coef_charges_perso);return isFinite(cp)&&cp>0?cp:(Number(ORG.coef_charges)||1.42);};
+  const _toMin=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
+  const _dur=(d,f)=>{let a=_toMin(d),b=_toMin(f);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
+  let masseSalBrut=0,masseSalCharge=0;
+  PL.forEach(c=>{const h=_dur(c.heure_debut,c.heure_fin)/60;const tx=tauxOf(c.salarie_id);const cf=coefOf(c.salarie_id);masseSalBrut+=h*tx;masseSalCharge+=h*tx*cf;});
+  // Ratios
+  const foodCost=caHt>0?(achatsHt/caHt)*100:0;
+  const ratioSal=caTtc>0?(masseSalCharge/caTtc)*100:0;
+  const prime=foodCost+ratioSal; // PRIME COST cible <65%
+  // EBE estimé
+  const ebe=caHt - achatsHt - masseSalCharge - fixesTtc - varTtc;
+  const margeBrute=caHt - achatsHt;
+  const tauxMargeBrute=caHt>0?(margeBrute/caHt)*100:0;
+  let html=`<h2 style="font-size:18px;font-weight:700;margin-bottom:6px">Marge & ratios</h2>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:18px">${periodLbl()}${SNACK?' · '+SNACK.nom:' · tous snacks'}</div>
+    <div class="grid cards" style="margin-bottom:18px">
+      <div class="kpi ok"><div class="lbl">CA HT</div><div class="val">${eur(caHt)}</div><div class="sub">${eur(caTtc)} TTC</div></div>
+      <div class="kpi"><div class="lbl">Marge brute</div><div class="val">${eur(margeBrute)}</div><div class="sub">${pct(tauxMargeBrute)}</div></div>
+      <div class="kpi ${foodCost>35?'bad':foodCost>30?'warn':'ok'}"><div class="lbl">Food cost %</div><div class="val">${pct(foodCost)}</div><div class="sub">achats HT / CA HT · cible &lt; 30 %</div></div>
+      <div class="kpi ${ratioSal>40?'bad':ratioSal>35?'warn':'ok'}"><div class="lbl">Masse salariale %</div><div class="val">${pct(ratioSal)}</div><div class="sub">chargée / CA TTC · cible &lt; 35 %</div></div>
+      <div class="kpi ${prime>65?'bad':prime>60?'warn':'ok'}"><div class="lbl">Prime cost</div><div class="val">${pct(prime)}</div><div class="sub">food + masse · cible &lt; 60 %</div></div>
+      <div class="kpi ${ebe<0?'bad':ebe<caHt*0.05?'warn':'ok'}"><div class="lbl">EBE estimé</div><div class="val">${eur(ebe)}</div><div class="sub">CA - achats - salaires - charges</div></div>
+    </div>
+    <div class="section"><h3>Décomposition</h3>
+      <table class="tbl"><thead><tr><th>Poste</th><th>Montant</th><th>% du CA HT</th></tr></thead><tbody>
+        <tr><td><b>Chiffre d'affaires HT</b></td><td><b>${eur(caHt)}</b></td><td>100 %</td></tr>
+        <tr><td style="padding-left:24px">− Achats matières HT</td><td style="color:var(--bad)">${eur(achatsHt)}</td><td>${pct(foodCost)}</td></tr>
+        <tr><td><b>= Marge brute</b></td><td><b>${eur(margeBrute)}</b></td><td><b>${pct(tauxMargeBrute)}</b></td></tr>
+        <tr><td style="padding-left:24px">− Masse salariale chargée (planning)</td><td style="color:var(--bad)">${eur(masseSalCharge)}</td><td>${pct(caHt>0?(masseSalCharge/caHt)*100:0)}</td></tr>
+        <tr><td style="padding-left:24px">− Charges fixes TTC</td><td style="color:var(--bad)">${eur(fixesTtc)}</td><td>${pct(caHt>0?(fixesTtc/caHt)*100:0)}</td></tr>
+        <tr><td style="padding-left:24px">− Charges variables TTC</td><td style="color:var(--bad)">${eur(varTtc)}</td><td>${pct(caHt>0?(varTtc/caHt)*100:0)}</td></tr>
+        <tr><td style="padding-left:24px">− Taxes TTC</td><td style="color:var(--bad)">${eur(taxesTtc)}</td><td>${pct(caHt>0?(taxesTtc/caHt)*100:0)}</td></tr>
+        <tr style="background:rgba(63,184,127,.08)"><td><b>= EBE estimé</b></td><td><b style="color:${ebe>=0?'var(--ok)':'var(--bad)'}">${eur(ebe)}</b></td><td><b>${pct(caHt>0?(ebe/caHt)*100:0)}</b></td></tr>
+      </tbody></table>
+    </div>
+    <div style="color:var(--muted);font-size:11.5px;margin-top:14px;line-height:1.5">
+      <b>Notes :</b> Masse salariale calculée depuis le planning (heures × taux horaire × coef charges individuel ou org).
+      Taxes inclues séparément (TVA, impôts). EBE = approximation : pour le résultat net comptable, voir comptable.
+    </div>`;
+  el.innerHTML=html;
+}
+
+// ─────── CATÉGORIES ───────
+async function renderCategories(el){
+  let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openCat()">+ Nouvelle catégorie</button></div>
+    <table class="tbl"><thead><tr><th>Nom</th><th>Type</th><th>Actif</th><th></th></tr></thead><tbody>`;
+  if(!S.categories.length) html+='<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px">Aucune catégorie</td></tr>';
+  else S.categories.forEach(c=>{
+    html+=`<tr><td><b>${c.nom}</b></td><td>${TYPES_CAT[c.type]||c.type}</td><td>${c.actif?'<span class="badge ok">Oui</span>':'<span class="badge bad">Non</span>'}</td><td><button class="btn ghost sm" onclick='openCat(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delCat('${c.id}')">✕</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+function openCat(c){
+  c=c||{};
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:440px">
+    <h2>${c.id?'Modifier':'Nouvelle'} catégorie</h2>
+    <div class="fld"><label>Nom *</label><input id="c_nom" value="${c.nom||''}" autofocus></div>
+    <div class="fld"><label>Type</label><select id="c_type">${Object.entries(TYPES_CAT).map(([k,v])=>`<option value="${k}" ${c.type===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    <div class="fld"><label><input type="checkbox" id="c_actif" ${c.actif!==false?'checked':''}> Active</label></div>
+    <input type="hidden" id="c_id" value="${c.id||''}">
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCat()">Enregistrer</button></div>
+  </div></div>`;
+}
+async function saveCat(){
+  if(!val('c_nom')){toast('Nom requis');return;}
+  const payload={organization_id:ORG.id,nom:val('c_nom'),type:val('c_type'),actif:document.getElementById('c_actif').checked};
+  const id=val('c_id');
+  const{error}=id?await sb.from('fin_categories').update(payload).eq('id',id):await sb.from('fin_categories').insert(payload);
+  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderCategories(document.getElementById('content'));
+}
+async function delCat(id){if(!confirm('Supprimer cette catégorie ?'))return;await sb.from('fin_categories').delete().eq('id',id);await loadCommonData();renderCategories(document.getElementById('content'));}
+
+function closeModal(){document.getElementById('modalHost').innerHTML='';}
+</script>
+</body>
+</html>
