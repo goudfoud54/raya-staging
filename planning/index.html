@@ -97,10 +97,22 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 
 <div id="lock" class="lock">
   <h1>Planning</h1>
-  <input type="password" id="pw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')unlock()">
-  <button class="btn" onclick="unlock()">Entrer</button>
+  <div id="lockSub" style="color:var(--muted);font-size:13px;margin-bottom:6px">Connexion à ton compte</div>
+  <div id="loginBlock" style="display:flex;flex-direction:column;gap:10px;align-items:center">
+    <input type="email" id="loginEmail" placeholder="Email" autocomplete="email" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
+    <input type="password" id="loginPw" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
+    <button class="btn" onclick="login()" style="width:260px">Se connecter</button>
+    <div style="color:var(--muted);font-size:12px">Pas de compte ? <a href="#" style="color:var(--gold)" onclick="showSignup();return false">Créer un compte</a></div>
+  </div>
+  <div id="signupBlock" style="display:none;flex-direction:column;gap:10px;align-items:center">
+    <input type="text" id="signupName" placeholder="Nom complet" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
+    <input type="email" id="signupEmail" placeholder="Email" autocomplete="email" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
+    <input type="password" id="signupPw" placeholder="Mot de passe (8 caractères min)" autocomplete="new-password" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
+    <button class="btn" onclick="signup()" style="width:260px">Créer mon compte</button>
+    <div style="color:var(--muted);font-size:12px">Déjà inscrit ? <a href="#" style="color:var(--gold)" onclick="showLogin();return false">Se connecter</a></div>
+  </div>
   <div class="err" id="pwerr"></div>
-  <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
+  <a href="../" style="font-size:12px;color:var(--muted);margin-top:6px">← Portail</a>
 </div>
 
 <datalist id="t-list"></datalist>
@@ -135,6 +147,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       <input type="file" id="xlsxFile" accept=".xlsx,.xlsm" style="display:none" onchange="handleImport(event)">
       <button class="btn ghost" onclick="openPdfModal()">📄 Export PDF</button>
       <a href="../" class="btn ghost">Portail</a>
+      <button class="btn ghost" onclick="logout()" title="Déconnexion">↩</button>
     </div>
   </div>
 
@@ -175,8 +188,8 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const ADMIN_PW='Rayan1301';
-const VERSION='v0.18 · validation indispos + alerte';
+const VERSION='v0.19 · auth Supabase';
+let ME=null;
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
@@ -276,7 +289,37 @@ let zoom=parseFloat(localStorage.getItem('pl_zoom')||'1');
 function setZoom(z){zoom=Math.max(0.5,Math.min(1.6,Math.round(z*10)/10));localStorage.setItem('pl_zoom',zoom);document.documentElement.style.setProperty('--zoom',zoom);const l=document.getElementById('zLabel');if(l)l.textContent=Math.round(zoom*100)+' %';}
 function normTime(v){if(!v)return '';v=String(v).trim().replace(/[^0-9:hH]/g,'').replace(/[hH]/,':');let m=v.match(/^(\d{1,2}):(\d{2})$/);if(m){const h=+m[1],mn=+m[2];if(h<24&&mn<60)return String(h).padStart(2,'0')+':'+String(mn).padStart(2,'0');}m=v.match(/^(\d{1,2})$/);if(m){const h=+m[1];if(h<24)return String(h).padStart(2,'0')+':00';}return null;}
 
-function unlock(){if(document.getElementById('pw').value===ADMIN_PW){sessionStorage.setItem('pl_ok','1');showApp();}else document.getElementById('pwerr').textContent='Incorrect';}
+function showSignup(){document.getElementById('loginBlock').style.display='none';document.getElementById('signupBlock').style.display='flex';document.getElementById('lockSub').textContent='Créer un compte';document.getElementById('pwerr').textContent='';}
+function showLogin(){document.getElementById('signupBlock').style.display='none';document.getElementById('loginBlock').style.display='flex';document.getElementById('lockSub').textContent='Connexion à ton compte';document.getElementById('pwerr').textContent='';}
+async function login(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const password=document.getElementById('loginPw').value;
+  if(!email||!password){document.getElementById('pwerr').textContent='Email + mot de passe requis';return;}
+  document.getElementById('pwerr').textContent='Connexion…';
+  const{error}=await sb.auth.signInWithPassword({email,password});
+  if(error){document.getElementById('pwerr').textContent=error.message;return;}
+  await loadProfileAndShow();
+}
+async function signup(){
+  const email=document.getElementById('signupEmail').value.trim();
+  const password=document.getElementById('signupPw').value;
+  const name=document.getElementById('signupName').value.trim();
+  if(!email||!password||password.length<8){document.getElementById('pwerr').textContent='Email + mdp 8+ caractères requis';return;}
+  document.getElementById('pwerr').textContent='Création du compte…';
+  const{error}=await sb.auth.signUp({email,password,options:{data:{full_name:name}}});
+  if(error){document.getElementById('pwerr').textContent=error.message;return;}
+  await sb.auth.signInWithPassword({email,password});
+  await loadProfileAndShow();
+}
+async function loadProfileAndShow(){
+  const{data:{session}}=await sb.auth.getSession();
+  if(!session)return;
+  const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(error||!profile){document.getElementById('pwerr').textContent='Profil introuvable.';await sb.auth.signOut();return;}
+  if(!['admin','super_admin','manager'].includes(profile.role)){document.getElementById('pwerr').textContent='Accès refusé. (rôle : '+profile.role+')';await sb.auth.signOut();return;}
+  ME=profile;showApp();
+}
+async function logout(){await sb.auth.signOut();ME=null;location.reload();}
 function showApp(){document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('ver').textContent=VERSION;setZoom(zoom);buildTimeList();init();}
 function buildTimeList(){
   const opts=[];
@@ -285,7 +328,7 @@ function buildTimeList(){
   for(let h=0;h<4;h++){opts.push(`${String(h).padStart(2,'0')}:00`);opts.push(`${String(h).padStart(2,'0')}:30`);}
   document.getElementById('t-list').innerHTML=opts.map(t=>`<option value="${t}">`).join('');
 }
-if(sessionStorage.getItem('pl_ok')==='1')showApp();
+sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();});
 
 function getMonday(d){d=new Date(d);const day=d.getDay();const diff=day===0?-6:1-day;d.setDate(d.getDate()+diff);d.setHours(0,0,0,0);return d;}
 function fmtDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
