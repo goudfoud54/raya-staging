@@ -644,28 +644,30 @@ async function renderBanque(el){
     const co=COMPTES.find(c=>c.id===x.compte_id);
     const stat=x.statut==='non_categorisee'?'<span class="badge warn">À catégoriser</span>':x.statut==='categorisee'?'<span class="badge info">Catégorisée</span>':x.statut==='rapprochee'?'<span class="badge ok">Rapprochée</span>':'<span class="badge">Ignorée</span>';
     const catSel=`<select onchange="categoriserTrx('${x.id}',this.value)" style="padding:5px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:11.5px;max-width:180px"><option value="">— Choisir —</option>${S.categories.map(c=>`<option value="${c.id}" ${x.categorie_id===c.id?'selected':''}>${c.nom}</option>`).join('')}</select>`;
-    html+=`<tr><td style="font-size:12px">${fmtD(x.date_operation)}</td><td style="color:var(--muted);font-size:11.5px">${co?.nom||'—'}</td><td style="max-width:280px;word-break:break-word;font-size:12.5px">${x.libelle}</td><td style="color:var(--bad);font-weight:600">${x.debit>0?eur(x.debit):''}</td><td style="color:var(--ok);font-weight:600">${x.credit>0?eur(x.credit):''}</td><td>${catSel}</td><td>${stat}</td><td><button class="btn ghost sm" onclick="ignoreTrx('${x.id}')">⊘</button> <button class="btn ghost sm" onclick="delTrx('${x.id}')">✕</button></td></tr>`;
+    html+=`<tr><td style="font-size:12px">${fmtD(x.date_operation)}</td><td style="color:var(--muted);font-size:11.5px">${co?.nom||'—'}</td><td style="max-width:280px;word-break:break-word;font-size:12.5px">${x.libelle}</td><td style="color:var(--bad);font-weight:600">${x.debit>0?eur(x.debit):''}</td><td style="color:var(--ok);font-weight:600">${x.credit>0?eur(x.credit):''}</td><td>${catSel}</td><td>${stat}</td><td><button class="btn ghost sm" title="Ignorer (ne plus afficher cette transaction)" onclick="ignoreTrx('${x.id}')">⊘</button> <button class="btn ghost sm" title="Supprimer définitivement cette transaction" onclick="delTrx('${x.id}')">✕</button></td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('bk_trx_list').innerHTML=html;
 }
 async function autoCategorize(){
-  // Charge règles + trx non catégorisées
-  const{data:regles}=await sb.from('fin_regles_catego').select('id,pattern,categorie_id,priorite').eq('organization_id',ORG.id).eq('actif',true).order('priorite',{ascending:false});
-  if(!regles||!regles.length){toast('Aucune règle active. Va dans ⚙ Règles auto pour en créer.');return;}
-  const{data:trx}=await sb.from('fin_transactions_bancaires').select('id,libelle').eq('organization_id',ORG.id).eq('statut','non_categorisee');
+  const{data:regles}=await sb.from('fin_regles_catego').select('id,pattern,categorie_id,priorite,applies_to').eq('organization_id',ORG.id).eq('actif',true).order('priorite',{ascending:false});
+  if(!regles||!regles.length){toast('Aucune règle active.');return;}
+  const{data:trx}=await sb.from('fin_transactions_bancaires').select('id,libelle,debit,credit').eq('organization_id',ORG.id).eq('statut','non_categorisee');
   if(!trx||!trx.length){toast('Aucune transaction non catégorisée');return;}
   toast(`Analyse de ${trx.length} transactions…`);
   let nbCat=0,nbSkip=0;
-  // Match par règles (priorité décroissante)
   const updates={};
   trx.forEach(t=>{
     const lib=(t.libelle||'').toLowerCase();
-    for(const r of regles){if(lib.includes(r.pattern.toLowerCase())){updates[t.id]=r.categorie_id;nbCat++;return;}}
+    const sens=(Number(t.debit)||0)>0?'debit':'credit';
+    for(const r of regles){
+      // Filtre par sens : règle accepte uniquement debit/credit/all
+      if(r.applies_to && r.applies_to!=='all' && r.applies_to!==sens) continue;
+      if(lib.includes(r.pattern.toLowerCase())){updates[t.id]=r.categorie_id;nbCat++;return;}
+    }
     nbSkip++;
   });
-  if(nbCat===0){toast('Aucune correspondance trouvée — crée plus de règles');return;}
-  // Batch update par catégorie
+  if(nbCat===0){toast('Aucune correspondance trouvée');return;}
   const byCat={};Object.entries(updates).forEach(([id,catId])=>{(byCat[catId]=byCat[catId]||[]).push(id);});
   for(const[catId,ids]of Object.entries(byCat)){
     await sb.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).in('id',ids);
@@ -837,7 +839,7 @@ async function doImport(){
   const compteId=val('imp_co');if(!compteId){toast('Compte requis');return;}
   if(!IMP_DATA||!IMP_DATA.length){toast('Aucune donnée à importer');return;}
   // Charger règles pour catégorisation auto
-  const{data:reglesData}=await sb.from('fin_regles_catego').select('*').eq('actif',true).eq('organization_id',ORG.id).order('priorite',{ascending:false});
+  const{data:reglesData}=await sb.from('fin_regles_catego').select('id,pattern,categorie_id,priorite,applies_to').eq('actif',true).eq('organization_id',ORG.id).order('priorite',{ascending:false});
   const regles=reglesData||[];
   // Construire transactions
   const toInsert=[];const skipped=[];
@@ -855,8 +857,12 @@ async function doImport(){
     if(deb===0 && cre===0){skipped.push(idx);return;}
     const ref=IMP_MAPPING.reference>=0?(r[IMP_MAPPING.reference]||'').toString().trim():null;
     const libLower=lib.toLowerCase();
+    const sens=deb>0?'debit':'credit';
     let catId=null,statut='non_categorisee';
-    for(const rule of regles){if(libLower.includes(rule.pattern.toLowerCase())){catId=rule.categorie_id;statut='categorisee';break;}}
+    for(const rule of regles){
+      if(rule.applies_to && rule.applies_to!=='all' && rule.applies_to!==sens) continue;
+      if(libLower.includes(rule.pattern.toLowerCase())){catId=rule.categorie_id;statut='categorisee';break;}
+    }
     toInsert.push({organization_id:ORG.id,compte_id:compteId,date_operation:d,libelle:lib,reference:ref,debit:deb,credit:cre,categorie_id:catId,statut});
   });
   if(!toInsert.length){toast('Aucune ligne valide — vérifie le mapping');return;}
@@ -912,19 +918,23 @@ async function doImport(){
 }
 
 async function openRegles(){
-  const{data:regles}=await sb.from('fin_regles_catego').select('*,fin_categories(nom)').order('priorite',{ascending:false});
+  const{data:regles}=await sb.from('fin_regles_catego').select('*,fin_categories(nom)').eq('organization_id',ORG.id).order('priorite',{ascending:false});
   const list=regles||[];
-  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:680px">
+  const sensLabel=s=>s==='debit'?'<span class="badge bad" style="font-size:10px">DÉBIT</span>':s==='credit'?'<span class="badge ok" style="font-size:10px">CRÉDIT</span>':'<span class="badge info" style="font-size:10px">TOUT</span>';
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:780px">
     <h2>⚙ Règles de catégorisation auto</h2>
-    <p style="color:var(--muted);font-size:12.5px;margin-bottom:14px">Si un libellé de transaction contient le pattern, la catégorie est appliquée automatiquement à l'import.</p>
-    <table class="tbl" style="margin-bottom:14px"><thead><tr><th>Pattern (contenu dans libellé)</th><th>Catégorie</th><th>Priorité</th><th>Actif</th><th></th></tr></thead><tbody>
-    ${list.map(r=>`<tr><td><code style="background:var(--surface);padding:2px 6px;border-radius:4px;font-size:11.5px">${r.pattern}</code></td><td>${r.fin_categories?.nom||'—'}</td><td>${r.priorite}</td><td>${r.actif?'<span class="badge ok">Oui</span>':'<span class="badge bad">Non</span>'}</td><td><button class="btn ghost sm" onclick="delRegle('${r.id}')">✕</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:18px">Aucune règle</td></tr>'}
-    </tbody></table>
+    <p style="color:var(--muted);font-size:12.5px;margin-bottom:14px">Si un libellé de transaction contient le <b>pattern</b> ET correspond au <b>sens</b> (débit/crédit/tout), la catégorie est appliquée automatiquement.</p>
+    <div style="max-height:340px;overflow-y:auto;margin-bottom:14px"><table class="tbl"><thead><tr><th>Pattern</th><th>Sens</th><th>Catégorie</th><th>Priorité</th><th></th></tr></thead><tbody>
+    ${list.map(r=>`<tr><td><code style="background:var(--surface);padding:2px 6px;border-radius:4px;font-size:11.5px">${r.pattern}</code></td><td>${sensLabel(r.applies_to||'all')}</td><td>${r.fin_categories?.nom||'—'}</td><td>${r.priorite}</td><td><button class="btn ghost sm" title="Supprimer cette règle" onclick="delRegle('${r.id}')">✕</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:18px">Aucune règle</td></tr>'}
+    </tbody></table></div>
     <h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;font-weight:600">+ Ajouter une règle</h3>
-    <div class="grid3">
-      <div class="fld"><label>Pattern (en minuscules)</label><input id="rg_pat" placeholder="ex: edf, urssaf, metro"></div>
+    <div class="grid2" style="margin-bottom:8px">
+      <div class="fld"><label>Pattern (substring du libellé, minuscules)</label><input id="rg_pat" placeholder="ex: edf, urssaf, metro"></div>
+      <div class="fld"><label>S'applique aux</label><select id="rg_sens"><option value="all">Toutes les transactions</option><option value="debit">Débits uniquement (sorties)</option><option value="credit">Crédits uniquement (entrées)</option></select></div>
+    </div>
+    <div class="grid2">
       <div class="fld"><label>Catégorie</label><select id="rg_cat">${S.categories.map(c=>`<option value="${c.id}">${c.nom}</option>`).join('')}</select></div>
-      <div class="fld"><label>Priorité</label><input type="number" id="rg_pri" value="1"></div>
+      <div class="fld"><label>Priorité (plus haute = vérifiée en 1er)</label><input type="number" id="rg_pri" value="5"></div>
     </div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveRegle()">Créer la règle</button></div>
   </div></div>`;
@@ -932,7 +942,7 @@ async function openRegles(){
 async function saveRegle(){
   const pat=val('rg_pat').toLowerCase();
   if(!pat){toast('Pattern requis');return;}
-  const{error}=await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pat,categorie_id:val('rg_cat'),priorite:num('rg_pri')||1});
+  const{error}=await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pat,categorie_id:val('rg_cat'),priorite:num('rg_pri')||5,applies_to:val('rg_sens')||'all'});
   if(error){toast(error.message);return;}toast('Règle créée ✓');openRegles();
 }
 async function delRegle(id){if(!confirm('Supprimer cette règle ?'))return;await sb.from('fin_regles_catego').delete().eq('id',id);openRegles();}
