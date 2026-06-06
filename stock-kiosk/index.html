@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<title>Stock — Kiosque</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:#0b0b15;color:#e8e8ec;min-height:100vh;overflow-x:hidden}
+[data-theme="light"] body{background:#f5f5f7;color:#1a1a1f}
+.scr{min-height:100vh;display:flex;flex-direction:column;padding:20px;max-width:560px;margin:0 auto}
+h1{color:#c8a035;font-size:32px;font-weight:800;text-align:center;margin-bottom:8px}
+h1 small{display:block;font-size:13px;color:#7b7b8a;font-weight:400;margin-top:6px}
+.hint{color:#7b7b8a;text-align:center;font-size:14px;margin-bottom:22px}
+.back{position:absolute;top:14px;left:14px;background:none;border:1px solid #2a2a3a;color:#e8e8ec;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer}
+[data-theme="light"] .back{border-color:rgba(0,0,0,.15);color:#1a1a1f}
+.tile{background:#15151f;border:1px solid rgba(255,255,255,.08);padding:24px;border-radius:14px;text-align:center;cursor:pointer;transition:.15s;font-size:16px;font-weight:600;color:inherit}
+[data-theme="light"] .tile{background:#fff;border-color:rgba(0,0,0,.08)}
+.tile:hover,.tile:active{border-color:#c8a035;transform:translateY(-2px)}
+.tile .ic{font-size:42px;margin-bottom:10px;display:block}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:340px;margin:0 auto}
+.pad button{padding:24px;font-size:24px;font-weight:700;background:#15151f;border:1px solid rgba(255,255,255,.08);color:#e8e8ec;border-radius:14px;cursor:pointer}
+[data-theme="light"] .pad button{background:#fff;border-color:rgba(0,0,0,.08);color:#1a1a1f}
+.pad button:active{background:#c8a035;color:#1a1a1a}
+.pad .clr{background:#28202a;color:#c45a5a;border-color:rgba(196,90,90,.3)}
+.pad .ok{background:#c8a035;color:#1a1a1a;font-weight:800;border:none}
+.pin-display{font-size:36px;letter-spacing:.4em;text-align:center;color:#c8a035;font-weight:800;margin:18px 0;min-height:46px}
+.err{color:#c45a5a;font-size:14px;text-align:center;margin-top:10px}
+.ok-msg{color:#3fb87f;font-weight:700;text-align:center;font-size:18px;padding:30px}
+.user{background:#1c1c28;padding:10px 14px;border-radius:10px;font-size:13px;text-align:center;margin-bottom:18px;color:#c8a035}
+[data-theme="light"] .user{background:#fff}
+.cat-block{background:#15151f;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px;margin-bottom:12px}
+[data-theme="light"] .cat-block{background:#fff;border-color:rgba(0,0,0,.08)}
+.cat-title{font-weight:700;font-size:15px;color:#c8a035;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.cat-title small{font-size:11px;color:#7b7b8a;font-weight:400}
+.prod-row{display:grid;grid-template-columns:1fr 100px;gap:10px;align-items:center;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,.05)}
+[data-theme="light"] .prod-row{border-bottom-color:rgba(0,0,0,.05)}
+.prod-row:last-child{border-bottom:none}
+.prod-name{font-size:14px}
+.prod-name small{display:block;color:#7b7b8a;font-size:11px;margin-top:2px}
+.prod-input{width:100%;padding:12px;border-radius:8px;border:1px solid #2a2a3a;background:#1c1c28;color:#e8e8ec;font-size:18px;text-align:center;font-weight:700;outline:none}
+[data-theme="light"] .prod-input{background:#f0f0f3;border-color:rgba(0,0,0,.12);color:#1a1a1f}
+.prod-input:focus{border-color:#c8a035}
+.prod-input.done{border-color:#3fb87f;background:rgba(63,184,127,.1)}
+.btn{padding:16px;border-radius:10px;background:#c8a035;color:#1a1a1a;font-weight:700;font-size:16px;border:none;cursor:pointer;width:100%}
+.btn.ghost{background:transparent;color:#e8e8ec;border:1px solid #2a2a3a}
+[data-theme="light"] .btn.ghost{color:#1a1a1f;border-color:rgba(0,0,0,.15)}
+.progress{height:8px;background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden;margin:14px 0}
+.progress-bar{height:100%;background:#c8a035;transition:.3s}
+.cat-tabs{display:flex;gap:6px;overflow-x:auto;padding:8px 0;margin-bottom:12px;-webkit-overflow-scrolling:touch}
+.cat-tab{padding:8px 14px;background:#15151f;border:1px solid rgba(255,255,255,.08);border-radius:20px;color:#e8e8ec;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer}
+[data-theme="light"] .cat-tab{background:#fff;color:#1a1a1f;border-color:rgba(0,0,0,.08)}
+.cat-tab.active{background:#c8a035;color:#1a1a1a;border-color:#c8a035}
+.cat-tab .num{margin-left:6px;font-size:11px;opacity:.7}
+</style>
+</head>
+<body>
+<div id="scr"></div>
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+let SALARIE=null,PIN='',SNACK_ID=null,SNACK=null,SNACKS=[],PRODUITS=[],STOCK_MAX={},SAISIES_TODAY={};
+let CURRENT_CAT=null;
+
+async function init(){
+  SNACK_ID=localStorage.getItem('stock_kiosk_snack');
+  if(!SNACK_ID){await pickSnack();return;}
+  const{data:snacks}=await sb.from('restaurants').select('id,nom,organization_id');SNACKS=snacks||[];
+  SNACK=SNACKS.find(s=>s.id===SNACK_ID);
+  if(!SNACK){localStorage.removeItem('stock_kiosk_snack');await pickSnack();return;}
+  // Charger les produits + stock_max + saisies du jour
+  const today=new Date().toISOString().slice(0,10);
+  const[p,m,s]=await Promise.all([
+    sb.from('stock_produits').select('*').eq('actif',true).eq('organization_id',SNACK.organization_id).order('categorie').order('nom'),
+    sb.from('stock_max').select('*').eq('actif',true).eq('restaurant_id',SNACK_ID),
+    sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK_ID).eq('date_saisie',today),
+  ]);
+  PRODUITS=p.data||[];
+  STOCK_MAX={};(m.data||[]).forEach(x=>{STOCK_MAX[x.produit_id]=x;});
+  SAISIES_TODAY={};(s.data||[]).forEach(x=>{SAISIES_TODAY[x.produit_id]=x;});
+  pinScreen();
+}
+
+async function pickSnack(){
+  const{data}=await sb.from('restaurants').select('id,nom').order('nom');
+  SNACKS=data||[];
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <h1>Stock<small>Configuration kiosque</small></h1>
+    <div class="hint">Choisis le snack pour cette tablette :</div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">
+      ${SNACKS.map(s=>`<button class="tile" onclick="setSnack('${s.id}')">${s.nom}</button>`).join('')||'<div style="color:#7b7b8a;text-align:center">Aucun snack configuré</div>'}
+    </div>
+  </div>`;
+}
+function setSnack(id){localStorage.setItem('stock_kiosk_snack',id);location.reload();}
+
+function pinScreen(){
+  PIN='';SALARIE=null;
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="if(confirm('Changer de snack ?')){localStorage.removeItem('stock_kiosk_snack');location.reload();}">⚙</button>
+    <h1>Stock<small>${SNACK?.nom||''}</small></h1>
+    <div class="hint">Saisis ton code PIN pour commencer l'inventaire</div>
+    <div class="pin-display" id="pinDisp"></div>
+    <div class="pad">
+      <button onclick="addPin('1')">1</button><button onclick="addPin('2')">2</button><button onclick="addPin('3')">3</button>
+      <button onclick="addPin('4')">4</button><button onclick="addPin('5')">5</button><button onclick="addPin('6')">6</button>
+      <button onclick="addPin('7')">7</button><button onclick="addPin('8')">8</button><button onclick="addPin('9')">9</button>
+      <button class="clr" onclick="clrPin()">C</button><button onclick="addPin('0')">0</button><button class="ok" onclick="validatePin()">OK</button>
+    </div>
+    <div class="err" id="pinErr"></div>
+  </div>`;
+}
+function addPin(d){if(PIN.length<6){PIN+=d;document.getElementById('pinDisp').textContent='•'.repeat(PIN.length);}}
+function clrPin(){PIN='';document.getElementById('pinDisp').textContent='';document.getElementById('pinErr').textContent='';}
+async function validatePin(){
+  if(!PIN){document.getElementById('pinErr').textContent='Code requis';return;}
+  const{data}=await sb.from('salaries').select('id,nom,prenom,actif').eq('pin_badgeuse',PIN).eq('organization_id',SNACK.organization_id).maybeSingle();
+  if(!data){document.getElementById('pinErr').textContent='Code inconnu';PIN='';document.getElementById('pinDisp').textContent='';return;}
+  if(data.actif===false){document.getElementById('pinErr').textContent='Salarié inactif';return;}
+  SALARIE=data;
+  inventaireScreen();
+}
+
+function inventaireScreen(){
+  // Catégories triées par ordre de produits
+  const cats=[...new Set(PRODUITS.map(p=>p.categorie||'Divers'))].sort();
+  if(!CURRENT_CAT) CURRENT_CAT=cats[0];
+  // Compteurs
+  const totalAFaire=PRODUITS.length;
+  const totalFait=Object.keys(SAISIES_TODAY).length;
+  const pct=totalAFaire?Math.round(totalFait/totalAFaire*100):0;
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <button class="back" onclick="pinScreen()">↩ Sortir</button>
+    <h1>Inventaire<small>${SNACK?.nom||''}</small></h1>
+    <div class="user">👋 ${SALARIE.prenom||''} ${SALARIE.nom} · ${new Date().toLocaleDateString('fr-FR')}</div>
+    <div style="text-align:center;font-size:13px;color:#7b7b8a;margin-bottom:6px">${totalFait} / ${totalAFaire} produits saisis</div>
+    <div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>
+    <div class="cat-tabs">
+      ${cats.map(c=>{const nb=PRODUITS.filter(p=>(p.categorie||'Divers')===c).length;const fait=PRODUITS.filter(p=>(p.categorie||'Divers')===c && SAISIES_TODAY[p.id]).length;return `<button class="cat-tab ${c===CURRENT_CAT?'active':''}" onclick="setCat('${c.replace(/'/g,"\\'")}')">${c}<span class="num">${fait}/${nb}</span></button>`;}).join('')}
+    </div>
+    <div id="prodList"></div>
+    <button class="btn" onclick="finishInventaire()" style="margin-top:16px">${totalFait===totalAFaire?'✓ Terminer':'✓ Sauver et sortir'}</button>
+  </div>`;
+  renderProdList();
+}
+function setCat(c){CURRENT_CAT=c;renderProdList();document.querySelectorAll('.cat-tab').forEach(t=>t.classList.remove('active'));event.target.classList.add('active');}
+function renderProdList(){
+  const list=PRODUITS.filter(p=>(p.categorie||'Divers')===CURRENT_CAT);
+  let html='<div class="cat-block">';
+  list.forEach(p=>{
+    const cur=SAISIES_TODAY[p.id];
+    const max=STOCK_MAX[p.id];
+    const qte=cur?cur.quantite:'';
+    html+=`<div class="prod-row">
+      <div class="prod-name">${p.nom}<small>${p.conditionnement||''}${max?' · max '+max.quantite_max:''}</small></div>
+      <input type="number" step="0.5" class="prod-input ${cur?'done':''}" value="${qte}" placeholder="0" data-pid="${p.id}" onfocus="this.select()" onblur="saveSaisie('${p.id}',this.value)" inputmode="decimal">
+    </div>`;
+  });
+  if(!list.length) html+='<div style="text-align:center;color:#7b7b8a;padding:20px">Aucun produit dans cette catégorie</div>';
+  html+='</div>';
+  document.getElementById('prodList').innerHTML=html;
+}
+async function saveSaisie(pid,vTxt){
+  const v=parseFloat((vTxt||'').replace(',','.'));
+  if(isNaN(v)){
+    if(SAISIES_TODAY[pid]){await sb.from('stock_saisies').delete().eq('id',SAISIES_TODAY[pid].id);delete SAISIES_TODAY[pid];}
+    inventaireScreen();return;
+  }
+  if(SAISIES_TODAY[pid]){
+    await sb.from('stock_saisies').update({quantite:v}).eq('id',SAISIES_TODAY[pid].id);
+    SAISIES_TODAY[pid].quantite=v;
+  } else {
+    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,date_saisie:new Date().toISOString().slice(0,10)}).select().single();
+    if(error){alert(error.message);return;}
+    SAISIES_TODAY[pid]=data;
+  }
+  // Mise à jour visuelle sans tout re-render
+  const tabs=document.querySelectorAll('.cat-tab');
+  const cats=[...new Set(PRODUITS.map(p=>p.categorie||'Divers'))].sort();
+  cats.forEach((c,i)=>{const nb=PRODUITS.filter(p=>(p.categorie||'Divers')===c).length;const fait=PRODUITS.filter(p=>(p.categorie||'Divers')===c && SAISIES_TODAY[p.id]).length;if(tabs[i])tabs[i].querySelector('.num').textContent=`${fait}/${nb}`;});
+  const totalFait=Object.keys(SAISIES_TODAY).length;
+  const totalAFaire=PRODUITS.length;
+  document.querySelector('.progress-bar').style.width=(totalFait/totalAFaire*100)+'%';
+  // Update done class
+  const inp=document.querySelector(`input[data-pid="${pid}"]`);
+  if(inp){if(SAISIES_TODAY[pid])inp.classList.add('done');else inp.classList.remove('done');}
+}
+function finishInventaire(){
+  const totalFait=Object.keys(SAISIES_TODAY).length;
+  const totalAFaire=PRODUITS.length;
+  document.getElementById('scr').innerHTML=`<div class="scr" style="justify-content:center">
+    <div style="text-align:center;font-size:80px">✓</div>
+    <div class="ok-msg">${totalFait===totalAFaire?'Inventaire complet enregistré !':totalFait+' / '+totalAFaire+' produits saisis'}</div>
+    <div style="text-align:center;color:#7b7b8a;font-size:14px;margin-bottom:24px">Merci ${SALARIE.prenom||SALARIE.nom} ✨</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn" onclick="CURRENT_CAT=null;pinScreen()">Sortir</button>
+      <button class="btn ghost" onclick="inventaireScreen()">Continuer la saisie</button>
+    </div>
+  </div>`;
+  setTimeout(()=>{if(document.querySelector('.ok-msg'))pinScreen();},8000);
+}
+
+init();
+</script>
+</body>
+</html>

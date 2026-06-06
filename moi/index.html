@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<title>Mon espace — Eatime360</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
+[data-theme="light"]{--gold:#c8a035;--bg:#f5f5f7;--card:#ffffff;--surface:#f0f0f3;--line:rgba(0,0,0,.06);--line-2:rgba(0,0,0,.12);--text:#1a1a1f;--muted:#6b6b78;--ok:#2a8f5f;--warn:#b8841f;--bad:#b04444;--info:#4a7fbd}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:15px;padding-bottom:80px}
+button{cursor:pointer;border:none;background:none;font-family:inherit;color:var(--text)}
+input,select,textarea{font-family:inherit;color:var(--text)}
+.hidden{display:none!important}
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px}
+.lock h1{color:var(--gold);font-size:28px;text-align:center}
+.lock .sub{color:var(--muted);font-size:14px;text-align:center;margin-bottom:10px}
+.lock input{padding:14px 18px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);font-size:15px;width:100%;max-width:320px;outline:none;text-align:center}
+.btn{padding:14px 18px;border-radius:12px;background:var(--gold);color:#1a1a1a;font-weight:700;font-size:15px;border:none;cursor:pointer;width:100%;max-width:320px}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
+.btn.sm{padding:10px 14px;font-size:13px;width:auto}
+.err{color:var(--bad);font-size:13px;text-align:center;min-height:18px}
+
+.header{padding:18px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+.av{width:42px;height:42px;border-radius:50%;background:var(--gold);color:#1a1a1a;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px}
+.user-info{flex:1}
+.user-info .nm{font-weight:700}
+.user-info .role{color:var(--muted);font-size:12px}
+
+.tabs-bar{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;justify-content:space-around;padding:8px 4px;z-index:50;padding-bottom:max(8px,env(safe-area-inset-bottom))}
+.tab-btn{flex:1;padding:10px 6px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:11px;font-weight:600;background:none;border:none}
+.tab-btn.active{color:var(--gold)}
+.tab-btn .ic{font-size:22px}
+
+.wrap{padding:16px}
+.h2{font-size:20px;font-weight:700;margin-bottom:4px}
+.h2-sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+.card-x{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
+.section{margin-bottom:24px}
+.kpi-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.kpi-x{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.kpi-x .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.kpi-x .val{font-size:24px;font-weight:800;margin-top:4px}
+
+/* Planning grid */
+.week-grid{display:grid;grid-template-columns:60px 1fr;gap:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.day-row{display:contents}
+.day-label{padding:14px 10px;background:var(--surface);border-bottom:1px solid var(--line);font-weight:700;font-size:13px}
+.day-label small{display:block;color:var(--muted);font-weight:400;font-size:11px;margin-top:2px}
+.day-content{padding:12px;border-bottom:1px solid var(--line);min-height:50px}
+.shift{background:rgba(200,160,53,.12);border-left:3px solid var(--gold);padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:13px}
+.shift:last-child{margin-bottom:0}
+.shift .h{font-weight:700;color:var(--gold)}
+.shift .ds{color:var(--muted);font-size:11px;margin-top:2px}
+.no-shift{color:var(--muted);font-size:12px;font-style:italic}
+
+/* Indispo */
+.dispo-item{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px}
+.dispo-item .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase}
+.badge.ok{background:rgba(63,184,127,.15);color:var(--ok)}
+.badge.warn{background:rgba(224,169,58,.15);color:var(--warn)}
+.badge.bad{background:rgba(196,90,90,.15);color:var(--bad)}
+
+.fab{position:fixed;bottom:90px;right:16px;width:56px;height:56px;border-radius:50%;background:var(--gold);color:#1a1a1a;font-size:28px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:40}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:flex-end;justify-content:center;z-index:100}
+.modal{background:var(--card);border-radius:18px 18px 0 0;padding:24px 18px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto;padding-bottom:max(24px,env(safe-area-inset-bottom))}
+@media(min-width:600px){.modal-bg{align-items:center;padding:20px}.modal{border-radius:18px}}
+.modal h2{font-size:18px;font-weight:700;margin-bottom:14px}
+.fld{margin-bottom:14px}
+.fld label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600}
+.fld input,.fld select,.fld textarea{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:15px;outline:none}
+
+.toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:#222;color:#fff;border:1px solid var(--line-2);padding:11px 22px;border-radius:24px;font-size:13px;opacity:0;transition:.25s;z-index:200}
+.toast.show{opacity:1}
+
+.pointage{padding:10px 12px;background:var(--surface);border-radius:8px;font-size:13px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.pointage .ts{font-weight:700;color:var(--gold)}
+.pointage .ty{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+</style>
+</head>
+<body>
+
+<div id="lock" class="lock hidden">
+  <h1>Mon Espace</h1>
+  <div class="sub">Connecte-toi avec ton compte personnel</div>
+  <input type="email" id="loginEmail" placeholder="Email" autocomplete="email">
+  <input type="password" id="loginPw" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+  <button class="btn" onclick="login()">Se connecter</button>
+  <div class="err" id="err"></div>
+  <div style="color:var(--muted);font-size:12.5px;text-align:center;max-width:320px;line-height:1.5">Pas encore de compte ? Demande à ton manager de t'envoyer une invitation.</div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="header">
+    <div class="av" id="userAv">?</div>
+    <div class="user-info">
+      <div class="nm" id="userName">—</div>
+      <div class="role" id="userRole">—</div>
+    </div>
+    <button class="btn ghost sm" onclick="logout()">↩</button>
+  </div>
+  <div class="wrap" id="content"></div>
+  <div class="tabs-bar">
+    <button class="tab-btn active" data-tab="planning" onclick="setTab('planning')"><span class="ic">📅</span><span>Planning</span></button>
+    <button class="tab-btn" data-tab="dispos" onclick="setTab('dispos')"><span class="ic">📆</span><span>Indispos</span></button>
+    <button class="tab-btn" data-tab="pointages" onclick="setTab('pointages')"><span class="ic">⏱</span><span>Pointages</span></button>
+    <button class="tab-btn" data-tab="profil" onclick="setTab('profil')"><span class="ic">👤</span><span>Profil</span></button>
+  </div>
+</div>
+
+<div id="modalHost"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+let ME=null,SALARIE=null,ORG={},TAB='planning';
+let WEEK_OFFSET=0;
+const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+const JOURS_SH=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+
+let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
+function val(id){const e=document.getElementById(id);return e?(e.value||'').trim():'';}
+function fmtD(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR');}
+function fmtDS(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});}
+
+async function login(){
+  const{error}=await sb.auth.signInWithPassword({email:val('loginEmail'),password:val('loginPw')});
+  if(error){document.getElementById('err').textContent=error.message;return;}
+  await loadAndShow();
+}
+async function loadAndShow(){
+  const{data:{session}}=await sb.auth.getSession();if(!session)return;
+  const{data:profile}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
+  ME=profile;
+  const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();ORG=org||{};
+  if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
+  if(ORG.suspended){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue.</div>';return;}
+  // Charger la fiche salarié liée
+  if(profile.salarie_id){const{data:s}=await sb.from('salaries').select('*').eq('id',profile.salarie_id).maybeSingle();SALARIE=s;}
+  document.getElementById('lock').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  const nm=SALARIE?((SALARIE.prenom?SALARIE.prenom+' ':'')+SALARIE.nom):(profile.full_name||profile.email);
+  document.getElementById('userName').textContent=nm;
+  document.getElementById('userRole').textContent=profile.role.charAt(0).toUpperCase()+profile.role.slice(1).replace('_',' ');
+  document.getElementById('userAv').textContent=(nm||'?').charAt(0).toUpperCase();
+  render();
+}
+async function logout(){await sb.auth.signOut();location.reload();}
+sb.auth.getSession().then(({data})=>{if(data.session)loadAndShow();else document.getElementById('lock').classList.remove('hidden');});
+
+function setTab(t){TAB=t;WEEK_OFFSET=0;document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();}
+
+function render(){
+  const el=document.getElementById('content');
+  if(TAB==='planning') return renderPlanning(el);
+  if(TAB==='dispos') return renderDispos(el);
+  if(TAB==='pointages') return renderPointages(el);
+  if(TAB==='profil') return renderProfil(el);
+}
+
+// ─────── PLANNING ───────
+function getMonday(offset){
+  const d=new Date();
+  const day=d.getDay();const diff=(day===0?-6:1-day)+(offset*7);
+  d.setDate(d.getDate()+diff);d.setHours(0,0,0,0);
+  return d;
+}
+async function renderPlanning(el){
+  if(!SALARIE){el.innerHTML='<div class="card-x" style="text-align:center;color:var(--muted)">Ton compte n\'est pas lié à une fiche salarié. Demande à ton manager.</div>';return;}
+  const monday=getMonday(WEEK_OFFSET);
+  const sunday=new Date(monday);sunday.setDate(sunday.getDate()+6);
+  const from=monday.toISOString().slice(0,10),to=sunday.toISOString().slice(0,10);
+  el.innerHTML=`<div class="h2">Mon planning</div>
+    <div class="h2-sub" id="weekLbl">${monday.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})} → ${sunday.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})}</div>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="btn ghost sm" onclick="WEEK_OFFSET--;renderPlanning(document.getElementById('content'))">‹ Semaine préc.</button>
+      ${WEEK_OFFSET!==0?'<button class="btn ghost sm" onclick="WEEK_OFFSET=0;renderPlanning(document.getElementById(\'content\'))">Aujourd\'hui</button>':''}
+      <button class="btn ghost sm" style="margin-left:auto" onclick="WEEK_OFFSET++;renderPlanning(document.getElementById('content'))">Semaine suiv. ›</button>
+    </div>
+    <div id="planContent">Chargement…</div>`;
+  const{data:cren}=await sb.from('planning_creneaux').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('date',from).lte('date',to).order('date').order('service');
+  const list=cren||[];
+  let html='<div class="week-grid">';
+  for(let i=0;i<7;i++){
+    const day=new Date(monday);day.setDate(day.getDate()+i);
+    const dayStr=day.toISOString().slice(0,10);
+    const shifts=list.filter(c=>c.date===dayStr);
+    html+=`<div class="day-label">${JOURS_SH[i]}<small>${day.getDate()}/${(day.getMonth()+1).toString().padStart(2,'0')}</small></div><div class="day-content">`;
+    if(!shifts.length) html+='<div class="no-shift">Repos</div>';
+    else shifts.forEach(s=>{html+=`<div class="shift"><div class="h">${(s.heure_debut||'').slice(0,5)} → ${(s.heure_fin||'').slice(0,5)}</div><div class="ds">${s.restaurants?.nom||'—'} · ${s.service==='midi'?'Midi':'Soir'} · ${s.role||''}</div></div>`;});
+    html+='</div>';
+  }
+  html+='</div>';
+  // KPI semaine
+  let totalMin=0;list.forEach(s=>{const[h1,m1]=(s.heure_debut||'00:00').slice(0,5).split(':').map(Number);let[h2,m2]=(s.heure_fin||'00:00').slice(0,5).split(':').map(Number);let mins=(h2*60+m2)-(h1*60+m1);if(mins<0)mins+=24*60;totalMin+=mins;});
+  const totalH=(totalMin/60).toFixed(1);
+  html=`<div class="kpi-row"><div class="kpi-x"><div class="lbl">Heures semaine</div><div class="val" style="color:var(--gold)">${totalH}h</div></div><div class="kpi-x"><div class="lbl">Shifts</div><div class="val">${list.length}</div></div></div>`+html;
+  document.getElementById('planContent').innerHTML=html;
+}
+
+// ─────── INDISPOS ───────
+async function renderDispos(el){
+  if(!SALARIE){el.innerHTML='<div class="card-x" style="text-align:center;color:var(--muted)">Compte non lié à une fiche salarié.</div>';return;}
+  const{data}=await sb.from('salarie_dispos').select('*').eq('salarie_id',SALARIE.id).order('created_at',{ascending:false});
+  const list=data||[];
+  let html=`<div class="h2">Mes indisponibilités</div>
+    <div class="h2-sub">${list.filter(d=>d.statut_demande==='en_attente').length} en attente · ${list.filter(d=>d.statut_demande==='validee').length} validées</div>`;
+  if(!list.length) html+='<div class="card-x" style="text-align:center;color:var(--muted)">Aucune indisponibilité déclarée</div>';
+  else list.forEach(d=>{
+    const stat=d.statut_demande==='validee'?'<span class="badge ok">Validée</span>':d.statut_demande==='refusee'?'<span class="badge bad">Refusée</span>':'<span class="badge warn">En attente</span>';
+    const txt=d.type==='recurrente'?`Tous les ${JOURS[d.jour_semaine].toLowerCase()}s`:d.date_specifique?fmtDS(d.date_specifique):'—';
+    const plage=(d.heure_debut||d.heure_fin)?`${(d.heure_debut||'').slice(0,5)} → ${(d.heure_fin||'').slice(0,5)}`:'Journée entière';
+    html+=`<div class="dispo-item"><div class="hd"><div style="font-weight:700">${txt}</div>${stat}</div><div style="color:var(--muted);font-size:12.5px">${plage}${d.motif?' · '+d.motif:''}</div></div>`;
+  });
+  el.innerHTML=html+'<button class="fab" onclick="openDispo()">+</button>';
+}
+function openDispo(){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Déclarer une indisponibilité</h2>
+    <div class="fld"><label>Type</label><select id="d_type" onchange="updateDispoType()"><option value="ponctuelle">Ponctuelle (1 jour précis)</option><option value="recurrente">Récurrente (tous les semaines)</option></select></div>
+    <div class="fld" id="d_dateBox"><label>Date</label><input type="date" id="d_date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="fld hidden" id="d_jourBox"><label>Jour de la semaine</label><select id="d_jour">${JOURS.map((j,i)=>`<option value="${i}">${j}</option>`).join('')}</select></div>
+    <div class="fld"><label>Toute la journée ?</label><select id="d_full" onchange="updateDispoFull()"><option value="1">Oui, journée entière</option><option value="0">Non, plage horaire</option></select></div>
+    <div class="hidden" id="d_plageBox"><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>De</label><input type="time" id="d_hd" value="14:00"></div><div class="fld"><label>À</label><input type="time" id="d_hf" value="18:00"></div></div></div>
+    <div class="fld"><label>Motif (optionnel)</label><input id="d_motif" placeholder="Ex: école, rdv médical…"></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn ghost" onclick="closeModal()" style="flex:1">Annuler</button>
+      <button class="btn" onclick="saveDispo()" style="flex:1">Envoyer la demande</button>
+    </div>
+  </div></div>`;
+}
+function updateDispoType(){const t=val('d_type');document.getElementById('d_dateBox').classList.toggle('hidden',t==='recurrente');document.getElementById('d_jourBox').classList.toggle('hidden',t!=='recurrente');}
+function updateDispoFull(){document.getElementById('d_plageBox').classList.toggle('hidden',val('d_full')==='1');}
+async function saveDispo(){
+  const type=val('d_type');
+  const payload={organization_id:ORG.id,salarie_id:SALARIE.id,type,statut_demande:'en_attente',motif:val('d_motif')||null,statut:'indispo'};
+  if(type==='ponctuelle') payload.date_specifique=val('d_date');
+  else payload.jour_semaine=parseInt(val('d_jour'));
+  if(val('d_full')==='0'){payload.heure_debut=val('d_hd');payload.heure_fin=val('d_hf');}
+  const{error}=await sb.from('salarie_dispos').insert(payload);
+  if(error){toast(error.message);return;}
+  toast('✓ Demande envoyée');closeModal();renderDispos(document.getElementById('content'));
+}
+
+// ─────── POINTAGES ───────
+async function renderPointages(el){
+  if(!SALARIE){el.innerHTML='<div class="card-x" style="text-align:center;color:var(--muted)">Compte non lié à une fiche salarié.</div>';return;}
+  const since=new Date();since.setDate(since.getDate()-30);
+  const{data}=await sb.from('pointages').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('ts',since.toISOString()).order('ts',{ascending:false});
+  const list=data||[];
+  // Calcul heures par jour
+  const byDay={};list.forEach(p=>{const d=p.ts.slice(0,10);(byDay[d]=byDay[d]||[]).push(p);});
+  const days=Object.keys(byDay).sort().reverse();
+  let totalH=0;
+  days.forEach(d=>{const arr=byDay[d].sort((a,b)=>a.ts.localeCompare(b.ts));for(let i=0;i<arr.length-1;i+=2){if(arr[i].type==='entree'&&arr[i+1].type==='sortie'){const dur=(new Date(arr[i+1].ts)-new Date(arr[i].ts))/3600000;byDay[d].hours=(byDay[d].hours||0)+dur;totalH+=dur;}}});
+  let html=`<div class="h2">Mes pointages</div><div class="h2-sub">30 derniers jours · ${totalH.toFixed(1)}h total</div>`;
+  if(!days.length) html+='<div class="card-x" style="text-align:center;color:var(--muted)">Aucun pointage</div>';
+  else days.forEach(d=>{
+    html+=`<div class="card-x">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700">${new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'short'})}</div><div style="color:var(--gold);font-weight:700">${(byDay[d].hours||0).toFixed(1)}h</div></div>`;
+    byDay[d].forEach(p=>{html+=`<div class="pointage"><span class="ts">${new Date(p.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span><span class="ty">${p.type}</span><span style="color:var(--muted);font-size:11px">${p.restaurants?.nom||'—'}</span></div>`;});
+    html+='</div>';
+  });
+  el.innerHTML=html;
+}
+
+// ─────── PROFIL ───────
+async function renderProfil(el){
+  let html=`<div class="h2">Mon profil</div>`;
+  if(SALARIE){
+    html+=`<div class="card-x">
+      <div style="font-weight:700;font-size:16px;margin-bottom:10px">${SALARIE.prenom||''} ${SALARIE.nom}</div>
+      <div style="color:var(--muted);font-size:13px;line-height:1.7">
+        ${SALARIE.poste_intitule?'<div>📋 '+SALARIE.poste_intitule+'</div>':''}
+        ${SALARIE.type_contrat?'<div>📄 '+SALARIE.type_contrat+'</div>':''}
+        ${SALARIE.date_entree?'<div>📅 Depuis le '+fmtD(SALARIE.date_entree)+'</div>':''}
+        ${SALARIE.heures_max?'<div>⏱ '+(SALARIE.heures_min||0)+'h - '+SALARIE.heures_max+'h / semaine</div>':''}
+        ${SALARIE.pin_badgeuse?'<div>🔢 PIN badgeuse : <b style="color:var(--gold)">'+SALARIE.pin_badgeuse+'</b></div>':''}
+      </div>
+    </div>`;
+  }
+  html+=`<div class="card-x">
+    <div style="font-weight:700;margin-bottom:8px">Apparence</div>
+    <div style="display:flex;gap:10px">
+      <button class="btn ghost" onclick="setEatimeTheme('dark');renderProfil(document.getElementById('content'))" style="flex:1">🌙 Sombre</button>
+      <button class="btn ghost" onclick="setEatimeTheme('light');renderProfil(document.getElementById('content'))" style="flex:1">☀ Clair</button>
+    </div>
+  </div>
+  <div class="card-x">
+    <div style="font-weight:700;margin-bottom:8px">Compte</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:10px">${ME.email}</div>
+    <button class="btn ghost" onclick="logout()">Se déconnecter</button>
+  </div>`;
+  el.innerHTML=html;
+}
+function setEatimeTheme(t){localStorage.setItem('eatime_theme',t);document.documentElement.setAttribute('data-theme',t);toast(t==='light'?'☀ Thème clair':'🌙 Thème sombre');}
+
+function closeModal(){document.getElementById('modalHost').innerHTML='';}
+</script>
+</body>
+</html>

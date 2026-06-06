@@ -80,7 +80,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
   <div class="modules" id="modules"></div>
-  <div class="footer">Eatime360 · v2.0 · mode maintenance global</div>
+  <div class="footer">Eatime360 · v2.4 · Stock Kiosk + Mon Espace mobile</div>
 </div>
 
 <script>
@@ -94,16 +94,18 @@ const MODULES=[
   {id:'planning',ic:'📅',nm:'Planning',ds:'Grille hebdo, auto-fill, vérifs'},
   {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Kiosk de pointage (1 par snack)'},
   {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes'},
+  {id:'moi',ic:'👤',nm:'Mon Espace',ds:'Planning, indispos, pointages perso'},
   {id:'haccp',ic:'🌡',nm:'HACCP',ds:'T°, huiles, réception, nettoyage'},
   {id:'haccp-kiosk',ic:'📱',nm:'HACCP Kiosque',ds:'Saisie terrain par PIN salarié'},
   {id:'finance',ic:'📈',nm:'Finance',ds:'CA, dépenses, trésorerie, marge'},
-  {id:'stock',ic:'📦',nm:'Stock',ds:'Inventaire, fournisseurs, feuille de besoin'},
+  {id:'stock',ic:'📦',nm:'Stock (admin)',ds:'Référentiel, dashboard, feuille de besoin'},
+  {id:'stock-kiosk',ic:'📱',nm:'Stock Kiosque',ds:'Inventaire terrain par PIN salarié'},
   {id:'facturation',ic:'🧾',nm:'Facturation',ds:'BL, factures, suivi des paiements'},
   {id:'parametres',ic:'⚙',nm:'Paramètres',ds:'Identité, couleurs, accès, permissions'}
 ];
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
 // Defaults si org.permissions absent
-const DEFAULT_PERMS={salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager','salarie'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],facturation:['admin'],parametres:['admin']};
+const DEFAULT_PERMS={moi:['*'],salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],'stock-kiosk':['*'],facturation:['admin'],parametres:['admin']};
 
 function showSignup(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Créer un compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
 function showLogin(){document.getElementById('signupBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
@@ -135,6 +137,10 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
+  // Si rôle salarie → redirection auto vers Mon Espace
+  if(profile.role==='salarie' && !location.search.includes('stay')){
+    location.href='moi/';return;
+  }
   // Charge l'org pour le thème + permissions + état maintenance global
   const[orgRes,modRes]=await Promise.all([
     sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle(),

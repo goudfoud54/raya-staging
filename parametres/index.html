@@ -238,8 +238,8 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 let ME=null,ORG=null;
-const MODULES_LIST=['salaries','planning','badgeuse','dispos','haccp','finance','stock','facturation','parametres'];
-const MODULES_LBL={salaries:'Gestion Salariés',planning:'Planning',badgeuse:'Badgeuse',dispos:'Mes indispos',haccp:'HACCP',finance:'Finance',stock:'Stock',facturation:'Facturation',parametres:'Paramètres'};
+const MODULES_LIST=['moi','salaries','planning','badgeuse','dispos','haccp','haccp-kiosk','finance','stock','stock-kiosk','facturation','parametres'];
+const MODULES_LBL={moi:'Mon Espace (salarié)',salaries:'Gestion Salariés',planning:'Planning',badgeuse:'Badgeuse',dispos:'Mes indispos',haccp:'HACCP','haccp-kiosk':'HACCP Kiosque',finance:'Finance',stock:'Stock (admin)','stock-kiosk':'Stock Kiosque',facturation:'Facturation',parametres:'Paramètres'};
 const ROLES=['admin','manager','salarie'];
 const ROLES_LBL={admin:'Admin',manager:'Manager',salarie:'Salarié'};
 
