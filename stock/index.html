@@ -242,63 +242,81 @@ async function renderBesoin(el){
   const since=new Date();since.setDate(since.getDate()-7);
   const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',since.toISOString().slice(0,10)).order('date_saisie',{ascending:false});
   const last={};(saisies||[]).forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
-  const besoinByFourn={};
+  // Construire la liste des besoins (à plat)
+  const besoin=[];
   S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>{
     const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
     const cur=last[m.produit_id]?Number(last[m.produit_id].quantite):0;
     const need=Math.max(0,Number(m.quantite_max)-cur);
     if(need<=0)return;
-    const fid=p.fournisseur_principal_id||'_sans';
-    (besoinByFourn[fid]=besoinByFourn[fid]||[]).push({produit:p,cur,max:Number(m.quantite_max),need,date:last[m.produit_id]?.date_saisie});
+    besoin.push({produit:p,cur,max:Number(m.quantite_max),need,date:last[m.produit_id]?.date_saisie});
   });
+  const totalEur=besoin.reduce((a,x)=>a+x.need*Number(x.produit.cout_unitaire||0),0);
   let html=`<div class="toolbar">
     <h2 style="font-size:18px;font-weight:700;flex:1">Feuille de besoin — ${SNACK.nom}</h2>
+    <button class="btn ghost" onclick="copyBesoinAll()">📋 Copier toute la commande</button>
     <button class="btn" onclick="exportBesoinPDF()">📄 Export PDF</button>
   </div>`;
-  if(!Object.keys(besoinByFourn).length){html+='<div class="section" style="text-align:center;color:var(--ok)">✓ Aucun besoin — stocks au max partout</div>';el.innerHTML=html;return;}
-  Object.entries(besoinByFourn).forEach(([fid,arr])=>{
-    const fnom=fid==='_sans'?'(sans fournisseur principal)':nameFourn(fid);
-    let totalEur=0;arr.forEach(x=>{totalEur+=x.need*Number(x.produit.cout_unitaire||0);});
-    html+=`<div class="section"><h3>${fnom} <span style="color:var(--text);font-weight:700;font-size:14px;margin-left:8px">${eur(totalEur)} HT estimé</span>
-      <button class="btn sm" style="float:right" onclick="copyBesoinWA('${fid}')">📋 Copier WhatsApp</button>
-    </h3>
-      <table class="tbl"><thead><tr><th>Produit</th><th>Actuel</th><th>Max</th><th>À commander</th><th>Cond. fourn.</th><th>€ HT</th></tr></thead><tbody>`;
-    arr.sort((a,b)=>b.need-a.need).forEach(x=>{
-      const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
-      html+=`<tr><td><b>${x.produit.nom}</b><div style="color:var(--muted);font-size:11px">dernière saisie : ${fmtD(x.date)}</div></td><td>${x.cur}</td><td>${x.max}</td><td><b style="color:var(--gold);font-size:15px">${x.need}</b> ${x.produit.unite||''}</td><td style="color:var(--muted);font-size:11.5px">${cond}</td><td>${eur(x.need*Number(x.produit.cout_unitaire||0))}</td></tr>`;
-    });
-    html+='</tbody></table></div>';
+  if(!besoin.length){html+='<div class="section" style="text-align:center;color:var(--ok)">✓ Aucun besoin — stocks au max partout</div>';el.innerHTML=html;return;}
+  // Vue unifiée : 1 seul bloc, ordonné par catégorie puis nom
+  besoin.sort((a,b)=>{
+    const c=(a.produit.categorie||'Divers').localeCompare(b.produit.categorie||'Divers');
+    return c!==0?c:a.produit.nom.localeCompare(b.produit.nom);
   });
-  // Stocker pour reusable par copyBesoinWA
-  window._BESOIN_BY_FOURN=besoinByFourn;
+  html+=`<div class="section">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="color:var(--muted);font-size:13px">${besoin.length} produit${besoin.length>1?'s':''} à commander</div>
+      <div style="font-weight:700;font-size:15px">${eur(totalEur)} HT estimé</div>
+    </div>
+    <table class="tbl"><thead><tr><th>Catégorie</th><th>Produit</th><th>Fournisseur</th><th>Actuel</th><th>Max</th><th>À commander</th><th>Cond.</th><th>€ HT</th></tr></thead><tbody>`;
+  let prevCat=null;
+  besoin.forEach(x=>{
+    const cat=x.produit.categorie||'Divers';
+    const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
+    const fnom=x.produit.fournisseur_principal_id?nameFourn(x.produit.fournisseur_principal_id):'<span style="color:var(--muted)">—</span>';
+    const catCell=cat===prevCat?'':`<b style="color:var(--gold);font-size:12.5px;text-transform:uppercase;letter-spacing:.03em">${cat}</b>`;
+    prevCat=cat;
+    html+=`<tr><td style="vertical-align:top">${catCell}</td><td><b>${x.produit.nom}</b><div style="color:var(--muted);font-size:11px">dernière saisie : ${fmtD(x.date)}</div></td><td style="font-size:12.5px">${fnom}</td><td>${x.cur}</td><td>${x.max}</td><td><b style="color:var(--gold);font-size:15px">${x.need}</b> ${x.produit.unite||''}</td><td style="color:var(--muted);font-size:11.5px">${cond}</td><td>${eur(x.need*Number(x.produit.cout_unitaire||0))}</td></tr>`;
+  });
+  html+='</tbody></table></div>';
+  window._BESOIN_LIST=besoin;
   el.innerHTML=html;
 }
-function copyBesoinWA(fid){
-  const arr=(window._BESOIN_BY_FOURN||{})[fid];
-  if(!arr||!arr.length){toast('Rien à copier');return;}
-  const fnom=fid==='_sans'?'(sans fournisseur)':nameFourn(fid);
-  // Regrouper par catégorie
-  const byCat={};
-  arr.forEach(x=>{
-    const c=x.produit.categorie||'Divers';
-    (byCat[c]=byCat[c]||[]).push(x);
+function copyBesoinAll(){
+  const besoin=window._BESOIN_LIST||[];
+  if(!besoin.length){toast('Rien à copier');return;}
+  // Regrouper par fournisseur, puis dans chaque fournisseur par catégorie
+  const byFourn={};
+  besoin.forEach(x=>{
+    const fid=x.produit.fournisseur_principal_id||'_sans';
+    (byFourn[fid]=byFourn[fid]||[]).push(x);
   });
   const today=new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
-  let txt=`*Commande ${SNACK.nom}*\n${today}\nFournisseur : ${fnom}\n`;
+  let txt=`*Commande ${SNACK.nom}*\n${today}\n`;
   let totalEur=0;
-  Object.keys(byCat).sort().forEach(c=>{
-    txt+=`\n— ${c.toUpperCase()} —\n`;
-    byCat[c].sort((a,b)=>a.produit.nom.localeCompare(b.produit.nom)).forEach(x=>{
-      const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
-      const unit=x.produit.unite||'';
-      txt+=`• ${x.produit.nom} — *${x.need}*${unit?' '+unit:''}${cond?' ('+cond+')':''}\n`;
-      totalEur+=x.need*Number(x.produit.cout_unitaire||0);
+  Object.keys(byFourn).forEach(fid=>{
+    const fnom=fid==='_sans'?'(Sans fournisseur)':nameFourn(fid);
+    const arr=byFourn[fid];
+    let subTotal=0;
+    txt+=`\n━━━━━━━━━━━━━━\n*${fnom.toUpperCase()}*\n━━━━━━━━━━━━━━\n`;
+    // Grouper par catégorie
+    const byCat={};
+    arr.forEach(x=>{const c=x.produit.categorie||'Divers';(byCat[c]=byCat[c]||[]).push(x);});
+    Object.keys(byCat).sort().forEach(c=>{
+      txt+=`\n— ${c.toUpperCase()} —\n`;
+      byCat[c].sort((a,b)=>a.produit.nom.localeCompare(b.produit.nom)).forEach(x=>{
+        const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
+        const unit=x.produit.unite||'';
+        txt+=`• ${x.produit.nom} — *${x.need}*${unit?' '+unit:''}${cond?' ('+cond+')':''}\n`;
+        const eurX=x.need*Number(x.produit.cout_unitaire||0);
+        subTotal+=eurX;totalEur+=eurX;
+      });
     });
+    txt+=`\n_Sous-total ${fnom} : ${eur(subTotal)} HT_\n`;
   });
-  txt+=`\nTotal estimé : ${eur(totalEur)} HT\n\nMerci 🙏`;
-  // Copier dans le presse-papier
+  txt+=`\n*TOTAL GÉNÉRAL : ${eur(totalEur)} HT*\n\nMerci 🙏`;
   if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(txt).then(()=>toast('✓ Texte copié — colle-le dans WhatsApp')).catch(()=>fallbackCopy(txt));
+    navigator.clipboard.writeText(txt).then(()=>toast('✓ Toute la commande copiée — colle dans WhatsApp')).catch(()=>fallbackCopy(txt));
   } else fallbackCopy(txt);
 }
 function fallbackCopy(txt){
