@@ -1,0 +1,342 @@
+// Eatime AI — widget flottant
+// S'auto-injecte sur toutes les pages de l'app. Reconnaît la page via le pathname.
+// Dépendances : Supabase JS SDK (déjà chargé par chaque module).
+
+(function(){
+  if (window.__EATIME_AI_WIDGET__) return;
+  window.__EATIME_AI_WIDGET__ = true;
+
+  // Skip on /index page if not authenticated yet — wait until session
+  function ensureSb() {
+    if (typeof supabase === 'undefined') return null;
+    // Récupère la clé Supabase depuis un client déjà créé sur la page si possible
+    const url = (window.__EATIME_SUPA_URL__) || 'https://ynnqvtfayrdteqtgxeuk.supabase.co';
+    const key = (window.__EATIME_SUPA_KEY__) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+    return { url, sb: supabase.createClient(url, key), key };
+  }
+
+  function detectModule() {
+    const p = location.pathname;
+    if (p.includes('stock-kiosk')) return 'stock-kiosk';
+    if (p.includes('haccp-kiosk')) return 'haccp-kiosk';
+    if (p.includes('badgeuse')) return 'badgeuse';
+    if (p.includes('salaries')) return 'salaries';
+    if (p.includes('planning')) return 'planning';
+    if (p.includes('haccp')) return 'haccp';
+    if (p.includes('stock')) return 'stock';
+    if (p.includes('finance')) return 'finance';
+    if (p.includes('facturation')) return 'facturation';
+    if (p.includes('parametres')) return 'parametres';
+    if (p.includes('moi')) return 'moi';
+    if (p.includes('dispos')) return 'dispos';
+    if (p.includes('import-contrats')) return 'import-contrats';
+    return 'portail';
+  }
+
+  // ─────── STYLE ───────
+  const style = document.createElement('style');
+  style.textContent = `
+  .eai-fab{position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#c8a035,#e0a93a);color:#1a1a1a;font-size:28px;border:none;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:99998;display:flex;align-items:center;justify-content:center;transition:.2s;font-weight:700}
+  .eai-fab:hover{transform:scale(1.08);box-shadow:0 12px 30px rgba(0,0,0,.5)}
+  .eai-fab .pulse{position:absolute;inset:0;border-radius:50%;border:2px solid #c8a035;animation:eai-pulse 2s infinite;opacity:.6}
+  @keyframes eai-pulse{0%{transform:scale(1);opacity:.6}100%{transform:scale(1.5);opacity:0}}
+  .eai-panel{position:fixed;bottom:24px;right:24px;width:420px;max-width:calc(100vw - 24px);height:640px;max-height:calc(100vh - 48px);background:#0f0f1a;color:#e8e8ec;border:1px solid rgba(255,255,255,.1);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.55);z-index:99999;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;font-size:14px;transform:translateY(20px);opacity:0;pointer-events:none;transition:.25s ease}
+  .eai-panel.open{transform:translateY(0);opacity:1;pointer-events:auto}
+  [data-theme="light"] .eai-panel{background:#fff;color:#1a1a1f;border-color:rgba(0,0,0,.08)}
+  .eai-head{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px}
+  [data-theme="light"] .eai-head{border-bottom-color:rgba(0,0,0,.06)}
+  .eai-head .ic{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#c8a035,#e0a93a);display:flex;align-items:center;justify-content:center;color:#1a1a1a;font-weight:700}
+  .eai-head .name{flex:1;font-weight:600}
+  .eai-head .sub{font-size:11px;color:#7b7b8a;margin-top:2px;font-weight:400}
+  .eai-head button{background:none;border:none;color:#7b7b8a;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px}
+  .eai-head button:hover{background:rgba(255,255,255,.06)}
+  [data-theme="light"] .eai-head button:hover{background:rgba(0,0,0,.05)}
+  .eai-body{flex:1;overflow-y:auto;padding:14px 14px 6px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
+  .eai-msg{padding:10px 13px;border-radius:14px;max-width:88%;line-height:1.45;font-size:13.5px;animation:eai-in .18s ease}
+  @keyframes eai-in{from{transform:translateY(4px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .eai-msg.user{background:#c8a035;color:#1a1a1a;align-self:flex-end;border-bottom-right-radius:4px}
+  .eai-msg.assistant{background:rgba(255,255,255,.06);align-self:flex-start;border-bottom-left-radius:4px}
+  [data-theme="light"] .eai-msg.assistant{background:#f0f0f3}
+  .eai-msg.system{background:transparent;color:#7b7b8a;font-size:12px;font-style:italic;align-self:center;text-align:center}
+  .eai-msg .tools{margin-top:6px;font-size:11px;color:#7b7b8a;border-left:2px solid rgba(200,160,53,.4);padding-left:8px}
+  .eai-msg .att{display:flex;align-items:center;gap:6px;margin-top:6px;padding:5px 8px;background:rgba(0,0,0,.15);border-radius:8px;font-size:11.5px}
+  [data-theme="light"] .eai-msg.user .att{background:rgba(0,0,0,.08)}
+  .eai-msg pre,.eai-msg code{background:rgba(0,0,0,.25);padding:1px 5px;border-radius:4px;font-size:12px;white-space:pre-wrap;word-break:break-word}
+  .eai-msg pre{padding:8px;margin:6px 0}
+  .eai-typing{display:flex;gap:4px;padding:12px;align-self:flex-start;background:rgba(255,255,255,.06);border-radius:14px;border-bottom-left-radius:4px}
+  [data-theme="light"] .eai-typing{background:#f0f0f3}
+  .eai-typing span{width:6px;height:6px;border-radius:50%;background:#7b7b8a;animation:eai-bounce 1.4s infinite}
+  .eai-typing span:nth-child(2){animation-delay:.15s}.eai-typing span:nth-child(3){animation-delay:.3s}
+  @keyframes eai-bounce{0%,80%,100%{transform:scale(.6);opacity:.5}40%{transform:scale(1);opacity:1}}
+  .eai-input{padding:10px 12px;border-top:1px solid rgba(255,255,255,.06)}
+  [data-theme="light"] .eai-input{border-top-color:rgba(0,0,0,.06)}
+  .eai-attach{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+  .eai-attach .chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:rgba(200,160,53,.15);border:1px solid rgba(200,160,53,.3);color:#c8a035;border-radius:14px;font-size:11.5px}
+  .eai-attach .chip button{background:none;border:none;color:#c8a035;cursor:pointer;font-size:14px;padding:0;line-height:1}
+  .eai-row{display:flex;gap:8px;align-items:flex-end}
+  .eai-btn{background:none;border:1px solid rgba(255,255,255,.14);color:inherit;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .eai-btn.send{background:#c8a035;color:#1a1a1a;border:none}
+  .eai-btn.send:disabled{opacity:.4;cursor:not-allowed}
+  [data-theme="light"] .eai-btn{border-color:rgba(0,0,0,.12)}
+  .eai-textarea{flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:inherit;border-radius:18px;padding:10px 14px;font-family:inherit;font-size:13.5px;resize:none;max-height:120px;outline:none}
+  [data-theme="light"] .eai-textarea{background:#f5f5f7;border-color:rgba(0,0,0,.1)}
+  .eai-textarea:focus{border-color:#c8a035}
+  .eai-dropping{position:absolute;inset:0;background:rgba(200,160,53,.15);border:3px dashed #c8a035;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#c8a035;z-index:10;pointer-events:none}
+  .eai-suggest{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 8px}
+  .eai-suggest button{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:inherit;font-size:11.5px;padding:6px 10px;border-radius:14px;cursor:pointer}
+  .eai-suggest button:hover{background:rgba(200,160,53,.15);border-color:rgba(200,160,53,.3)}
+  [data-theme="light"] .eai-suggest button{background:#f5f5f7;border-color:rgba(0,0,0,.08)}
+  @media(max-width:600px){.eai-panel{bottom:12px;right:12px;left:12px;width:auto;height:calc(100vh - 24px);max-height:none}.eai-fab{bottom:16px;right:16px}}
+  `;
+  document.head.appendChild(style);
+
+  // ─────── HTML ───────
+  const fab = document.createElement('button');
+  fab.className = 'eai-fab';
+  fab.title = 'Eatime AI (demande-moi quoi que ce soit)';
+  fab.innerHTML = '✦<span class="pulse"></span>';
+
+  const panel = document.createElement('div');
+  panel.className = 'eai-panel';
+  panel.innerHTML = `
+    <div class="eai-head">
+      <div class="ic">✦</div>
+      <div style="flex:1">
+        <div class="name">Eatime AI</div>
+        <div class="sub" id="eai-sub">Initialisation…</div>
+      </div>
+      <button id="eai-clear" title="Nouvelle conversation">↻</button>
+      <button id="eai-close" title="Fermer">✕</button>
+    </div>
+    <div class="eai-body" id="eai-body"></div>
+    <div class="eai-suggest" id="eai-suggest"></div>
+    <div class="eai-input">
+      <div class="eai-attach" id="eai-attach"></div>
+      <div class="eai-row">
+        <button class="eai-btn" id="eai-file" title="Joindre des PDFs">📎</button>
+        <textarea class="eai-textarea" id="eai-text" placeholder="Pose une question, ou glisse un contrat…" rows="1"></textarea>
+        <button class="eai-btn send" id="eai-send" title="Envoyer">↑</button>
+      </div>
+    </div>
+    <input type="file" id="eai-fileinput" multiple accept="application/pdf,image/*" style="display:none">
+  `;
+
+  document.body.appendChild(fab);
+  document.body.appendChild(panel);
+
+  // ─────── STATE ───────
+  let CTX = null; // {sb, url, key, user}
+  let CURRENT_MODULE = detectModule();
+  let MESSAGES = []; // {role, text, attachments?, tools?}
+  let ATTACHMENTS = []; // {filename, mime_type, base64, size}
+  let CONV_ID = null;
+  let TYPING = false;
+
+  // ─────── INIT auth check ───────
+  async function init() {
+    const r = ensureSb();
+    if (!r) {
+      setSub('SDK non chargé');
+      return false;
+    }
+    CTX = r;
+    const { data: { session } } = await CTX.sb.auth.getSession();
+    if (!session) {
+      setSub('Connecte-toi pour utiliser l\'assistant');
+      return false;
+    }
+    const { data: profile } = await CTX.sb.from('profiles').select('full_name,role,email').eq('id', session.user.id).maybeSingle();
+    if (!profile) { setSub('Profil introuvable'); return false; }
+    CTX.user = profile;
+    setSub(`Module : ${CURRENT_MODULE} · ${profile.role}`);
+    if (MESSAGES.length === 0) {
+      addMessage('system', `✦ Bonjour ${profile.full_name || ''}, je peux t'aider sur cette page (${CURRENT_MODULE}). Pose-moi une question ou glisse un contrat.`);
+      renderSuggestions();
+    }
+    return true;
+  }
+  function setSub(t) { panel.querySelector('#eai-sub').textContent = t; }
+
+  function renderSuggestions() {
+    const el = panel.querySelector('#eai-suggest');
+    const suggestions = {
+      salaries: ['Combien de salariés actifs ?', 'Trouve Cali', 'Salariés sans PIN'],
+      stock: ['Quelle est ma feuille de besoin ?', 'Catégories produits'],
+      planning: ['Qui travaille demain ?', 'Coût hebdo équipe'],
+      haccp: ['Dernier relevé température'],
+      portail: ['Stats de mon org', 'Liste mes restaurants', 'Que peux-tu faire ?'],
+    };
+    const list = suggestions[CURRENT_MODULE] || suggestions.portail;
+    el.innerHTML = list.map(s => `<button>${s}</button>`).join('');
+    el.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+      panel.querySelector('#eai-text').value = b.textContent;
+      send();
+    }));
+  }
+
+  // ─────── MESSAGES UI ───────
+  function addMessage(role, text, opts = {}) {
+    MESSAGES.push({ role, text, ...opts });
+    renderMessages();
+  }
+  function renderMessages() {
+    const body = panel.querySelector('#eai-body');
+    body.innerHTML = '';
+    for (const m of MESSAGES) {
+      const div = document.createElement('div');
+      div.className = 'eai-msg ' + m.role;
+      let inner = renderMarkdown(m.text || '');
+      if (m.attachments) {
+        for (const a of m.attachments) {
+          inner += `<div class="att">📄 ${escape(a.filename)} <span style="color:#7b7b8a">(${Math.round(a.size/1024)} Ko)</span></div>`;
+        }
+      }
+      if (m.tools && m.tools.length) {
+        inner += '<div class="tools">⚙ ' + m.tools.map(t => escape(t.tool)).join(', ') + '</div>';
+      }
+      div.innerHTML = inner;
+      body.appendChild(div);
+    }
+    if (TYPING) {
+      const t = document.createElement('div');
+      t.className = 'eai-typing';
+      t.innerHTML = '<span></span><span></span><span></span>';
+      body.appendChild(t);
+    }
+    body.scrollTop = body.scrollHeight;
+  }
+  function escape(s) { return (s||'').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function renderMarkdown(t) {
+    let s = escape(t);
+    s = s.replace(/```([^`]+)```/g, '<pre>$1</pre>');
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    s = s.replace(/\*([^*]+)\*/g, '<i>$1</i>');
+    s = s.replace(/\n/g, '<br>');
+    return s;
+  }
+
+  // ─────── ATTACHMENTS ───────
+  function renderAttachments() {
+    const box = panel.querySelector('#eai-attach');
+    box.innerHTML = ATTACHMENTS.map((a, i) =>
+      `<span class="chip">📄 ${escape(a.filename)} <button onclick="window.__EATIME_AI_RM__(${i})">×</button></span>`
+    ).join('');
+  }
+  window.__EATIME_AI_RM__ = (i) => { ATTACHMENTS.splice(i, 1); renderAttachments(); };
+
+  async function addFiles(files) {
+    for (const f of files) {
+      if (!f.type.match(/pdf|image/)) continue;
+      const b64 = await fileToBase64(f);
+      ATTACHMENTS.push({ filename: f.name, mime_type: f.type || 'application/pdf', base64: b64, size: f.size });
+    }
+    renderAttachments();
+  }
+  function fileToBase64(f) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(f);
+    });
+  }
+
+  // ─────── SEND ───────
+  async function send() {
+    const ta = panel.querySelector('#eai-text');
+    const text = ta.value.trim();
+    if (!text && !ATTACHMENTS.length) return;
+    if (!CTX || !CTX.user) { const ok = await init(); if (!ok) return; }
+
+    const userMsg = { role: 'user', text, attachments: ATTACHMENTS.length ? [...ATTACHMENTS] : null };
+    MESSAGES.push(userMsg);
+    const sentAttachments = [...ATTACHMENTS];
+    ATTACHMENTS = [];
+    ta.value = '';
+    renderAttachments();
+    TYPING = true; renderMessages();
+
+    try {
+      const { data: { session } } = await CTX.sb.auth.getSession();
+      // Build messages payload (omit attachments from history except last user msg)
+      const payload = {
+        messages: MESSAGES.map(m => ({ role: m.role, text: m.text })),
+        attachments: sentAttachments.map(a => ({ filename: a.filename, mime_type: a.mime_type, base64: a.base64 })),
+        current_module: CURRENT_MODULE,
+        conversation_id: CONV_ID,
+      };
+      const r = await fetch(`${CTX.url}/functions/v1/assistant-chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`, apikey: CTX.key },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      TYPING = false;
+      if (!r.ok) {
+        addMessage('assistant', '⚠ Erreur : ' + (j.error || 'inconnue'));
+        return;
+      }
+      CONV_ID = j.conversation_id;
+      MESSAGES.push({ role: 'assistant', text: j.response, tools: j.tool_actions });
+      renderMessages();
+    } catch (e) {
+      TYPING = false;
+      addMessage('assistant', '⚠ Erreur réseau : ' + (e.message || e));
+    }
+  }
+
+  // ─────── EVENTS ───────
+  fab.addEventListener('click', async () => {
+    panel.classList.add('open');
+    fab.style.display = 'none';
+    if (!CTX) await init();
+  });
+  panel.querySelector('#eai-close').addEventListener('click', () => {
+    panel.classList.remove('open');
+    fab.style.display = 'flex';
+  });
+  panel.querySelector('#eai-clear').addEventListener('click', () => {
+    if (!confirm('Nouvelle conversation ? L\'historique actuel sera oublié.')) return;
+    MESSAGES = []; CONV_ID = null;
+    addMessage('system', '✦ Nouvelle conversation. En quoi puis-je t\'aider ?');
+    renderSuggestions();
+  });
+  panel.querySelector('#eai-send').addEventListener('click', send);
+  panel.querySelector('#eai-text').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  panel.querySelector('#eai-text').addEventListener('input', (e) => {
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+  });
+  panel.querySelector('#eai-file').addEventListener('click', () => panel.querySelector('#eai-fileinput').click());
+  panel.querySelector('#eai-fileinput').addEventListener('change', (e) => addFiles(e.target.files));
+
+  // Drag-drop on panel
+  let dropOverlay = null;
+  panel.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (!dropOverlay) {
+      dropOverlay = document.createElement('div');
+      dropOverlay.className = 'eai-dropping';
+      dropOverlay.textContent = '📂 Lâche pour joindre';
+      panel.appendChild(dropOverlay);
+    }
+  });
+  panel.addEventListener('dragleave', (e) => {
+    if (e.target === panel || e.relatedTarget === null) { dropOverlay?.remove(); dropOverlay = null; }
+  });
+  panel.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropOverlay?.remove(); dropOverlay = null;
+    await addFiles(e.dataTransfer.files);
+  });
+
+  // Listen for theme changes
+  const themeObs = new MutationObserver(() => {});
+  themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  // Auto-init session check
+  setTimeout(() => init().catch(() => {}), 500);
+})();

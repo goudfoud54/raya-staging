@@ -80,7 +80,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
   <div class="modules" id="modules"></div>
-  <div class="footer">Eatime360 · v2.4 · Stock Kiosk + Mon Espace mobile</div>
+  <div class="footer">Eatime360 · v3.0 · Agent IA flottant ✦</div>
 </div>
 
 <script>
@@ -95,7 +95,6 @@ const MODULES=[
   {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Kiosk de pointage (1 par snack)'},
   {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes'},
   {id:'moi',ic:'👤',nm:'Mon Espace',ds:'Planning, indispos, pointages perso'},
-  {id:'import-contrats',ic:'📥',nm:'Import IA contrats',ds:'Extraction automatique des contrats par IA'},
   {id:'haccp',ic:'🌡',nm:'HACCP',ds:'T°, huiles, réception, nettoyage'},
   {id:'haccp-kiosk',ic:'📱',nm:'HACCP Kiosque',ds:'Saisie terrain par PIN salarié'},
   {id:'finance',ic:'📈',nm:'Finance',ds:'CA, dépenses, trésorerie, marge'},
@@ -208,5 +207,6 @@ sb.auth.getSession().then(({data})=>{
   else document.getElementById('loginView').classList.remove('hidden');
 });
 </script>
+<script defer src="assistant-widget.js"></script>
 </body>
 </html>

@@ -18,3 +18,23 @@ window.setEatimeTheme = function(theme){
   localStorage.setItem('eatime_theme', theme);
   document.documentElement.setAttribute('data-theme', theme);
 };
+
+// Auto-inject the Eatime AI assistant widget on every page, after Supabase SDK loads
+(function injectAssistant(){
+  function tryInject(){
+    if (window.__EATIME_AI_WIDGET__) return;
+    if (typeof supabase === 'undefined') { setTimeout(tryInject, 300); return; }
+    // Skip on lock screens / login pages : the widget will init when session arrives
+    var s = document.createElement('script');
+    // Resolve relative to the page : go up until we find the assistant script at /assistant-widget.js
+    var base = location.pathname.replace(/\/[^/]*$/, '/');
+    var depth = (base.match(/\//g) || []).length - 1;
+    var prefix = '';
+    for (var i = 0; i < depth; i++) prefix += '../';
+    s.src = prefix + 'assistant-widget.js';
+    s.defer = true;
+    document.body.appendChild(s);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tryInject);
+  else tryInject();
+})();
