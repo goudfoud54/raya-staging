@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<title>Import IA contrats — Eatime360</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root,[data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--blue:#5b9cff}
+[data-theme="light"]{--gold:#c8a035;--bg:#f5f5f7;--card:#fff;--surface:#f0f0f3;--line:rgba(0,0,0,.06);--line-2:rgba(0,0,0,.12);--text:#1a1a1f;--muted:#6b6b78;--ok:#2a8f5f;--warn:#b8841f;--bad:#b04444;--blue:#3b82f6}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+.hidden{display:none!important}
+button{cursor:pointer;border:none;font-family:inherit;color:var(--text);background:none}
+.btn{padding:10px 16px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
+.btn.sm{padding:6px 12px;font-size:12px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+input,select{font-family:inherit;color:var(--text);background:var(--surface);border:1px solid var(--line-2);padding:6px 9px;border-radius:6px;font-size:13px;outline:none;width:100%}
+input:focus,select:focus{border-color:var(--gold)}
+.wrap{max-width:1400px;margin:0 auto;padding:20px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.brand{color:var(--gold);font-weight:700;font-size:18px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px}
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px}
+.lock h1{color:var(--gold);font-size:22px}
+.lock input{padding:12px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:14px;width:300px;text-align:center}
+.err{color:var(--bad);font-size:13px;min-height:18px}
+
+.dropzone{border:2px dashed var(--line-2);border-radius:14px;padding:40px;text-align:center;cursor:pointer;background:var(--card);margin-bottom:16px;transition:.15s}
+.dropzone.over{border-color:var(--gold);background:rgba(200,160,53,.06)}
+.dropzone .ic{font-size:54px;margin-bottom:10px}
+.dropzone p{color:var(--muted);font-size:13px;line-height:1.6}
+
+.section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:14px}
+.section h3{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px}
+.progress{height:6px;background:var(--surface);border-radius:3px;overflow:hidden;margin-top:8px}
+.progress-bar{height:100%;background:var(--gold);transition:.3s;width:0}
+
+table.review{width:100%;border-collapse:collapse;font-size:12.5px}
+table.review th{padding:8px 6px;text-align:left;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:10.5px;border-bottom:1px solid var(--line-2);position:sticky;top:0;background:var(--card);z-index:5}
+table.review td{padding:6px;border-bottom:1px solid var(--line);vertical-align:top}
+table.review input,table.review select{padding:5px 7px;font-size:12px}
+.matchpill{padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:700;text-transform:uppercase;white-space:nowrap}
+.matchpill.match{background:rgba(63,184,127,.15);color:var(--ok)}
+.matchpill.new{background:rgba(200,160,53,.15);color:var(--gold)}
+.matchpill.error{background:rgba(196,90,90,.15);color:var(--bad)}
+.matchpill.low{background:rgba(224,169,58,.15);color:var(--warn)}
+.matchpill.processing{background:rgba(91,156,255,.15);color:var(--blue)}
+.tablewrap{overflow:auto;max-height:65vh;border-radius:8px}
+.scroll-x{overflow-x:auto}
+
+.conf-bar{display:inline-block;width:40px;height:5px;background:var(--surface);border-radius:3px;vertical-align:middle;margin-right:4px;overflow:hidden}
+.conf-bar>div{height:100%;background:var(--ok)}
+.conf-bar.med>div{background:var(--warn)}
+.conf-bar.low>div{background:var(--bad)}
+.toolbar{display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-top:14px;flex-wrap:wrap}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;border:1px solid var(--line-2);padding:11px 22px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:200}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="lock" class="lock hidden">
+  <h1>Import IA contrats</h1>
+  <div style="color:var(--muted);font-size:13px">Réservé aux admins / managers</div>
+  <input type="email" id="loginEmail" placeholder="Email">
+  <input type="password" id="loginPw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')login()">
+  <button class="btn" onclick="login()">Se connecter</button>
+  <div class="err" id="loginErr"></div>
+  <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
+</div>
+
+<div id="app" class="hidden">
+<div class="wrap">
+  <div class="header">
+    <div>
+      <div class="brand">📥 Import IA contrats <small>· extraction auto via Gemini</small></div>
+      <div style="color:var(--muted);font-size:12px;margin-top:4px" id="userInfo"></div>
+    </div>
+    <a href="../" class="btn ghost">← Portail</a>
+  </div>
+
+  <!-- ÉTAPE 1 : DROP -->
+  <div class="section" id="step1">
+    <h3>1 — Dépose les contrats</h3>
+    <div class="dropzone" id="dz" onclick="document.getElementById('multiFile').click()">
+      <div class="ic">📂</div>
+      <p><b>Glisse-dépose tes PDFs de contrats ici</b> (CDI, CDD, CERFA d'apprentissage…)</p>
+      <p style="font-size:12px;margin-top:8px">L'IA extrait les champs et te propose une page de review avant de tout enregistrer</p>
+      <input type="file" id="multiFile" multiple accept="application/pdf" style="display:none" onchange="processFiles(this.files)">
+    </div>
+    <div id="globalProgress" class="hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin-bottom:5px">
+        <span id="progressLabel">Analyse…</span>
+        <span id="progressCounter">0/0</span>
+      </div>
+      <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+    </div>
+  </div>
+
+  <!-- ÉTAPE 2 : REVIEW -->
+  <div class="section hidden" id="step2">
+    <h3>2 — Vérifie / corrige avant validation</h3>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:10px">
+      L'IA a extrait les champs. Les cellules sont éditables. La colonne <b>Match</b> indique si un salarié existant a été trouvé (sinon : nouvelle fiche).
+    </div>
+
+    <div class="tablewrap scroll-x">
+    <table class="review" id="reviewTable">
+      <thead>
+        <tr>
+          <th>Fichier</th>
+          <th>Match</th>
+          <th>Nom</th>
+          <th>Prénom</th>
+          <th>Né(e) le</th>
+          <th>Nationalité</th>
+          <th>N° Sécu</th>
+          <th>Adresse</th>
+          <th>CP</th>
+          <th>Ville</th>
+          <th>Tél</th>
+          <th>Email</th>
+          <th>Type</th>
+          <th>Poste</th>
+          <th>Entrée</th>
+          <th>Fin (CDD/App)</th>
+          <th>H/sem</th>
+          <th>Taux €/h</th>
+          <th>Snack</th>
+          <th>Conf.</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="reviewBody"></tbody>
+    </table>
+    </div>
+
+    <div class="toolbar">
+      <div style="flex:1;color:var(--muted);font-size:12px" id="reviewStatus"></div>
+      <button class="btn ghost" onclick="resetAll()">Annuler</button>
+      <button class="btn" id="btnCommit" onclick="commitAll()">✓ Valider et enregistrer</button>
+    </div>
+  </div>
+
+  <!-- ÉTAPE 3 : RÉSULTAT -->
+  <div class="section hidden" id="step3">
+    <h3>3 — Résultat</h3>
+    <div id="commitResult"></div>
+    <div style="text-align:right;margin-top:14px">
+      <button class="btn" onclick="resetAll()">+ Nouvel import</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+
+let ME=null,ORG=null,SALARIES=[],SNACKS=[];
+const ROWS=[]; // [{file, raw_extracted, edited, match_id, status, error}]
+
+let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
+
+async function login(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const pw=document.getElementById('loginPw').value;
+  if(!email||!pw){document.getElementById('loginErr').textContent='Email + mdp requis';return;}
+  document.getElementById('loginErr').textContent='Connexion…';
+  const{error}=await sb.auth.signInWithPassword({email,password:pw});
+  if(error){document.getElementById('loginErr').textContent=error.message;return;}
+  init();
+}
+
+async function init(){
+  const{data:{session}}=await sb.auth.getSession();
+  if(!session){document.getElementById('lock').classList.remove('hidden');return;}
+  const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id').eq('id',session.user.id).maybeSingle();
+  if(!profile||!['admin','super_admin','manager'].includes(profile.role)){
+    document.getElementById('lock').classList.remove('hidden');
+    document.getElementById('loginErr').textContent='Accès refusé (admin/manager requis)';
+    await sb.auth.signOut();return;
+  }
+  ME=profile;
+  const[orgRes,salRes,snRes]=await Promise.all([
+    sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle(),
+    sb.from('salaries').select('id,nom,prenom,actif').eq('organization_id',profile.organization_id),
+    sb.from('restaurants').select('id,nom').eq('organization_id',profile.organization_id).eq('actif',true),
+  ]);
+  ORG=orgRes.data; SALARIES=salRes.data||[]; SNACKS=snRes.data||[];
+  document.getElementById('lock').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('userInfo').textContent='Connecté : '+(profile.full_name||profile.email)+' · '+profile.role+' · '+ORG.nom;
+  setupDropzone();
+}
+
+function setupDropzone(){
+  const dz=document.getElementById('dz');
+  ['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over');}));
+  ['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('over');}));
+  dz.addEventListener('drop',ev=>{ev.preventDefault();processFiles(ev.dataTransfer.files);});
+}
+
+async function fileToBase64(f){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>{const b=r.result.split(',')[1];res(b);};
+    r.onerror=rej;
+    r.readAsDataURL(f);
+  });
+}
+
+async function processFiles(files){
+  if(!files||!files.length)return;
+  const arr=Array.from(files).filter(f=>f.type==='application/pdf');
+  if(!arr.length){toast('Sélectionne au moins un PDF');return;}
+
+  document.getElementById('globalProgress').classList.remove('hidden');
+  document.getElementById('progressLabel').textContent='Extraction IA en cours…';
+  document.getElementById('progressCounter').textContent=`0/${arr.length}`;
+  document.getElementById('progressBar').style.width='0%';
+
+  // Reset rows
+  ROWS.length=0;
+  arr.forEach(f=>ROWS.push({file:f,raw:null,edited:null,status:'processing',error:null,match_id:'',committed:false}));
+
+  // Show step2 with skeleton rows
+  document.getElementById('step2').classList.remove('hidden');
+  renderReview();
+
+  // Parallel calls (max 3 in flight for politeness vs Gemini)
+  const{data:{session}}=await sb.auth.getSession();
+  const headers={'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`,apikey:SUPA_KEY};
+  let done=0;
+  const queue=ROWS.map((row,i)=>async()=>{
+    try{
+      const b64=await fileToBase64(row.file);
+      const r=await fetch(`${SUPA_URL}/functions/v1/import-contrat-ai`,{
+        method:'POST',headers,
+        body:JSON.stringify({base64:b64,mime_type:'application/pdf',filename:row.file.name}),
+      });
+      const j=await r.json();
+      if(!r.ok)throw new Error(j.error||'Erreur IA');
+      row.raw=j.data;
+      row.edited=JSON.parse(JSON.stringify(j.data));
+      // Auto-match avec salaries
+      const match=findMatch(j.data);
+      row.match_id=match?match.id:'';
+      row.status=match?'matched':(j.data.confidence<0.5?'low':'new');
+    }catch(e){
+      row.status='error';row.error=e.message;
+    }
+    done++;
+    document.getElementById('progressCounter').textContent=`${done}/${arr.length}`;
+    document.getElementById('progressBar').style.width=Math.round(done/arr.length*100)+'%';
+    renderReview();
+  });
+  // Run with concurrency=3
+  await runWithConcurrency(queue,3);
+  document.getElementById('progressLabel').textContent='Extraction terminée — vérifie puis valide.';
+}
+
+async function runWithConcurrency(tasks,n){
+  const inflight=new Set();
+  for(const t of tasks){
+    const p=t().finally(()=>inflight.delete(p));
+    inflight.add(p);
+    if(inflight.size>=n) await Promise.race(inflight);
+  }
+  await Promise.all(inflight);
+}
+
+function findMatch(data){
+  const target=(data.nom||'').toLowerCase().trim();
+  if(!target)return null;
+  // Exact match on nom + prenom
+  let m=SALARIES.find(s=>(s.nom||'').toLowerCase().trim()===target && (data.prenom||'').toLowerCase()===((s.prenom||'').toLowerCase()));
+  if(m)return m;
+  // Match juste sur nom
+  m=SALARIES.find(s=>(s.nom||'').toLowerCase().trim()===target);
+  if(m)return m;
+  // Match sur prenom dans nom (cas où la fiche actuelle a juste le prénom)
+  m=SALARIES.find(s=>(s.nom||'').toLowerCase().trim()===(data.prenom||'').toLowerCase().trim());
+  if(m)return m;
+  return null;
+}
+
+function renderReview(){
+  const tbody=document.getElementById('reviewBody');
+  let html='';
+  ROWS.forEach((r,i)=>{
+    if(r.status==='processing'){
+      html+=`<tr><td style="color:var(--muted)">${r.file.name}</td><td><span class="matchpill processing">⏳ IA…</span></td><td colspan="19" style="color:var(--muted);font-style:italic">extraction en cours…</td></tr>`;
+      return;
+    }
+    if(r.status==='error'){
+      html+=`<tr><td>${r.file.name}</td><td><span class="matchpill error">✗ Erreur</span></td><td colspan="18" style="color:var(--bad)">${r.error}</td><td><button class="btn ghost sm" onclick="removeRow(${i})">✕</button></td></tr>`;
+      return;
+    }
+    const d=r.edited;
+    const conf=r.raw.confidence||0;
+    const confClass=conf>=0.8?'':(conf>=0.5?'med':'low');
+    const pillClass=r.match_id?'match':(conf<0.5?'low':'new');
+    const pillLabel=r.match_id?'✓ Match':(conf<0.5?'⚠ À vérifier':'+ Nouvelle');
+    const matchOptions=`<option value="">— Nouvelle fiche —</option>`+
+      SALARIES.map(s=>`<option value="${s.id}" ${r.match_id===s.id?'selected':''}>${s.nom} ${s.prenom||''} ${s.actif===false?'(inactif)':''}</option>`).join('');
+    const snackOpts=`<option value="">—</option>`+SNACKS.map(sn=>`<option value="${sn.id}">${sn.nom}</option>`).join('');
+    html+=`<tr>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.file.name}">${r.file.name}</td>
+      <td><span class="matchpill ${pillClass}">${pillLabel}</span>
+        <div style="margin-top:4px"><select onchange="setMatch(${i},this.value)" style="max-width:160px;font-size:11px">${matchOptions}</select></div></td>
+      <td><input value="${esc(d.nom)}" onchange="setField(${i},'nom',this.value)" style="text-transform:uppercase;font-weight:700"></td>
+      <td><input value="${esc(d.prenom)}" onchange="setField(${i},'prenom',this.value)"></td>
+      <td><input type="date" value="${esc(d.date_naissance)}" onchange="setField(${i},'date_naissance',this.value)"></td>
+      <td><input value="${esc(d.nationalite)}" onchange="setField(${i},'nationalite',this.value)"></td>
+      <td><input value="${esc(d.num_secu)}" onchange="setField(${i},'num_secu',this.value)"></td>
+      <td><input value="${esc(d.adresse)}" onchange="setField(${i},'adresse',this.value)"></td>
+      <td><input value="${esc(d.code_postal)}" onchange="setField(${i},'code_postal',this.value)" style="width:70px"></td>
+      <td><input value="${esc(d.ville)}" onchange="setField(${i},'ville',this.value)"></td>
+      <td><input value="${esc(d.telephone)}" onchange="setField(${i},'telephone',this.value)"></td>
+      <td><input value="${esc(d.email)}" onchange="setField(${i},'email',this.value)"></td>
+      <td><input value="${esc(d.type_contrat)}" onchange="setField(${i},'type_contrat',this.value)"></td>
+      <td><input value="${esc(d.poste_intitule)}" onchange="setField(${i},'poste_intitule',this.value)"></td>
+      <td><input type="date" value="${esc(d.date_entree)}" onchange="setField(${i},'date_entree',this.value)"></td>
+      <td><input type="date" value="${esc(d.date_fin_contrat)}" onchange="setField(${i},'date_fin_contrat',this.value)"></td>
+      <td><input type="number" step="0.5" value="${d.heures_hebdo||''}" onchange="setField(${i},'heures_hebdo',parseFloat(this.value)||null)" style="width:60px"></td>
+      <td><input type="number" step="0.01" value="${d.taux_horaire_brut||''}" onchange="setField(${i},'taux_horaire_brut',parseFloat(this.value)||null)" style="width:80px"></td>
+      <td><select onchange="setField(${i},'snack_origine_id',this.value)"><option value="">—</option>${SNACKS.map(sn=>`<option value="${sn.id}" ${d.snack_origine_id===sn.id?'selected':''}>${sn.nom}</option>`).join('')}</select></td>
+      <td><span class="conf-bar ${confClass}"><div style="width:${Math.round(conf*100)}%"></div></span>${Math.round(conf*100)}%</td>
+      <td><button class="btn ghost sm" onclick="removeRow(${i})" title="Retirer">✕</button></td>
+    </tr>`;
+    if(r.raw.notes_ia){html+=`<tr><td colspan="21" style="background:var(--surface);font-size:11px;color:var(--muted);padding:6px 10px">💡 ${esc(r.raw.notes_ia)}</td></tr>`;}
+  });
+  document.getElementById('reviewBody').innerHTML=html;
+  const ok=ROWS.filter(r=>r.status!=='processing'&&r.status!=='error').length;
+  const errs=ROWS.filter(r=>r.status==='error').length;
+  document.getElementById('reviewStatus').textContent=`${ok} prêt${ok>1?'s':''} à enregistrer${errs?', '+errs+' en erreur':''}`;
+  document.getElementById('btnCommit').disabled=ok===0;
+}
+function esc(v){return (v||'').toString().replace(/"/g,'&quot;');}
+function setField(i,k,v){ROWS[i].edited[k]=v;}
+function setMatch(i,id){ROWS[i].match_id=id;renderReview();}
+function removeRow(i){ROWS.splice(i,1);renderReview();}
+
+async function commitAll(){
+  const btn=document.getElementById('btnCommit');btn.disabled=true;
+  const toCommit=ROWS.filter(r=>r.status==='matched'||r.status==='new'||r.status==='low');
+  const results={updated:0,created:0,docs:0,errors:[]};
+  for(const r of toCommit){
+    const d=r.edited;
+    // Construire le patch (champs non vides uniquement)
+    const patch={
+      nom:(d.nom||'').toUpperCase().trim()||null,
+      prenom:d.prenom||null,
+      date_naissance:d.date_naissance||null,
+      nationalite:d.nationalite||null,
+      num_secu:d.num_secu||null,
+      adresse:d.adresse||null,
+      code_postal:d.code_postal||null,
+      ville:d.ville||null,
+      telephone:d.telephone||null,
+      email:d.email||null,
+      type_contrat:d.type_contrat||null,
+      poste_intitule:d.poste_intitule||null,
+      date_entree:d.date_entree||null,
+      heures_min:d.heures_hebdo||null,
+      heures_max:d.heures_hebdo||null,
+      taux_horaire_brut:d.taux_horaire_brut||null,
+      snack_origine_id:d.snack_origine_id||null,
+    };
+    // Notes IA en bonus
+    if(r.raw.notes_ia||r.raw.titre_sejour_num||r.raw.cfa_nom||r.raw.diplome_prepare){
+      const parts=[];
+      if(r.raw.diplome_prepare)parts.push('Diplôme préparé : '+r.raw.diplome_prepare);
+      if(r.raw.cfa_nom)parts.push('CFA : '+r.raw.cfa_nom);
+      if(r.raw.maitre_apprentissage)parts.push('Maître apprentissage : '+r.raw.maitre_apprentissage);
+      if(r.raw.titre_sejour_num)parts.push('Titre séjour : '+r.raw.titre_sejour_num+(r.raw.titre_sejour_expire_le?' (expire '+r.raw.titre_sejour_expire_le+')':''));
+      if(r.raw.notes_ia)parts.push(r.raw.notes_ia);
+      if(r.raw.date_fin_contrat)parts.push('Fin de contrat : '+r.raw.date_fin_contrat);
+      patch.notes=parts.join(' · ');
+    }
+    Object.keys(patch).forEach(k=>{if(patch[k]===''||patch[k]===null||patch[k]===undefined)delete patch[k];});
+
+    let salarie_id=r.match_id;
+    if(salarie_id){
+      const{error}=await sb.from('salaries').update(patch).eq('id',salarie_id);
+      if(error){results.errors.push(r.file.name+' : '+error.message);continue;}
+      results.updated++;
+    } else {
+      patch.organization_id=ORG.id;patch.actif=true;
+      if(!patch.nom){results.errors.push(r.file.name+' : nom manquant');continue;}
+      const{data,error}=await sb.from('salaries').insert(patch).select().single();
+      if(error){results.errors.push(r.file.name+' : '+error.message);continue;}
+      salarie_id=data.id;
+      results.created++;
+    }
+    // Upload du PDF dans Storage + INSERT salarie_documents
+    try{
+      const safeName=r.file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+      const path=`${salarie_id}/contrat/${Date.now()}_${safeName}`;
+      const up=await sb.storage.from('salaries-docs').upload(path,r.file,{contentType:'application/pdf',upsert:false});
+      if(!up.error){
+        await sb.from('salarie_documents').insert({salarie_id,type:'contrat',nom:r.file.name,path,taille:r.file.size,content_type:'application/pdf'});
+        results.docs++;
+      }
+    }catch(_){}
+    r.committed=true;
+  }
+  // Show step 3
+  document.getElementById('step2').classList.add('hidden');
+  document.getElementById('step3').classList.remove('hidden');
+  let h=`<div style="background:var(--surface);border-radius:10px;padding:18px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:14px;color:var(--ok)">✓ Import terminé</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;text-align:center">
+      <div><div style="font-size:30px;font-weight:800;color:var(--gold)">${results.updated}</div><div style="color:var(--muted);font-size:12px">fiches mises à jour</div></div>
+      <div><div style="font-size:30px;font-weight:800;color:var(--ok)">${results.created}</div><div style="color:var(--muted);font-size:12px">nouvelles fiches</div></div>
+      <div><div style="font-size:30px;font-weight:800;color:var(--blue)">${results.docs}</div><div style="color:var(--muted);font-size:12px">PDFs archivés</div></div>
+    </div>
+  </div>`;
+  if(results.errors.length){
+    h+=`<div style="background:rgba(196,90,90,.08);border:1px solid rgba(196,90,90,.25);border-radius:10px;padding:14px;margin-top:14px">
+      <div style="color:var(--bad);font-weight:700;margin-bottom:8px">⚠ ${results.errors.length} erreur${results.errors.length>1?'s':''}</div>
+      <ul style="padding-left:20px;font-size:12.5px;color:var(--muted)">${results.errors.map(e=>'<li>'+esc(e)+'</li>').join('')}</ul>
+    </div>`;
+  }
+  document.getElementById('commitResult').innerHTML=h;
+}
+
+function resetAll(){
+  ROWS.length=0;
+  document.getElementById('multiFile').value='';
+  document.getElementById('step2').classList.add('hidden');
+  document.getElementById('step3').classList.add('hidden');
+  document.getElementById('globalProgress').classList.add('hidden');
+  // Reload des salariés pour le prochain import
+  sb.from('salaries').select('id,nom,prenom,actif').eq('organization_id',ORG.id).then(({data})=>{SALARIES=data||[];});
+}
+
+sb.auth.getSession().then(({data})=>{
+  if(data.session) init();
+  else document.getElementById('lock').classList.remove('hidden');
+});
+</script>
+</body>
+</html>

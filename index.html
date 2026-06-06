@@ -95,6 +95,7 @@ const MODULES=[
   {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Kiosk de pointage (1 par snack)'},
   {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes'},
   {id:'moi',ic:'👤',nm:'Mon Espace',ds:'Planning, indispos, pointages perso'},
+  {id:'import-contrats',ic:'📥',nm:'Import IA contrats',ds:'Extraction automatique des contrats par IA'},
   {id:'haccp',ic:'🌡',nm:'HACCP',ds:'T°, huiles, réception, nettoyage'},
   {id:'haccp-kiosk',ic:'📱',nm:'HACCP Kiosque',ds:'Saisie terrain par PIN salarié'},
   {id:'finance',ic:'📈',nm:'Finance',ds:'CA, dépenses, trésorerie, marge'},
@@ -105,7 +106,7 @@ const MODULES=[
 ];
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
 // Defaults si org.permissions absent
-const DEFAULT_PERMS={moi:['*'],salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],'stock-kiosk':['*'],facturation:['admin'],parametres:['admin']};
+const DEFAULT_PERMS={moi:['*'],'import-contrats':['admin','manager'],salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],'stock-kiosk':['*'],facturation:['admin'],parametres:['admin']};
 
 function showSignup(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Créer un compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
 function showLogin(){document.getElementById('signupBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
