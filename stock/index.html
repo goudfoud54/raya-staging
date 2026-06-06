@@ -259,7 +259,9 @@ async function renderBesoin(el){
   Object.entries(besoinByFourn).forEach(([fid,arr])=>{
     const fnom=fid==='_sans'?'(sans fournisseur principal)':nameFourn(fid);
     let totalEur=0;arr.forEach(x=>{totalEur+=x.need*Number(x.produit.cout_unitaire||0);});
-    html+=`<div class="section"><h3>${fnom} <span style="color:var(--text);font-weight:700;font-size:14px;margin-left:8px">${eur(totalEur)} HT estimé</span></h3>
+    html+=`<div class="section"><h3>${fnom} <span style="color:var(--text);font-weight:700;font-size:14px;margin-left:8px">${eur(totalEur)} HT estimé</span>
+      <button class="btn sm" style="float:right" onclick="copyBesoinWA('${fid}')">📋 Copier WhatsApp</button>
+    </h3>
       <table class="tbl"><thead><tr><th>Produit</th><th>Actuel</th><th>Max</th><th>À commander</th><th>Cond. fourn.</th><th>€ HT</th></tr></thead><tbody>`;
     arr.sort((a,b)=>b.need-a.need).forEach(x=>{
       const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
@@ -267,7 +269,43 @@ async function renderBesoin(el){
     });
     html+='</tbody></table></div>';
   });
+  // Stocker pour reusable par copyBesoinWA
+  window._BESOIN_BY_FOURN=besoinByFourn;
   el.innerHTML=html;
+}
+function copyBesoinWA(fid){
+  const arr=(window._BESOIN_BY_FOURN||{})[fid];
+  if(!arr||!arr.length){toast('Rien à copier');return;}
+  const fnom=fid==='_sans'?'(sans fournisseur)':nameFourn(fid);
+  // Regrouper par catégorie
+  const byCat={};
+  arr.forEach(x=>{
+    const c=x.produit.categorie||'Divers';
+    (byCat[c]=byCat[c]||[]).push(x);
+  });
+  const today=new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
+  let txt=`*Commande ${SNACK.nom}*\n${today}\nFournisseur : ${fnom}\n`;
+  let totalEur=0;
+  Object.keys(byCat).sort().forEach(c=>{
+    txt+=`\n— ${c.toUpperCase()} —\n`;
+    byCat[c].sort((a,b)=>a.produit.nom.localeCompare(b.produit.nom)).forEach(x=>{
+      const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
+      const unit=x.produit.unite||'';
+      txt+=`• ${x.produit.nom} — *${x.need}*${unit?' '+unit:''}${cond?' ('+cond+')':''}\n`;
+      totalEur+=x.need*Number(x.produit.cout_unitaire||0);
+    });
+  });
+  txt+=`\nTotal estimé : ${eur(totalEur)} HT\n\nMerci 🙏`;
+  // Copier dans le presse-papier
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(()=>toast('✓ Texte copié — colle-le dans WhatsApp')).catch(()=>fallbackCopy(txt));
+  } else fallbackCopy(txt);
+}
+function fallbackCopy(txt){
+  const ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.left='-9999px';
+  document.body.appendChild(ta);ta.select();
+  try{document.execCommand('copy');toast('✓ Copié');}catch(e){alert(txt);}
+  ta.remove();
 }
 async function exportBesoinPDF(){
   toast('Génération PDF…');

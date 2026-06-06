@@ -173,6 +173,45 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       </div>
     </div>
 
+    <!-- RESTAURANTS / SNACKS -->
+    <div class="section">
+      <h3>🏪 Restaurants / Snacks</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Tes points de vente. Chaque restaurant a son propre stock, planning, badgeuse et facturation. Configure aussi les alertes (mail + WhatsApp) si la feuille de stock n'est pas remplie.</div>
+      <div id="restosList" style="font-size:13px"></div>
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">Ajouter un restaurant</div>
+        <div class="grid2">
+          <div class="fld"><label>Nom</label><input id="resto_nom" placeholder="Snack Raya Centre"></div>
+          <div class="fld"><label>Code PIN (4 chiffres, optionnel — kiosques)</label><input id="resto_pin" maxlength="6" inputmode="numeric"></div>
+        </div>
+        <button class="btn" onclick="createResto()">+ Créer le restaurant</button>
+        <div id="resto_err" style="color:var(--bad);font-size:13px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- BOT WHATSAPP -->
+    <div class="section">
+      <h3>🤖 Bot WhatsApp (alertes)</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Le bot envoie les alertes dans les groupes WhatsApp configurés sur chaque restaurant. Il tourne en continu (auto-hébergé sur Railway/Fly/VPS).</div>
+      <div id="waBotBlock"></div>
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <details>
+          <summary style="cursor:pointer;font-weight:600;font-size:13px">📖 Comment déployer le bot ?</summary>
+          <div style="color:var(--muted);font-size:12.5px;line-height:1.6;margin-top:10px">
+            <p><b>1.</b> Crée le token ci-dessus.</p>
+            <p><b>2.</b> Clone le repo bot : <code style="background:var(--surface);padding:2px 6px;border-radius:4px">github.com/goudfoud54/eatime-wa-bot</code></p>
+            <p><b>3.</b> Déploie sur Railway en mode "Deploy from GitHub" et configure ces variables :</p>
+            <ul style="padding-left:20px;margin:6px 0">
+              <li><code>SUPA_URL</code> = <code style="background:var(--surface);padding:1px 5px;border-radius:3px" id="bot_supa_url"></code></li>
+              <li><code>BOT_TOKEN</code> = ton token (voir ci-dessus)</li>
+            </ul>
+            <p><b>4.</b> Au premier démarrage, ouvre les logs Railway et scanne le QR code avec WhatsApp (Paramètres → Appareils liés).</p>
+            <p><b>5.</b> Pour obtenir l'ID JID d'un groupe : envoie <code>!id</code> dans le groupe — le bot te répondra avec son ID, à coller dans la fiche du restaurant.</p>
+          </div>
+        </details>
+      </div>
+    </div>
+
     <!-- CLÉS API & MCP -->
     <div class="section">
       <h3>🔑 Clés API & MCP (Eatime360)</h3>
@@ -277,6 +316,9 @@ async function loadProfileAndShow(){
   renderForm();
   loadUsers();
   loadSalariesForInvite();
+  loadRestos();
+  loadWaBot();
+  document.getElementById('bot_supa_url').textContent=SUPA_URL;
   document.getElementById('mcpUrl').textContent=SUPA_URL+'/functions/v1/mcp';
   loadApiKeys();
   if(ME.role==='super_admin'){
@@ -449,6 +491,184 @@ async function removeUser(id,name){
   if(error){toast(error.message);return;}
   toast('Utilisateur retiré');
   loadUsers();
+}
+
+// ────────────────────────────────  RESTAURANTS / SNACKS  ────────────────────────────────
+let RESTOS_CACHE=[];
+async function loadRestos(){
+  const{data,error}=await sb.from('restaurants').select('id,nom,code_pin,actif,created_at').eq('organization_id',ORG.id).order('nom');
+  if(error){document.getElementById('restosList').innerHTML='<div style="color:var(--bad)">'+error.message+'</div>';return;}
+  RESTOS_CACHE=data||[];
+  if(!RESTOS_CACHE.length){document.getElementById('restosList').innerHTML='<div style="color:var(--muted);padding:8px">Aucun restaurant. Crée le premier ci-dessous.</div>';return;}
+  let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+  RESTOS_CACHE.forEach(r=>{
+    const bg=r.actif?'var(--ok)':'#7b7b8a';
+    html+=`<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)" data-resto="${r.id}">
+      <div style="width:30px;height:30px;border-radius:8px;background:${bg}33;color:${bg};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">🏪</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600">${r.nom} ${r.actif?'':'<span style="color:var(--muted);font-weight:400;font-size:11px">(inactif)</span>'}</div>
+        <div style="color:var(--muted);font-size:11.5px">PIN : <code style="background:var(--surface);padding:1px 6px;border-radius:4px">${r.code_pin||'—'}</code> · créé le ${new Date(r.created_at).toLocaleDateString('fr-FR')}</div>
+      </div>
+      <button class="btn ghost sm" onclick="openEditResto('${r.id}')">✎</button>
+      <button class="btn ghost sm" onclick="toggleResto('${r.id}',${!r.actif})" title="${r.actif?'Désactiver':'Réactiver'}">${r.actif?'⏸':'▶'}</button>
+      <button class="btn ghost sm" onclick="deleteResto('${r.id}','${r.nom.replace(/'/g,'')}')" title="Supprimer">🗑</button>
+    </div>`;
+  });
+  html=html.replace(/<\/div>$/,'');
+  html+='</div>';
+  document.getElementById('restosList').innerHTML=html;
+}
+async function createResto(){
+  const nom=document.getElementById('resto_nom').value.trim();
+  const pin=document.getElementById('resto_pin').value.trim()||null;
+  const err=document.getElementById('resto_err');err.textContent='';
+  if(!nom){err.textContent='Nom requis';return;}
+  if(pin && !/^\d{3,6}$/.test(pin)){err.textContent='PIN : 3 à 6 chiffres';return;}
+  const{error}=await sb.from('restaurants').insert({organization_id:ORG.id,nom,code_pin:pin,actif:true});
+  if(error){err.textContent=error.message;return;}
+  document.getElementById('resto_nom').value='';
+  document.getElementById('resto_pin').value='';
+  toast('✓ Restaurant créé');
+  loadRestos();
+}
+async function toggleResto(id,actif){
+  const{error}=await sb.from('restaurants').update({actif}).eq('id',id);
+  if(error){toast(error.message);return;}
+  toast(actif?'✓ Réactivé':'⏸ Désactivé');loadRestos();
+}
+async function deleteResto(id,nom){
+  if(!confirm(`Supprimer définitivement le restaurant "${nom}" ?\n\n⚠ Toutes les données associées (saisies stock, pointages, factures liées) resteront en base mais sans restaurant rattaché.\n\nSi tu veux juste le cacher temporairement, utilise "Désactiver" ⏸ à la place.`))return;
+  const{error}=await sb.from('restaurants').delete().eq('id',id);
+  if(error){toast('Impossible : '+error.message+' (utilise ⏸ pour désactiver)');return;}
+  toast('🗑 Supprimé');loadRestos();
+}
+async function openEditResto(id){
+  const r=RESTOS_CACHE.find(x=>x.id===id);if(!r)return;
+  // Récupérer la config alertes
+  const{data:cfg}=await sb.from('stock_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
+  const alerteCfg=cfg||{actif:false,heure_check:'22:30',email_alerte:'',wa_groupe_id:'',wa_groupe_nom:''};
+  const overlay=document.createElement('div');
+  overlay.id='editRestoModal';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  overlay.innerHTML=`<div style="background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <h2 style="font-size:18px;margin:0">Éditer ${r.nom}</h2>
+      <button onclick="closeEditResto()" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;line-height:1">×</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Infos générales</div>
+    <div class="fld"><label>Nom</label><input id="er_nom" value="${r.nom.replace(/"/g,'&quot;')}"></div>
+    <div class="fld"><label>Code PIN (kiosques)</label><input id="er_pin" value="${r.code_pin||''}" maxlength="6" inputmode="numeric"></div>
+    <div class="fld"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="er_actif" ${r.actif?'checked':''} style="width:auto"> Restaurant actif</label></div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">🔔 Alertes feuille de stock</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Si la feuille de stock n'a pas été remplie à l'heure indiquée, on envoie une alerte mail et (optionnel) WhatsApp dans le groupe configuré.</div>
+    <div class="fld"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="er_alerte_actif" ${alerteCfg.actif?'checked':''} style="width:auto"> Activer l'alerte quotidienne</label></div>
+    <div class="grid2">
+      <div class="fld"><label>Heure du check (Europe/Paris)</label><input type="time" id="er_alerte_heure" value="${alerteCfg.heure_check||'22:30'}"></div>
+      <div class="fld"><label>Email d'alerte</label><input type="email" id="er_alerte_email" value="${alerteCfg.email_alerte||''}" placeholder="alertes@exemple.fr"></div>
+    </div>
+    <div class="fld">
+      <label>Groupe WhatsApp (ID JID)</label>
+      <input id="er_wa_grp_id" value="${alerteCfg.wa_groupe_id||''}" placeholder="120363xxx@g.us">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">L'ID s'obtient via le bot (page suivante). Format type : <code>120363xxxxxxxxxxx@g.us</code></div>
+    </div>
+    <div class="fld">
+      <label>Nom du groupe (label affiché)</label>
+      <input id="er_wa_grp_nom" value="${alerteCfg.wa_groupe_nom||''}" placeholder="Équipe Snack X">
+    </div>
+
+    <div id="er_err" style="color:var(--bad);font-size:13px;min-height:18px"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeEditResto()">Annuler</button>
+      <button class="btn" onclick="saveEditResto('${r.id}')">💾 Enregistrer</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)closeEditResto();});
+}
+function closeEditResto(){const m=document.getElementById('editRestoModal');if(m)m.remove();}
+// ────────────────────────────────  BOT WHATSAPP  ────────────────────────────────
+async function loadWaBot(){
+  const{data}=await sb.from('wa_bot_config').select('id,nom,api_token,last_ping_at,status,created_at').eq('organization_id',ORG.id).order('created_at',{ascending:false});
+  const block=document.getElementById('waBotBlock');
+  if(!data||!data.length){
+    block.innerHTML=`<div style="background:var(--surface);border:1px dashed var(--line-2);border-radius:8px;padding:18px;text-align:center">
+      <div style="color:var(--muted);margin-bottom:12px;font-size:13px">Aucun bot configuré pour cette organisation.</div>
+      <button class="btn" onclick="createBotToken()">+ Créer un token bot</button>
+    </div>`;
+    return;
+  }
+  let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+  data.forEach(b=>{
+    const ping=b.last_ping_at?new Date(b.last_ping_at):null;
+    const ageMin=ping?Math.round((Date.now()-ping.getTime())/60000):null;
+    const isOnline=ping && ageMin<3 && b.status==='online';
+    const statusColor=isOnline?'var(--ok)':'var(--bad)';
+    const statusTxt=isOnline?'En ligne':ping?`Hors ligne (dernier ping il y a ${ageMin}min)`:'Jamais connecté';
+    html+=`<div style="padding:14px 16px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="width:8px;height:8px;border-radius:50%;background:${statusColor}"></span>
+        <span style="font-weight:600">${b.nom||'Bot principal'}</span>
+        <span style="color:${statusColor};font-size:12px">${statusTxt}</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Token (à coller dans BOT_TOKEN sur Railway) :</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input value="${b.api_token||''}" readonly style="flex:1;background:var(--surface);border:1px solid var(--line-2);color:var(--text);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace">
+        <button class="btn ghost sm" onclick="copyLink('${b.api_token}')">📋</button>
+        <button class="btn ghost sm" onclick="regenBotToken('${b.id}')" title="Régénérer">🔄</button>
+        <button class="btn ghost sm" onclick="deleteBotToken('${b.id}')" title="Supprimer">🗑</button>
+      </div>
+    </div>`;
+  });
+  html=html.replace(/<\/div>$/,'');
+  html+='</div>';
+  html+=`<button class="btn ghost sm" style="margin-top:10px" onclick="createBotToken()">+ Token additionnel</button>`;
+  block.innerHTML=html;
+}
+function newToken(){const c='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';let s='wabot_';for(let i=0;i<40;i++)s+=c.charAt(Math.floor(Math.random()*c.length));return s;}
+async function createBotToken(){
+  const nom=prompt('Nom du bot (label affiché) :','Bot principal');if(!nom)return;
+  const{error}=await sb.from('wa_bot_config').insert({organization_id:ORG.id,nom,api_token:newToken()});
+  if(error){toast(error.message);return;}
+  toast('✓ Token créé');loadWaBot();
+}
+async function regenBotToken(id){
+  if(!confirm('Régénérer le token ? Le bot devra être redéployé avec le nouveau.'))return;
+  const{error}=await sb.from('wa_bot_config').update({api_token:newToken(),status:'offline'}).eq('id',id);
+  if(error){toast(error.message);return;}
+  toast('✓ Token régénéré');loadWaBot();
+}
+async function deleteBotToken(id){
+  if(!confirm('Supprimer ce token ? Le bot ne pourra plus se connecter.'))return;
+  const{error}=await sb.from('wa_bot_config').delete().eq('id',id);
+  if(error){toast(error.message);return;}
+  loadWaBot();
+}
+
+async function saveEditResto(id){
+  const nom=document.getElementById('er_nom').value.trim();
+  const pin=document.getElementById('er_pin').value.trim()||null;
+  const actif=document.getElementById('er_actif').checked;
+  const err=document.getElementById('er_err');err.textContent='';
+  if(!nom){err.textContent='Nom requis';return;}
+  if(pin && !/^\d{3,6}$/.test(pin)){err.textContent='PIN : 3 à 6 chiffres';return;}
+  // 1. update restaurant
+  const{error}=await sb.from('restaurants').update({nom,code_pin:pin,actif}).eq('id',id);
+  if(error){err.textContent=error.message;return;}
+  // 2. upsert config alertes
+  const cfg={
+    restaurant_id:id,
+    organization_id:ORG.id,
+    actif:document.getElementById('er_alerte_actif').checked,
+    heure_check:document.getElementById('er_alerte_heure').value||'22:30',
+    email_alerte:document.getElementById('er_alerte_email').value.trim()||null,
+    wa_groupe_id:document.getElementById('er_wa_grp_id').value.trim()||null,
+    wa_groupe_nom:document.getElementById('er_wa_grp_nom').value.trim()||null,
+    updated_at:new Date().toISOString(),
+  };
+  const{error:e2}=await sb.from('stock_alertes_config').upsert(cfg,{onConflict:'restaurant_id'});
+  if(e2){err.textContent=e2.message;return;}
+  toast('✓ Restaurant + alertes mis à jour');closeEditResto();loadRestos();
 }
 
 // ────────────────────────────────  MODALE ÉDITION USER  ────────────────────────────────
