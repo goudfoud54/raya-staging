@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<title>Bulk upload contrats — Eatime360</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root,[data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
+[data-theme="light"]{--gold:#c8a035;--bg:#f5f5f7;--card:#fff;--surface:#f0f0f3;--line:rgba(0,0,0,.06);--line-2:rgba(0,0,0,.12);--text:#1a1a1f;--muted:#6b6b78;--ok:#2a8f5f;--warn:#b8841f;--bad:#b04444}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+.hidden{display:none!important}
+button{cursor:pointer;border:none;font-family:inherit;color:var(--text)}
+.btn{padding:11px 18px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+input{font-family:inherit;color:var(--text)}
+.wrap{max-width:920px;margin:0 auto;padding:24px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.brand{color:var(--gold);font-weight:700;font-size:18px}
+.brand small{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+.lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px}
+.lock h1{color:var(--gold);font-size:22px}
+.lock input{padding:12px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:14px;width:300px;outline:none;text-align:center}
+.err{color:var(--bad);font-size:13px;min-height:18px}
+.dropzone{border:2px dashed var(--line-2);border-radius:14px;padding:40px;text-align:center;cursor:pointer;background:var(--card);margin-bottom:20px;transition:.15s}
+.dropzone.over{border-color:var(--gold);background:rgba(200,160,53,.06)}
+.dropzone .ic{font-size:54px;margin-bottom:10px}
+.dropzone p{color:var(--muted);font-size:13px;line-height:1.6}
+.dropzone .hint{font-size:12px;margin-top:6px}
+.fiche{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:14px}
+.fiche .avatar{width:36px;height:36px;border-radius:50%;background:var(--surface);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0}
+.fiche .info{flex:1;min-width:0}
+.fiche .nom{font-weight:600;font-size:14px}
+.fiche .sub{color:var(--muted);font-size:11.5px;margin-top:2px}
+.fiche .status{font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px;white-space:nowrap}
+.fiche .status.pending{background:var(--surface);color:var(--muted)}
+.fiche .status.ready{background:rgba(200,160,53,.15);color:var(--gold)}
+.fiche .status.uploading{background:rgba(91,156,255,.15);color:#5b9cff}
+.fiche .status.done{background:rgba(63,184,127,.15);color:var(--ok)}
+.fiche .status.error{background:rgba(196,90,90,.15);color:var(--bad)}
+.fiche .filepicker{font-size:12px;color:var(--muted);cursor:pointer}
+.fiche .filepicker input{display:none}
+.fiche .filepicker span{text-decoration:underline}
+.toolbar{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.progress{height:6px;background:var(--surface);border-radius:3px;overflow:hidden;margin-top:10px}
+.progress-bar{height:100%;background:var(--gold);transition:.3s;width:0}
+</style>
+</head>
+<body>
+
+<div id="lock" class="lock hidden">
+  <h1>Bulk upload contrats</h1>
+  <div style="color:var(--muted);font-size:13px">Réservé aux admins</div>
+  <input type="email" id="loginEmail" placeholder="Email">
+  <input type="password" id="loginPw" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')login()">
+  <button class="btn" onclick="login()">Se connecter</button>
+  <div class="err" id="loginErr"></div>
+  <a href="../" style="font-size:12px;color:var(--muted)">← Portail</a>
+</div>
+
+<div id="app" class="hidden">
+<div class="wrap">
+  <div class="header">
+    <div>
+      <div class="brand">📎 Bulk upload contrats <small>· déposer 6 PDFs d'un coup</small></div>
+      <div style="color:var(--muted);font-size:12px;margin-top:4px" id="userInfo"></div>
+    </div>
+    <a href="../" class="btn ghost">← Portail</a>
+  </div>
+
+  <div class="dropzone" id="dz" onclick="document.getElementById('multiFile').click()">
+    <div class="ic">📂</div>
+    <p><b>Glisse-dépose ici les 6 PDF</b> (ou clique pour choisir)</p>
+    <p class="hint">Le matching se fait automatiquement par le nom du fichier (Diaddie, Moumouni, Cali…)</p>
+    <input type="file" id="multiFile" multiple accept="application/pdf" style="display:none" onchange="handleMultiFiles(this.files)">
+  </div>
+
+  <div id="fichesList"></div>
+
+  <div class="toolbar">
+    <button class="btn ghost" onclick="resetAll()">Réinitialiser</button>
+    <button class="btn" id="btnUpload" onclick="uploadAll()" disabled>📤 Tout uploader</button>
+  </div>
+
+  <div id="globalProgress" class="progress hidden"><div class="progress-bar" id="globalBar"></div></div>
+  <div id="globalStatus" style="text-align:center;color:var(--muted);font-size:13px;margin-top:10px"></div>
+</div>
+</div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+
+// Cible : 6 fiches à pré-remplir. IDs récupérés via MCP plus tôt dans la session.
+const FICHES=[
+  {id:'f94188b4-603f-4a3f-9884-e7fa0e89d68c',label:'SY Diaddie',  keywords:['diaddie','sy','diadie']},
+  {id:'afc70807-86b1-4b9b-8a0c-03151b596964',label:'BELEM Moumouni',keywords:['moumouni','belem']},
+  {id:'589a50a3-3418-4bb2-8732-d073baf6cccd',label:'TOUSSAINT Cali',keywords:['cali','toussaint','cerfa_d_apprentissage']},
+  {id:'07a0b5cc-1697-48bb-a3ca-c1d32e851727',label:'TESTAU Louna', keywords:['louna','testau']},
+  {id:'12e78c56-63ee-4f2b-9082-aef9a10fa2df',label:'EL HAI Assma',keywords:['assma','el_hai','elhai']},
+  {id:'9fddebae-852e-4efb-bbd3-fc03721a3c40',label:'ISAEVA Yakhita',keywords:['yakhita','isaeva']},
+];
+const STATE={};
+FICHES.forEach(f=>{STATE[f.id]={file:null,status:'pending',msg:'',docId:null}});
+
+async function login(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const pw=document.getElementById('loginPw').value;
+  if(!email||!pw){document.getElementById('loginErr').textContent='Email + mdp requis';return;}
+  document.getElementById('loginErr').textContent='Connexion…';
+  const{error}=await sb.auth.signInWithPassword({email,password:pw});
+  if(error){document.getElementById('loginErr').textContent=error.message;return;}
+  init();
+}
+
+async function init(){
+  const{data:{session}}=await sb.auth.getSession();
+  if(!session){document.getElementById('lock').classList.remove('hidden');return;}
+  const{data:profile}=await sb.from('profiles').select('full_name,role,email').eq('id',session.user.id).maybeSingle();
+  if(!profile||!['admin','super_admin','manager'].includes(profile.role)){
+    document.getElementById('lock').classList.remove('hidden');
+    document.getElementById('loginErr').textContent='Accès refusé (rôle insuffisant)';
+    await sb.auth.signOut();return;
+  }
+  document.getElementById('lock').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('userInfo').textContent='Connecté : '+(profile.full_name||profile.email)+' · '+profile.role;
+  renderFiches();
+  setupDropzone();
+}
+
+function setupDropzone(){
+  const dz=document.getElementById('dz');
+  ['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over');}));
+  ['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('over');}));
+  dz.addEventListener('drop',ev=>{ev.preventDefault();handleMultiFiles(ev.dataTransfer.files);});
+}
+
+function handleMultiFiles(files){
+  Array.from(files).forEach(f=>{
+    const name=f.name.toLowerCase().replace(/[\s\-]/g,'_');
+    let matched=null;
+    for(const fiche of FICHES){
+      for(const kw of fiche.keywords){
+        if(name.includes(kw)){matched=fiche;break;}
+      }
+      if(matched)break;
+    }
+    if(matched){
+      STATE[matched.id].file=f;
+      STATE[matched.id].status='ready';
+      STATE[matched.id].msg='';
+    } else {
+      console.warn('Pas de match pour',f.name);
+    }
+  });
+  renderFiches();
+  document.getElementById('btnUpload').disabled=!FICHES.some(f=>STATE[f.id].file);
+}
+
+function pickFile(fid,inp){
+  const f=inp.files[0];if(!f)return;
+  STATE[fid].file=f;STATE[fid].status='ready';STATE[fid].msg='';
+  renderFiches();
+  document.getElementById('btnUpload').disabled=!FICHES.some(f=>STATE[f.id].file);
+}
+
+function renderFiches(){
+  const STATUS_LBL={pending:'En attente',ready:'Prêt',uploading:'Envoi…',done:'✓ Uploadé',error:'✗ Erreur'};
+  let html='';
+  FICHES.forEach(f=>{
+    const s=STATE[f.id];
+    const init=f.label.split(' ').map(p=>p[0]).slice(0,2).join('');
+    html+=`<div class="fiche">
+      <div class="avatar">${init}</div>
+      <div class="info">
+        <div class="nom">${f.label}</div>
+        <div class="sub">
+          ${s.file?'📄 '+s.file.name+' ('+(s.file.size/1024).toFixed(0)+' Ko)':
+            '<label class="filepicker">Aucun fichier — <span>choisir</span><input type="file" accept="application/pdf" onchange="pickFile(\''+f.id+'\',this)"></label>'}
+          ${s.msg?'<div style="color:var(--bad);margin-top:3px">'+s.msg+'</div>':''}
+        </div>
+      </div>
+      <div class="status ${s.status}">${STATUS_LBL[s.status]}</div>
+    </div>`;
+  });
+  document.getElementById('fichesList').innerHTML=html;
+}
+
+async function uploadOne(fiche){
+  const s=STATE[fiche.id];
+  if(!s.file)return;
+  s.status='uploading';renderFiches();
+  try{
+    const safeName=s.file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    const path=`${fiche.id}/contrat/${Date.now()}_${safeName}`;
+    const up=await sb.storage.from('salaries-docs').upload(path,s.file,{contentType:s.file.type||'application/pdf',upsert:false});
+    if(up.error)throw new Error('storage: '+up.error.message);
+    const ins=await sb.from('salarie_documents').insert({
+      salarie_id:fiche.id,type:'contrat',nom:s.file.name,path,
+      taille:s.file.size,content_type:s.file.type||'application/pdf'
+    }).select().single();
+    if(ins.error)throw new Error('db: '+ins.error.message);
+    s.status='done';s.msg='';s.docId=ins.data.id;
+  }catch(e){
+    s.status='error';s.msg=e.message;
+  }
+  renderFiches();
+}
+
+async function uploadAll(){
+  const btn=document.getElementById('btnUpload');btn.disabled=true;
+  const ready=FICHES.filter(f=>STATE[f.id].file && STATE[f.id].status!=='done');
+  if(!ready.length){btn.disabled=false;return;}
+  const bar=document.getElementById('globalBar');
+  const progress=document.getElementById('globalProgress');
+  const status=document.getElementById('globalStatus');
+  progress.classList.remove('hidden');
+  bar.style.width='0%';
+  let done=0;
+  for(const f of ready){
+    status.textContent=`Envoi de ${f.label}…`;
+    await uploadOne(f);
+    done++;
+    bar.style.width=Math.round(done/ready.length*100)+'%';
+  }
+  const ok=FICHES.filter(f=>STATE[f.id].status==='done').length;
+  const err=FICHES.filter(f=>STATE[f.id].status==='error').length;
+  status.innerHTML=`<b style="color:var(--ok)">✓ ${ok} uploadé${ok>1?'s':''}</b>${err?` <b style="color:var(--bad)">· ${err} en erreur</b>`:''}`;
+  btn.disabled=false;
+}
+
+function resetAll(){
+  FICHES.forEach(f=>{STATE[f.id]={file:null,status:'pending',msg:'',docId:null};});
+  document.getElementById('multiFile').value='';
+  document.getElementById('btnUpload').disabled=true;
+  document.getElementById('globalProgress').classList.add('hidden');
+  document.getElementById('globalStatus').textContent='';
+  renderFiches();
+}
+
+sb.auth.getSession().then(({data})=>{
+  if(data.session) init();
+  else document.getElementById('lock').classList.remove('hidden');
+});
+</script>
+</body>
+</html>
