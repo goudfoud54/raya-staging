@@ -51,6 +51,16 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;border:1px solid var(--line-2);padding:11px 22px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:200}
 .toast.show{opacity:1}
 @media(max-width:600px){.grid2{grid-template-columns:1fr}}
+
+/* Onglets */
+.tabs{display:flex;gap:4px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;margin-bottom:18px;position:sticky;top:0;z-index:10}
+.tab{padding:9px 14px;background:transparent;border:none;color:var(--muted);font-size:13px;font-weight:600;border-radius:8px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:6px}
+.tab:hover{background:var(--surface);color:var(--text)}
+.tab.active{background:var(--gold);color:#1a1a1a}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+.tab .badge{background:var(--bad);color:#fff;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700}
+@media(max-width:600px){.tabs{padding:4px;gap:2px}.tab{padding:8px 10px;font-size:11.5px}}
 </style>
 </head>
 <body>
@@ -74,7 +84,18 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
     </div>
   </div>
   <div class="wrap">
-    <!-- APPARENCE (perso utilisateur, pas par org) -->
+    <div class="tabs" id="tabsBar">
+      <button class="tab active" data-tab="apparence" onclick="setTab('apparence')">🎨 Apparence</button>
+      <button class="tab" data-tab="organisation" onclick="setTab('organisation')">🏢 Organisation</button>
+      <button class="tab" data-tab="utilisateurs" onclick="setTab('utilisateurs')">👥 Utilisateurs</button>
+      <button class="tab" data-tab="restaurants" onclick="setTab('restaurants')">🏪 Restaurants</button>
+      <button class="tab" data-tab="permissions" onclick="setTab('permissions')">🔐 Permissions</button>
+      <button class="tab" data-tab="integrations" onclick="setTab('integrations')">🔌 Intégrations</button>
+      <button class="tab hidden" id="tab_superadmin" data-tab="superadmin" onclick="setTab('superadmin')">🛡 Super admin</button>
+    </div>
+
+    <!-- ─────────── ONGLET APPARENCE ─────────── -->
+    <div class="tab-pane active" data-pane="apparence">
     <div class="section">
       <h3>Apparence (préférence personnelle)</h3>
       <div style="color:var(--muted);font-size:12px;margin-bottom:14px">Le thème est stocké localement sur cet appareil et s'applique partout dans l'application.</div>
@@ -87,7 +108,10 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
         </button>
       </div>
     </div>
+    </div>
 
+    <!-- ─────────── ONGLET ORGANISATION ─────────── -->
+    <div class="tab-pane" data-pane="organisation">
     <!-- IDENTITÉ -->
     <div class="section">
       <h3>Identité de l'organisation</h3>
@@ -135,18 +159,25 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       <div style="color:var(--muted);font-size:11.5px">Les couleurs s'appliquent au portail et progressivement aux autres modules.</div>
     </div>
 
-    <!-- PERMISSIONS -->
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin:6px 0 26px">
+      <button class="btn" onclick="saveAll()">💾 Enregistrer (identité, couleurs, paie)</button>
+    </div>
+    </div>
+
+    <!-- ─────────── ONGLET PERMISSIONS ─────────── -->
+    <div class="tab-pane" data-pane="permissions">
     <div class="section">
       <h3>Accès aux modules par rôle</h3>
       <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Coche les rôles autorisés à voir chaque module dans le portail. <i>Super admin a toujours tous les accès.</i></div>
       <table class="perms" id="permsTable"></table>
     </div>
-
     <div style="display:flex;justify-content:flex-end;gap:10px;margin:6px 0 26px">
-      <button class="btn" onclick="saveAll()">Enregistrer (identité, couleurs, permissions)</button>
+      <button class="btn" onclick="saveAll()">💾 Enregistrer les permissions</button>
+    </div>
     </div>
 
-    <!-- UTILISATEURS -->
+    <!-- ─────────── ONGLET UTILISATEURS ─────────── -->
+    <div class="tab-pane" data-pane="utilisateurs">
     <div class="section">
       <h3>Utilisateurs de l'organisation</h3>
       <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Liste des membres actifs et des invitations en attente.</div>
@@ -172,8 +203,10 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
         <div id="inv_result" style="margin-top:14px"></div>
       </div>
     </div>
+    </div>
 
-    <!-- RESTAURANTS / SNACKS -->
+    <!-- ─────────── ONGLET RESTAURANTS ─────────── -->
+    <div class="tab-pane" data-pane="restaurants">
     <div class="section">
       <h3>🏪 Restaurants / Snacks</h3>
       <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Tes points de vente. Chaque restaurant a son propre stock, planning, badgeuse et facturation. Configure aussi les alertes (mail + WhatsApp) si la feuille de stock n'est pas remplie.</div>
@@ -188,28 +221,29 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
         <div id="resto_err" style="color:var(--bad);font-size:13px;margin-top:8px"></div>
       </div>
     </div>
+    </div>
 
-    <!-- BOT WHATSAPP -->
-    <div class="section">
-      <h3>🤖 Bot WhatsApp (alertes)</h3>
-      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Le bot envoie les alertes dans les groupes WhatsApp configurés sur chaque restaurant. Il tourne en continu (auto-hébergé sur Railway/Fly/VPS).</div>
-      <div id="waBotBlock"></div>
-      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
-        <details>
-          <summary style="cursor:pointer;font-weight:600;font-size:13px">📖 Comment déployer le bot ?</summary>
-          <div style="color:var(--muted);font-size:12.5px;line-height:1.6;margin-top:10px">
-            <p><b>1.</b> Crée le token ci-dessus.</p>
-            <p><b>2.</b> Clone le repo bot : <code style="background:var(--surface);padding:2px 6px;border-radius:4px">github.com/goudfoud54/eatime-wa-bot</code></p>
-            <p><b>3.</b> Déploie sur Railway en mode "Deploy from GitHub" et configure ces variables :</p>
-            <ul style="padding-left:20px;margin:6px 0">
-              <li><code>SUPA_URL</code> = <code style="background:var(--surface);padding:1px 5px;border-radius:3px" id="bot_supa_url"></code></li>
-              <li><code>BOT_TOKEN</code> = ton token (voir ci-dessus)</li>
-            </ul>
-            <p><b>4.</b> Au premier démarrage, ouvre les logs Railway et scanne le QR code avec WhatsApp (Paramètres → Appareils liés).</p>
-            <p><b>5.</b> Pour obtenir l'ID JID d'un groupe : envoie <code>!id</code> dans le groupe — le bot te répondra avec son ID, à coller dans la fiche du restaurant.</p>
-          </div>
-        </details>
+    <!-- ─────────── ONGLET INTÉGRATIONS ─────────── -->
+    <div class="tab-pane" data-pane="integrations">
+
+    <!-- BOT WHATSAPP - VUE UTILISATEUR (commercial) -->
+    <div class="section" id="waUserBlock">
+      <h3>📲 Alerte WhatsApp Pro</h3>
+      <div style="background:linear-gradient(135deg,rgba(200,160,53,.08),rgba(63,184,127,.05));border:1px solid var(--line-2);border-radius:10px;padding:18px;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:600;margin-bottom:8px">Connecte ton équipe en temps réel</div>
+        <div style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:14px">
+          Reçois automatiquement dans ton groupe WhatsApp un message si la feuille de stock n'est pas remplie à l'heure, si une feuille HACCP manque, ou pour tes commandes fournisseur.
+        </div>
+        <div style="display:grid;gap:8px;font-size:13px;color:var(--text);margin-bottom:16px">
+          <div>✓ Alertes feuille de stock (22:30)</div>
+          <div>✓ Alertes HACCP (relevés manquants)</div>
+          <div>✓ Commandes fournisseur en un clic</div>
+          <div>✓ Bot dédié à ton org, installation par notre SAV</div>
+        </div>
+        <div id="waUserStatus" style="margin-bottom:14px"></div>
+        <a href="mailto:contact@eatime360.com?subject=Activation%20Alerte%20WhatsApp%20Pro&body=Bonjour%2C%0A%0AJe%20souhaite%20activer%20l'alerte%20WhatsApp%20Pro%20pour%20mon%20organisation.%0A%0AOrganisation%20%3A%20" id="waContactLink" class="btn">📞 Contacter le SAV pour activer</a>
       </div>
+      <div style="color:var(--muted);font-size:11px">Inclus dans le plan Pro · sur demande pour les autres plans.</div>
     </div>
 
     <!-- CLÉS API & MCP -->
@@ -237,17 +271,44 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
         <div id="ak_result" style="margin-top:14px"></div>
       </div>
     </div>
+    </div>
 
-    <!-- MAINTENANCE MODULES (super_admin only) -->
-    <div class="section hidden" id="maintenanceSection">
-      <h3>🔧 Maintenance des modules (super admin)</h3>
+    <!-- ─────────── ONGLET SUPER ADMIN ─────────── -->
+    <div class="tab-pane" data-pane="superadmin">
+
+    <!-- BOT WHATSAPP - VUE SUPER_ADMIN / SAV -->
+    <div class="section">
+      <h3>🤖 Bot WhatsApp (panneau SAV)</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Réservé super_admin / SAV Eatime. Génère un token bot, déploie l'instance Node.js (Railway/VPS), puis livre l'accès au client. Voir la doc interne dans le repo <code>eatime-wa-bot</code>.</div>
+      <div id="waBotBlock"></div>
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;font-weight:600;font-size:13px">📖 Procédure de déploiement (interne SAV)</summary>
+        <div style="color:var(--muted);font-size:12.5px;line-height:1.6;margin-top:10px">
+          <p><b>1.</b> Crée le token bot ci-dessus pour l'org du client.</p>
+          <p><b>2.</b> Le code du bot est dans le dossier local <code style="background:var(--surface);padding:2px 6px;border-radius:4px">eatime-wa-bot/</code> (à pousser sur GitHub interne Eatime).</p>
+          <p><b>3.</b> Déploie sur Railway / Fly / VPS dédié avec :</p>
+          <ul style="padding-left:20px;margin:6px 0">
+            <li><code>SUPA_URL</code> = <code style="background:var(--surface);padding:1px 5px;border-radius:3px" id="bot_supa_url"></code></li>
+            <li><code>BOT_TOKEN</code> = le token généré</li>
+            <li>Volume persistant sur <code>/data</code> pour la session WhatsApp</li>
+          </ul>
+          <p><b>4.</b> Connecte un numéro WhatsApp Business dédié (un par client idéalement) en scannant le QR dans les logs Railway.</p>
+          <p><b>5.</b> Demande au client d'ajouter le bot à ses groupes WhatsApp, puis envoie <code>!id</code> dans chaque groupe → tu colles le JID dans la fiche Restaurant côté client.</p>
+          <p><b>6.</b> Facture le pack installation (à définir avec commercial).</p>
+        </div>
+      </details>
+    </div>
+
+    <!-- MAINTENANCE MODULES -->
+    <div class="section">
+      <h3>🔧 Maintenance des modules</h3>
       <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Désactive globalement un module pour toutes les organisations (sauf super_admin qui garde accès). Utile pour les déploiements / corrections en urgence.</div>
       <div id="modulesList"></div>
     </div>
 
-    <!-- ORGANISATIONS (super_admin only) -->
-    <div class="section hidden" id="orgsSection">
-      <h3>🛡 Organisations (super admin)</h3>
+    <!-- ORGANISATIONS -->
+    <div class="section">
+      <h3>🛡 Organisations</h3>
       <div style="color:var(--muted);font-size:11.5px;margin-bottom:14px">Gestion globale du SaaS. Crée une nouvelle organisation et invite son premier admin.</div>
       <div id="orgsList" style="font-size:13px;margin-bottom:18px"></div>
 
@@ -266,6 +327,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
         <button class="btn" onclick="createOrg()">Créer l'organisation + inviter l'admin</button>
         <div id="new_org_result" style="margin-top:14px"></div>
       </div>
+    </div>
     </div>
   </div>
 </div>
@@ -317,14 +379,43 @@ async function loadProfileAndShow(){
   loadUsers();
   loadSalariesForInvite();
   loadRestos();
-  loadWaBot();
-  document.getElementById('bot_supa_url').textContent=SUPA_URL;
   document.getElementById('mcpUrl').textContent=SUPA_URL+'/functions/v1/mcp';
   loadApiKeys();
+  // Vue Bot WhatsApp : super_admin (SAV) voit le panneau technique, sinon vue commerciale
   if(ME.role==='super_admin'){
-    document.getElementById('orgsSection').classList.remove('hidden');loadOrgs();
-    document.getElementById('maintenanceSection').classList.remove('hidden');loadMaintenance();
+    document.getElementById('waUserBlock').classList.add('hidden');
+    document.getElementById('tab_superadmin').classList.remove('hidden');
+    document.getElementById('bot_supa_url').textContent=SUPA_URL;
+    loadWaBot();
+    loadOrgs();
+    loadMaintenance();
+  } else {
+    // Vue user : on remplit le mailto et le statut bot s'il existe (lecture seule)
+    const link=document.getElementById('waContactLink');
+    link.href=link.href+encodeURIComponent(ORG.nom||'');
+    loadWaUserStatus();
   }
+  // Onglet par défaut : la dernière vue ouverte (localStorage) ou Apparence
+  const last=localStorage.getItem('parametres_tab')||'apparence';
+  setTab(last);
+}
+function setTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('active',p.dataset.pane===name));
+  localStorage.setItem('parametres_tab',name);
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+async function loadWaUserStatus(){
+  // Affiche un statut "actif" si un bot est déjà configuré + en ligne pour cette org
+  const{data}=await sb.from('wa_bot_config').select('last_ping_at,status').eq('organization_id',ORG.id).order('created_at',{ascending:false}).limit(1);
+  const el=document.getElementById('waUserStatus');
+  if(!data||!data.length){el.innerHTML='<span style="color:var(--muted);font-size:12px">📴 Non activé pour ton organisation</span>';return;}
+  const b=data[0];
+  const ping=b.last_ping_at?new Date(b.last_ping_at):null;
+  const ageMin=ping?Math.round((Date.now()-ping.getTime())/60000):null;
+  const isOnline=ping && ageMin<3 && b.status==='online';
+  if(isOnline){el.innerHTML='<span style="color:var(--ok);font-size:13px;font-weight:600">✓ Activé et en ligne — ton équipe reçoit déjà les alertes</span>';}
+  else{el.innerHTML='<span style="color:var(--warn);font-size:13px;font-weight:600">⚠ Bot configuré mais hors ligne — contacte le SAV</span>';}
 }
 async function logout(){await sb.auth.signOut();location.reload();}
 sb.auth.getSession().then(({data})=>{
