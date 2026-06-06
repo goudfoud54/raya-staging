@@ -63,7 +63,6 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 let SALARIE=null,PIN='',SNACK_ID=null,SNACK=null,SNACKS=[],PRODUITS=[],STOCK_MAX={},SAISIES_TODAY={};
-let CURRENT_CAT=null;
 
 async function init(){
   SNACK_ID=localStorage.getItem('stock_kiosk_snack');
@@ -125,10 +124,8 @@ async function validatePin(){
 }
 
 function inventaireScreen(){
-  // Catégories triées par ordre de produits
+  // Toutes les catégories (groupées, empilées de haut en bas)
   const cats=[...new Set(PRODUITS.map(p=>p.categorie||'Divers'))].sort();
-  if(!CURRENT_CAT) CURRENT_CAT=cats[0];
-  // Compteurs
   const totalAFaire=PRODUITS.length;
   const totalFait=Object.keys(SAISIES_TODAY).length;
   const pct=totalAFaire?Math.round(totalFait/totalAFaire*100):0;
@@ -136,38 +133,43 @@ function inventaireScreen(){
     <button class="back" onclick="pinScreen()">↩ Sortir</button>
     <h1>Inventaire<small>${SNACK?.nom||''}</small></h1>
     <div class="user">👋 ${SALARIE.prenom||''} ${SALARIE.nom} · ${new Date().toLocaleDateString('fr-FR')}</div>
-    <div style="text-align:center;font-size:13px;color:#7b7b8a;margin-bottom:6px">${totalFait} / ${totalAFaire} produits saisis</div>
+    <div style="text-align:center;font-size:13px;color:#7b7b8a;margin-bottom:6px" id="cptr">${totalFait} / ${totalAFaire} produits saisis</div>
     <div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>
-    <div class="cat-tabs">
-      ${cats.map(c=>{const nb=PRODUITS.filter(p=>(p.categorie||'Divers')===c).length;const fait=PRODUITS.filter(p=>(p.categorie||'Divers')===c && SAISIES_TODAY[p.id]).length;return `<button class="cat-tab ${c===CURRENT_CAT?'active':''}" onclick="setCat('${c.replace(/'/g,"\\'")}')">${c}<span class="num">${fait}/${nb}</span></button>`;}).join('')}
-    </div>
     <div id="prodList"></div>
-    <button class="btn" onclick="finishInventaire()" style="margin-top:16px">${totalFait===totalAFaire?'✓ Terminer':'✓ Sauver et sortir'}</button>
+    <div class="err" id="finishErr" style="margin:10px 0"></div>
+    <button class="btn" onclick="finishInventaire()" style="margin-top:8px">✓ Terminer l'inventaire</button>
   </div>`;
   renderProdList();
 }
-function setCat(c){CURRENT_CAT=c;renderProdList();document.querySelectorAll('.cat-tab').forEach(t=>t.classList.remove('active'));event.target.classList.add('active');}
 function renderProdList(){
-  const list=PRODUITS.filter(p=>(p.categorie||'Divers')===CURRENT_CAT);
-  let html='<div class="cat-block">';
-  list.forEach(p=>{
-    const cur=SAISIES_TODAY[p.id];
-    const max=STOCK_MAX[p.id];
-    const qte=cur?cur.quantite:'';
-    html+=`<div class="prod-row">
-      <div class="prod-name">${p.nom}<small>${p.conditionnement||''}${max?' · max '+max.quantite_max:''}</small></div>
-      <input type="number" step="0.5" class="prod-input ${cur?'done':''}" value="${qte}" placeholder="0" data-pid="${p.id}" onfocus="this.select()" onblur="saveSaisie('${p.id}',this.value)" inputmode="decimal">
-    </div>`;
+  const cats=[...new Set(PRODUITS.map(p=>p.categorie||'Divers'))].sort();
+  let html='';
+  cats.forEach(c=>{
+    const list=PRODUITS.filter(p=>(p.categorie||'Divers')===c);
+    const nb=list.length;
+    const fait=list.filter(p=>SAISIES_TODAY[p.id]).length;
+    html+=`<div class="cat-block" id="cat-${cssId(c)}">
+      <div class="cat-title">${c}<small><span class="cat-counter">${fait}/${nb}</span></small></div>`;
+    list.forEach(p=>{
+      const cur=SAISIES_TODAY[p.id];
+      const max=STOCK_MAX[p.id];
+      const qte=cur?cur.quantite:'';
+      html+=`<div class="prod-row">
+        <div class="prod-name">${p.nom}<small>${p.conditionnement||''}${max?' · max '+max.quantite_max:''}</small></div>
+        <input type="number" step="0.5" class="prod-input ${cur?'done':''}" value="${qte}" placeholder="—" data-pid="${p.id}" data-cat="${cssId(c)}" onfocus="this.select()" onblur="saveSaisie('${p.id}',this.value)" inputmode="decimal">
+      </div>`;
+    });
+    html+='</div>';
   });
-  if(!list.length) html+='<div style="text-align:center;color:#7b7b8a;padding:20px">Aucun produit dans cette catégorie</div>';
-  html+='</div>';
+  if(!PRODUITS.length) html='<div style="text-align:center;color:#7b7b8a;padding:20px">Aucun produit configuré pour ce snack</div>';
   document.getElementById('prodList').innerHTML=html;
 }
+function cssId(s){return s.replace(/[^a-zA-Z0-9]/g,'_');}
 async function saveSaisie(pid,vTxt){
   const v=parseFloat((vTxt||'').replace(',','.'));
   if(isNaN(v)){
     if(SAISIES_TODAY[pid]){await sb.from('stock_saisies').delete().eq('id',SAISIES_TODAY[pid].id);delete SAISIES_TODAY[pid];}
-    inventaireScreen();return;
+    refreshCounters(pid);return;
   }
   if(SAISIES_TODAY[pid]){
     await sb.from('stock_saisies').update({quantite:v}).eq('id',SAISIES_TODAY[pid].id);
@@ -177,27 +179,61 @@ async function saveSaisie(pid,vTxt){
     if(error){alert(error.message);return;}
     SAISIES_TODAY[pid]=data;
   }
-  // Mise à jour visuelle sans tout re-render
-  const tabs=document.querySelectorAll('.cat-tab');
+  refreshCounters(pid);
+}
+function refreshCounters(pid){
+  // Compteurs par catégorie
   const cats=[...new Set(PRODUITS.map(p=>p.categorie||'Divers'))].sort();
-  cats.forEach((c,i)=>{const nb=PRODUITS.filter(p=>(p.categorie||'Divers')===c).length;const fait=PRODUITS.filter(p=>(p.categorie||'Divers')===c && SAISIES_TODAY[p.id]).length;if(tabs[i])tabs[i].querySelector('.num').textContent=`${fait}/${nb}`;});
+  cats.forEach(c=>{
+    const nb=PRODUITS.filter(p=>(p.categorie||'Divers')===c).length;
+    const fait=PRODUITS.filter(p=>(p.categorie||'Divers')===c && SAISIES_TODAY[p.id]).length;
+    const block=document.getElementById('cat-'+cssId(c));
+    if(block){const ctr=block.querySelector('.cat-counter');if(ctr)ctr.textContent=`${fait}/${nb}`;}
+  });
+  // Total + barre
   const totalFait=Object.keys(SAISIES_TODAY).length;
   const totalAFaire=PRODUITS.length;
-  document.querySelector('.progress-bar').style.width=(totalFait/totalAFaire*100)+'%';
-  // Update done class
-  const inp=document.querySelector(`input[data-pid="${pid}"]`);
-  if(inp){if(SAISIES_TODAY[pid])inp.classList.add('done');else inp.classList.remove('done');}
+  const cptr=document.getElementById('cptr');if(cptr)cptr.textContent=`${totalFait} / ${totalAFaire} produits saisis`;
+  document.querySelector('.progress-bar').style.width=(totalAFaire?(totalFait/totalAFaire*100):0)+'%';
+  // Indicateur visuel sur l'input
+  if(pid){
+    const inp=document.querySelector(`input[data-pid="${pid}"]`);
+    if(inp){if(SAISIES_TODAY[pid])inp.classList.add('done');else inp.classList.remove('done');}
+  }
+  // Reset erreur si elle existait
+  const err=document.getElementById('finishErr');if(err)err.textContent='';
 }
 function finishInventaire(){
   const totalFait=Object.keys(SAISIES_TODAY).length;
   const totalAFaire=PRODUITS.length;
+  // OBLIGER de tout remplir
+  if(totalFait<totalAFaire){
+    const manquants=PRODUITS.filter(p=>!SAISIES_TODAY[p.id]);
+    // Mettre en évidence les inputs vides
+    document.querySelectorAll('.prod-input').forEach(inp=>{
+      const pid=inp.dataset.pid;
+      if(!SAISIES_TODAY[pid]){inp.style.borderColor='#c45a5a';inp.style.background='rgba(196,90,90,.12)';}
+    });
+    const err=document.getElementById('finishErr');
+    if(err){
+      err.style.background='rgba(196,90,90,.12)';
+      err.style.border='1px solid rgba(196,90,90,.3)';
+      err.style.borderRadius='8px';
+      err.style.padding='12px';
+      err.style.fontSize='14px';
+      err.innerHTML=`⚠ Inventaire incomplet : ${manquants.length} produit${manquants.length>1?'s':''} non saisi${manquants.length>1?'s':''}.<br><br>Tu dois remplir <b>toutes les cellules</b> avant de terminer (mets <b>0</b> si tu n'as plus rien).<br><br>Premier manquant : <b>${manquants[0].nom}</b>`;
+    }
+    // Scroller jusqu'au premier manquant
+    const firstEmpty=document.querySelector(`input[data-pid="${manquants[0].id}"]`);
+    if(firstEmpty){firstEmpty.scrollIntoView({behavior:'smooth',block:'center'});firstEmpty.focus();}
+    return;
+  }
   document.getElementById('scr').innerHTML=`<div class="scr" style="justify-content:center">
     <div style="text-align:center;font-size:80px">✓</div>
-    <div class="ok-msg">${totalFait===totalAFaire?'Inventaire complet enregistré !':totalFait+' / '+totalAFaire+' produits saisis'}</div>
+    <div class="ok-msg">Inventaire complet enregistré !</div>
     <div style="text-align:center;color:#7b7b8a;font-size:14px;margin-bottom:24px">Merci ${SALARIE.prenom||SALARIE.nom} ✨</div>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="btn" onclick="CURRENT_CAT=null;pinScreen()">Sortir</button>
-      <button class="btn ghost" onclick="inventaireScreen()">Continuer la saisie</button>
+      <button class="btn" onclick="pinScreen()">Sortir</button>
     </div>
   </div>`;
   setTimeout(()=>{if(document.querySelector('.ok-msg'))pinScreen();},8000);

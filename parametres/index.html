@@ -336,20 +336,45 @@ function removeLogo(){ORG.logo_url=null;document.getElementById('logoBox').inner
 
 // ────────────────────────────────  UTILISATEURS  ────────────────────────────────
 const ROLE_TAG={super_admin:'#c45a5a',admin:'#c8a035',manager:'#5b9cff',salarie:'#7b7b8a'};
+let USERS_CACHE=[],SALARIES_CACHE=[];
+async function callAdminUsers(body){
+  const{data:{session}}=await sb.auth.getSession();
+  const r=await fetch(`${SUPA_URL}/functions/v1/admin-users`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`,apikey:SUPA_KEY},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(!r.ok)throw new Error(j.error||'Erreur');
+  return j;
+}
 async function loadUsers(){
-  const{data:profiles}=await sb.from('profiles').select('id,full_name,email,role,salarie_id').eq('organization_id',ORG.id).order('role').order('full_name');
+  // Récupère les salariés (pour la liste d'association dans la modale + invitation)
+  const{data:sals}=await sb.from('salaries').select('id,nom,prenom,actif').eq('organization_id',ORG.id).order('nom');
+  SALARIES_CACHE=sals||[];
+  // Liste des users via edge function (récupère aussi auth_email + last_sign_in_at)
+  let profiles=[];
+  try{const j=await callAdminUsers({action:'list'});profiles=j.profiles||[];}
+  catch(e){
+    // Fallback en lecture directe si edge function down
+    const{data}=await sb.from('profiles').select('id,full_name,email,role,salarie_id').eq('organization_id',ORG.id).order('role').order('full_name');
+    profiles=(data||[]).map(p=>({...p,auth_email:p.email,last_sign_in_at:null}));
+  }
+  USERS_CACHE=profiles;
   const{data:invs}=await sb.from('invitations').select('id,email,role,token,expires_at,accepted_at,created_at').eq('organization_id',ORG.id).is('accepted_at',null).order('created_at',{ascending:false});
   let html='<div style="margin-bottom:6px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Membres actifs</div>';
   if(!profiles||profiles.length===0){html+='<div style="color:var(--muted);padding:8px">Aucun membre.</div>';}
   else{
     html+='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
     profiles.forEach(p=>{
-      const init=(p.full_name||p.email||'?').charAt(0).toUpperCase();
+      const init=(p.full_name||p.auth_email||p.email||'?').charAt(0).toUpperCase();
+      const linkedSal=p.salarie_id?SALARIES_CACHE.find(s=>s.id===p.salarie_id):null;
+      const linkLbl=linkedSal?`${linkedSal.nom} ${linkedSal.prenom||''}`.trim():null;
       html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)">
         <div style="width:30px;height:30px;border-radius:50%;background:${ROLE_TAG[p.role]||'#444'};color:#111;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">${init}</div>
-        <div style="flex:1"><div style="font-weight:600">${p.full_name||'(sans nom)'}</div><div style="color:var(--muted);font-size:11.5px">${p.email||''}</div></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600">${p.full_name||'(sans nom)'} ${p.id===ME.id?'<span style="color:var(--muted);font-weight:400;font-size:11px">(toi)</span>':''}</div>
+          <div style="color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.auth_email||p.email||''}${linkLbl?` · 🔗 ${linkLbl}`:''}</div>
+        </div>
         <span style="background:${ROLE_TAG[p.role]||'#444'}33;color:${ROLE_TAG[p.role]||'#aaa'};padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase">${p.role}</span>
-        ${p.id===ME.id?'<span style="color:var(--muted);font-size:11px">(toi)</span>':`<button class="btn ghost sm" onclick="removeUser('${p.id}','${(p.full_name||p.email||'').replace(/'/g,'')}')">Retirer</button>`}
+        <button class="btn ghost sm" onclick="openEditUser('${p.id}')">✎ Éditer</button>
+        ${p.id===ME.id?'':`<button class="btn ghost sm" onclick="removeUser('${p.id}','${(p.full_name||p.auth_email||p.email||'').replace(/'/g,'')}')">✕</button>`}
       </div>`;
     });
     html=html.replace(/<\/div>$/,'');
@@ -424,6 +449,108 @@ async function removeUser(id,name){
   if(error){toast(error.message);return;}
   toast('Utilisateur retiré');
   loadUsers();
+}
+
+// ────────────────────────────────  MODALE ÉDITION USER  ────────────────────────────────
+function openEditUser(id){
+  const u=USERS_CACHE.find(x=>x.id===id);if(!u)return;
+  const isSelf=u.id===ME.id;
+  const isSuperAdminTarget=u.role==='super_admin';
+  const canEditRole=!isSelf && !(ME.role==='admin' && isSuperAdminTarget);
+  const last=u.last_sign_in_at?new Date(u.last_sign_in_at).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'jamais';
+  const overlay=document.createElement('div');
+  overlay.id='editUserModal';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  overlay.innerHTML=`<div style="background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <h2 style="font-size:18px;margin:0">Éditer l'utilisateur</h2>
+      <button onclick="closeEditUser()" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;line-height:1">×</button>
+    </div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:16px">Dernière connexion : ${last}</div>
+
+    <div style="display:grid;gap:14px">
+      <div>
+        <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Nom complet</label>
+        <input id="eu_name" value="${(u.full_name||'').replace(/"/g,'&quot;')}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+      </div>
+
+      <div>
+        <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Email (login)</label>
+        <input id="eu_email" type="email" value="${u.auth_email||u.email||''}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Sera modifié dans Supabase Auth. L'utilisateur devra se reconnecter.</div>
+      </div>
+
+      <div>
+        <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Rôle</label>
+        <select id="eu_role" ${canEditRole?'':'disabled'} style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+          ${ME.role==='super_admin'?'<option value="super_admin">Super admin</option>':''}
+          <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+          <option value="manager" ${u.role==='manager'?'selected':''}>Manager</option>
+          <option value="salarie" ${u.role==='salarie'?'selected':''}>Salarié</option>
+        </select>
+        ${!canEditRole?'<div style="font-size:11px;color:var(--muted);margin-top:4px">'+(isSelf?'Tu ne peux pas changer ton propre rôle.':'Réservé super_admin.')+'</div>':''}
+      </div>
+
+      <div>
+        <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Fiche salarié liée</label>
+        <select id="eu_salarie" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+          <option value="">— Aucune —</option>
+          ${SALARIES_CACHE.map(s=>`<option value="${s.id}" ${u.salarie_id===s.id?'selected':''}>${s.nom} ${s.prenom||''}${s.actif===false?' (inactif)':''}</option>`).join('')}
+        </select>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">L'espace perso /moi/ utilise ce lien pour afficher le planning et les indispos.</div>
+      </div>
+
+      <div style="border-top:1px solid var(--line);padding-top:14px">
+        <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Réinitialiser le mot de passe</label>
+        <div style="display:flex;gap:8px">
+          <input id="eu_pwd" type="text" placeholder="Nouveau mot de passe (8+ caractères)" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+          <button class="btn ghost sm" onclick="genPwd()">🎲 Générer</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Laisser vide pour ne pas changer. Communique ce mot de passe en main propre à l'utilisateur.</div>
+      </div>
+
+      <div id="eu_err" style="color:var(--bad);font-size:13px;min-height:18px"></div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeEditUser()">Annuler</button>
+      <button class="btn" onclick="saveEditUser('${u.id}')">💾 Enregistrer</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)closeEditUser();});
+}
+function closeEditUser(){const m=document.getElementById('editUserModal');if(m)m.remove();}
+function genPwd(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghjkmnpqrstuvwxyz';let p='';for(let i=0;i<12;i++)p+=c.charAt(Math.floor(Math.random()*c.length));document.getElementById('eu_pwd').value=p;}
+async function saveEditUser(id){
+  const u=USERS_CACHE.find(x=>x.id===id);if(!u)return;
+  const err=document.getElementById('eu_err');err.textContent='';
+  const name=document.getElementById('eu_name').value.trim();
+  const newEmail=document.getElementById('eu_email').value.trim().toLowerCase();
+  const newRole=document.getElementById('eu_role').value;
+  const newSal=document.getElementById('eu_salarie').value||null;
+  const newPwd=document.getElementById('eu_pwd').value;
+  try{
+    // 1. update profile (name, role, salarie_id)
+    const patch={};
+    if(name!==(u.full_name||''))patch.full_name=name;
+    if(u.id!==ME.id && newRole!==u.role)patch.role=newRole;
+    if((newSal||null)!==(u.salarie_id||null))patch.salarie_id=newSal;
+    if(Object.keys(patch).length){await callAdminUsers({action:'update_profile',id,...patch});}
+    // 2. update email
+    if(newEmail && newEmail!==(u.auth_email||u.email||'').toLowerCase()){
+      await callAdminUsers({action:'update_email',id,email:newEmail});
+    }
+    // 3. reset password
+    if(newPwd){
+      if(newPwd.length<8){err.textContent='Mot de passe : 8 caractères minimum';return;}
+      await callAdminUsers({action:'reset_password',id,password:newPwd});
+      toast('✓ Mot de passe réinitialisé');
+    }
+    toast('✓ Utilisateur mis à jour');
+    closeEditUser();
+    loadUsers();
+  }catch(e){err.textContent=e.message||'Erreur';}
 }
 
 // ────────────────────────────────  CLÉS API & MCP  ────────────────────────────────
