@@ -187,6 +187,9 @@
   let CURRENT_MODULE = detectModule();
   let MESSAGES = []; // {role, text, attachments?, tools?}
   let ATTACHMENTS = []; // {filename, mime_type, base64, size}
+  // LIVE_ATTACHMENTS = toutes les PJ ENVOYÉES dans la conversation courante (en mémoire JS uniquement)
+  // → permet de ré-envoyer le binaire à chaque tour pour que l'agent puisse faire attach_pdf
+  let LIVE_ATTACHMENTS = [];
   let CONV_ID = null;
   let TYPING = false;
 
@@ -407,7 +410,10 @@
     const userMsg = { role: 'user', text, attachments: ATTACHMENTS.length ? [...ATTACHMENTS] : null };
     MESSAGES.push(userMsg);
     saveToStorage();
-    const sentAttachments = [...ATTACHMENTS];
+    // Ajoute les nouvelles PJ aux LIVE_ATTACHMENTS (préservées pour les prochains tours)
+    for (const a of ATTACHMENTS) {
+      LIVE_ATTACHMENTS.push({ filename: a.filename, mime_type: a.mime_type, base64: a.base64, size: a.size });
+    }
     ATTACHMENTS = [];
     ta.value = '';
     renderAttachments();
@@ -417,9 +423,10 @@
       const { data: { session } } = await CTX.sb.auth.getSession();
       // Build messages payload (omit attachments from history except last user msg)
       const payload = {
-        // Envoie la version enrichie (avec OCR) si disponible → l'agent a mémoire des PJs précédentes
         messages: MESSAGES.map(m => ({ role: m.role, text: m._enriched_text || m.text })),
-        attachments: sentAttachments.map(a => ({ filename: a.filename, mime_type: a.mime_type, base64: a.base64 })),
+        // On envoie TOUTES les PJ de la conversation à chaque tour
+        // → l'agent peut toujours faire attach_pdf même 5 messages après le drop initial
+        attachments: LIVE_ATTACHMENTS.map(a => ({ filename: a.filename, mime_type: a.mime_type, base64: a.base64 })),
         current_module: CURRENT_MODULE,
         conversation_id: CONV_ID,
       };
@@ -470,7 +477,7 @@
   });
   panel.querySelector('#eai-clear').addEventListener('click', () => {
     if (!confirm('Nouvelle conversation ? L\'historique actuel sera oublié.')) return;
-    MESSAGES = []; CONV_ID = null;
+    MESSAGES = []; CONV_ID = null; LIVE_ATTACHMENTS = [];
     saveToStorage();
     addMessage('system', '✦ Nouvelle conversation. En quoi puis-je t\'aider ?');
     renderSuggestions();
