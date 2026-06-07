@@ -411,7 +411,9 @@
     panel.classList.add('open');
     fab.style.display = 'none';
     localStorage.setItem('eatime_ai_panel_open', '1');
-    if (!CTX) await init();
+    if (!CTX || !CTX.user) await init();
+    // Force re-render au cas où l'init s'est fait après l'ouverture
+    renderMessages();
   });
   panel.querySelector('#eai-close').addEventListener('click', () => {
     panel.classList.remove('open');
@@ -460,6 +462,6 @@
   const themeObs = new MutationObserver(() => {});
   themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-  // Auto-init session check
-  setTimeout(() => init().catch(() => {}), 500);
+  // Auto-init session check - immédiat pour hydrater au plus tôt
+  init().catch(() => {});
 })();
