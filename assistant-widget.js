@@ -149,6 +149,27 @@
     <input type="file" id="eai-fileinput" multiple accept="application/pdf,image/*" style="display:none">
   `;
 
+  // Applique la couleur cachée AVANT injection au DOM pour éviter le flash jaune
+  try {
+    const cached = localStorage.getItem('eatime_ai_color');
+    if (cached) {
+      let h = cached.replace('#', '');
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');
+      if (/^[0-9a-fA-F]{6}$/.test(h)) {
+        const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+        const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        const tx = lum > 0.6 ? '#1a1a1a' : '#ffffff';
+        const dk = '#' + Math.round(r * 0.78).toString(16).padStart(2, '0') + Math.round(g * 0.78).toString(16).padStart(2, '0') + Math.round(b * 0.78).toString(16).padStart(2, '0');
+        const root = document.documentElement;
+        root.style.setProperty('--eai-primary', '#' + h);
+        root.style.setProperty('--eai-primary-dark', dk);
+        root.style.setProperty('--eai-primary-text', tx);
+        root.style.setProperty('--eai-primary-glow', `rgba(${r},${g},${b},.45)`);
+        root.style.setProperty('--eai-primary-soft', `rgba(${r},${g},${b},.15)`);
+      }
+    }
+  } catch (_) {}
+
   document.body.appendChild(fab);
   document.body.appendChild(panel);
 
@@ -201,17 +222,14 @@
 
   // ─────── COULEUR DYNAMIQUE DE L'ORG ───────
   function applyPrimaryColor(hex) {
-    // Parse hex (#rrggbb ou #rgb)
     let h = hex.replace('#', '');
     if (h.length === 3) h = h.split('').map(c => c + c).join('');
     if (!/^[0-9a-fA-F]{6}$/.test(h)) return;
     const r = parseInt(h.slice(0, 2), 16);
     const g = parseInt(h.slice(2, 4), 16);
     const b = parseInt(h.slice(4, 6), 16);
-    // Calcule luminance pour le texte contrastant (noir si clair, blanc si sombre)
     const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     const textColor = lum > 0.6 ? '#1a1a1a' : '#ffffff';
-    // Version assombrie (dark) : ×0.78
     const darken = (v) => Math.round(v * 0.78).toString(16).padStart(2, '0');
     const dark = '#' + darken(r) + darken(g) + darken(b);
     const root = document.documentElement;
@@ -220,7 +238,14 @@
     root.style.setProperty('--eai-primary-text', textColor);
     root.style.setProperty('--eai-primary-glow', `rgba(${r},${g},${b},.45)`);
     root.style.setProperty('--eai-primary-soft', `rgba(${r},${g},${b},.15)`);
+    // Cache pour éviter le flash au prochain reload
+    try { localStorage.setItem('eatime_ai_color', '#' + h); } catch (_) {}
   }
+  // Applique IMMÉDIATEMENT la couleur en cache (avant tout fetch) pour éviter le flash jaune
+  try {
+    const cached = localStorage.getItem('eatime_ai_color');
+    if (cached) applyPrimaryColor(cached);
+  } catch (_) {}
 
   // ─────── PERSISTENCE ───────
   function storageKey() { return CTX?.user?.id ? `eatime_ai_chat_${CTX.user.id}` : null; }
