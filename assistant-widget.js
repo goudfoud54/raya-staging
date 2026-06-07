@@ -256,6 +256,7 @@
     try {
       const toSave = MESSAGES.slice(-50).map(m => ({
         role: m.role, text: m.text,
+        _enriched_text: m._enriched_text || null,
         attachments: m.attachments?.map(a => ({ filename: a.filename, size: a.size })) || null,
       }));
       localStorage.setItem(k, JSON.stringify({ messages: toSave, conv_id: CONV_ID, ts: Date.now() }));
@@ -403,7 +404,8 @@
       const { data: { session } } = await CTX.sb.auth.getSession();
       // Build messages payload (omit attachments from history except last user msg)
       const payload = {
-        messages: MESSAGES.map(m => ({ role: m.role, text: m.text })),
+        // Envoie la version enrichie (avec OCR) si disponible → l'agent a mémoire des PJs précédentes
+        messages: MESSAGES.map(m => ({ role: m.role, text: m._enriched_text || m.text })),
         attachments: sentAttachments.map(a => ({ filename: a.filename, mime_type: a.mime_type, base64: a.base64 })),
         current_module: CURRENT_MODULE,
         conversation_id: CONV_ID,
@@ -420,6 +422,15 @@
         return;
       }
       CONV_ID = j.conversation_id;
+      // Stocke la version enrichie (avec OCR) dans un champ caché _enriched_text
+      // → utilisée par les prochains envois pour préserver la mémoire OCR
+      // → mais l'affichage utilise text (court, sans OCR)
+      if (j.enriched_last_user_text && MESSAGES.length) {
+        const lastIdx = MESSAGES.length - 1;
+        if (MESSAGES[lastIdx].role === 'user') {
+          MESSAGES[lastIdx]._enriched_text = j.enriched_last_user_text;
+        }
+      }
       MESSAGES.push({ role: 'assistant', text: j.response, tools: j.tool_actions });
       saveToStorage();
       renderMessages();
