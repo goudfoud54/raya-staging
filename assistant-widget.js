@@ -251,28 +251,29 @@
   function storageKey() { return CTX?.user?.id ? `eatime_ai_chat_${CTX.user.id}` : null; }
   function saveToStorage() {
     const k = storageKey();
-    if (!k) return;
+    if (!k) { console.warn('[EatimeAI] saveToStorage: pas de user.id, skip'); return; }
     try {
-      // On stocke un nombre raisonnable de messages (les 50 derniers) pour pas exploser
       const toSave = MESSAGES.slice(-50).map(m => ({
         role: m.role, text: m.text,
-        // On ne sauvegarde PAS les attachments base64 (trop lourd)
         attachments: m.attachments?.map(a => ({ filename: a.filename, size: a.size })) || null,
-        tools: m.tools?.map(t => ({ tool: t.tool })) || null,
       }));
       localStorage.setItem(k, JSON.stringify({ messages: toSave, conv_id: CONV_ID, ts: Date.now() }));
-    } catch (_) { /* quota exceeded ou autre */ }
+      console.log('[EatimeAI] saved', toSave.length, 'msgs in', k);
+    } catch (e) { console.error('[EatimeAI] saveToStorage error:', e); }
   }
   function loadFromStorage(userId) {
     try {
-      const raw = localStorage.getItem(`eatime_ai_chat_${userId}`);
+      const k = `eatime_ai_chat_${userId}`;
+      const raw = localStorage.getItem(k);
+      console.log('[EatimeAI] loadFromStorage', k, raw ? `(${raw.length} chars)` : '(empty)');
       if (!raw) return;
       const j = JSON.parse(raw);
       if (j.messages && Array.isArray(j.messages)) {
         MESSAGES = j.messages;
         CONV_ID = j.conv_id || null;
+        console.log('[EatimeAI] hydrated', MESSAGES.length, 'msgs');
       }
-    } catch (_) { MESSAGES = []; CONV_ID = null; }
+    } catch (e) { console.error('[EatimeAI] loadFromStorage error:', e); MESSAGES = []; CONV_ID = null; }
   }
   function clearStorage(userId) {
     try {
@@ -332,10 +333,7 @@
           inner += `<div class="att">📄 ${escape(a.filename)} <span style="color:#7b7b8a">(${Math.round(a.size/1024)} Ko)</span></div>`;
         }
       }
-      if (m.tools && m.tools.length) {
-        const unique = [...new Set(m.tools.map(t => t.tool))];
-        inner += '<div class="tools">⚙ ' + unique.map(t => '<span>' + escape(t) + '</span>').join(' ') + '</div>';
-      }
+      // Badges tools masqués (n'apportent rien à l'utilisateur final)
       div.innerHTML = inner;
       body.appendChild(div);
     }
