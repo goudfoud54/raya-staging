@@ -194,9 +194,10 @@
       setSub('Connecte-toi pour utiliser l\'assistant');
       return false;
     }
-    const { data: profile } = await CTX.sb.from('profiles').select('full_name,role,email,organization_id').eq('id', session.user.id).maybeSingle();
+    const { data: profile } = await CTX.sb.from('profiles').select('id,full_name,role,email,organization_id').eq('id', session.user.id).maybeSingle();
     if (!profile) { setSub('Profil introuvable'); return false; }
-    CTX.user = profile;
+    // S'assurer que l'id est toujours défini (fallback sur session.user.id)
+    CTX.user = { ...profile, id: profile.id || session.user.id };
     // Récupère la couleur primaire de l'org et applique au widget
     try {
       const { data: org } = await CTX.sb.from('organizations').select('couleur_primaire').eq('id', profile.organization_id).maybeSingle();
