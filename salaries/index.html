@@ -735,9 +735,11 @@ function renderFiche(){
           <div class="doc-list">
             ${docs.length?docs.map(d=>`<div class="doc">
               <span class="typ">${d.type}</span>
-              <span class="nm" onclick="dlDoc('${d.path}')">${d.nom}</span>
+              <span class="nm" onclick="viewDoc('${d.path}')" style="cursor:pointer" title="Cliquer pour visualiser">${d.nom}</span>
               <span class="sz">${fmtSize(d.taille)}</span>
-              <button class="btn danger sm" onclick="delDoc('${d.id}','${d.path.replace(/'/g,"\\'")}')">×</button>
+              <button class="btn ghost sm" onclick="viewDoc('${d.path}')" title="Visualiser dans un nouvel onglet">👁 Voir</button>
+              <button class="btn ghost sm" onclick="dlDoc('${d.path}','${(d.nom||'').replace(/'/g,"\\'")}')" title="Télécharger">⬇</button>
+              <button class="btn danger sm" onclick="delDoc('${d.id}','${d.path.replace(/'/g,"\\'")}')" title="Supprimer">×</button>
             </div>`).join(''):'<div style="color:var(--muted);font-size:13px">Aucun document encore.</div>'}
           </div>
         </div>
@@ -903,10 +905,18 @@ async function uploadDoc(){
   const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
   renderFiche();render();toast('Uploadé ✓');
 }
-async function dlDoc(path){
+async function viewDoc(path){
+  // Ouvre en preview dans nouvel onglet (le browser affiche le PDF natif)
   const{data,error}=await sb.storage.from('salaries-docs').createSignedUrl(path,300);
   if(error){toast('Erreur: '+error.message);return;}
   window.open(data.signedUrl,'_blank');
+}
+async function dlDoc(path,filename){
+  // Force le téléchargement avec le bon nom de fichier
+  const{data,error}=await sb.storage.from('salaries-docs').createSignedUrl(path,300,{download:filename||true});
+  if(error){toast('Erreur: '+error.message);return;}
+  const a=document.createElement('a');a.href=data.signedUrl;a.download=filename||'';
+  document.body.appendChild(a);a.click();a.remove();
 }
 async function delDoc(did,path){
   if(!confirm('Supprimer ce document ?'))return;
