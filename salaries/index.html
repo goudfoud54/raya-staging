@@ -465,7 +465,7 @@ function render(){
   document.getElementById('tbody').innerHTML=list.map(s=>{
     const rls=rolesOf(s.id).map(r=>`<span class="chip ${r}">${r}</span>`).join(' ')||'<span class="chip off">—</span>';
     const docTypes=docsOf(s.id).map(d=>d.type);
-    const reqOK=DOC_REQUIRED.filter(rd=>docTypes.includes(rd.key)).length;
+    const reqOK=DOC_REQUIRED.filter(rd=>docTypes.map(t=>(t||'').toLowerCase().trim()).includes(rd.key)).length;
     const reqTot=DOC_REQUIRED.length;
     const docCls=reqOK===reqTot?'ok':(reqOK===0?'bad':'warn');
     const contrat=(s.type_contrat||'<span style="color:var(--muted)">—</span>')+
@@ -507,7 +507,7 @@ function renderFiche(){
   const snackOpts='<option value="">— Aucun / MULTI —</option>'+S.restos.map(r=>`<option value="${r.id}" ${s.snack_origine_id===r.id?'selected':''}>${r.nom}</option>`).join('');
   const rls=s.id?rolesOf(s.id):[];
   const docTypes=s.id?docsOf(s.id).map(d=>d.type):[];
-  const reqOK=DOC_REQUIRED.filter(rd=>docTypes.includes(rd.key)).length;
+  const reqOK=DOC_REQUIRED.filter(rd=>docTypes.map(t=>(t||'').toLowerCase().trim()).includes(rd.key)).length;
 
   const head=`
   <div class="fiche-head">
@@ -712,7 +712,7 @@ function renderFiche(){
           <h3>Documents obligatoires</h3>
           <div class="req-grid">
             ${DOC_REQUIRED.map(rd=>{
-              const has=docs.find(d=>d.type===rd.key);
+              const has=docs.find(d=>(d.type||'').toLowerCase().trim()===rd.key);
               return `<div class="req ${has?'ok':'miss'}" onclick="triggerUpload('${rd.key}')">
                 <div class="ic">${has?'✓':rd.ic}</div>
                 <div><div class="lbl">${rd.label}</div>
