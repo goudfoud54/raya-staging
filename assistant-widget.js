@@ -6,7 +6,14 @@
   if (window.__EATIME_AI_WIDGET__) return;
   window.__EATIME_AI_WIDGET__ = true;
 
-  // Skip on /index page if not authenticated yet — wait until session
+  // ─────── EARLY EXIT : pas d'agent sur les kiosques ni dans "Mon Espace" salarié ───────
+  // L'agent est réservé aux admins/managers. Kiosques (PIN) et /moi/ (salariés mobile) sont exclus.
+  const _path = location.pathname;
+  const _BLACKLISTED_MODULES = ['stock-kiosk', 'haccp-kiosk', 'badgeuse', 'moi'];
+  for (const m of _BLACKLISTED_MODULES) {
+    if (_path.includes('/' + m)) { return; }
+  }
+
   function ensureSb() {
     if (typeof supabase === 'undefined') return null;
     // Récupère la clé Supabase depuis un client déjà créé sur la page si possible
@@ -170,6 +177,8 @@
     }
   } catch (_) {}
 
+  // Le fab est masqué tant qu'on n'a pas confirmé une session active
+  fab.style.display = 'none';
   document.body.appendChild(fab);
   document.body.appendChild(panel);
 
@@ -184,19 +193,23 @@
   // ─────── INIT auth check ───────
   async function init() {
     const r = ensureSb();
-    if (!r) {
-      setSub('SDK non chargé');
-      return false;
-    }
+    if (!r) { fab.style.display = 'none'; return false; }
     CTX = r;
     const { data: { session } } = await CTX.sb.auth.getSession();
     if (!session) {
-      setSub('Connecte-toi pour utiliser l\'assistant');
+      // Pas connecté → on garde le fab caché
+      fab.style.display = 'none';
       return false;
     }
     const { data: profile } = await CTX.sb.from('profiles').select('id,full_name,role,email,organization_id').eq('id', session.user.id).maybeSingle();
-    if (!profile) { setSub('Profil introuvable'); return false; }
-    // S'assurer que l'id est toujours défini (fallback sur session.user.id)
+    if (!profile) { fab.style.display = 'none'; return false; }
+    // Salariés (role salarie) n'ont pas accès à l'agent (réservé admin/manager/super_admin)
+    if (!['admin', 'manager', 'super_admin'].includes(profile.role)) {
+      fab.style.display = 'none';
+      return false;
+    }
+    // OK — on affiche le fab
+    fab.style.display = 'flex';
     CTX.user = { ...profile, id: profile.id || session.user.id };
     // Récupère la couleur primaire de l'org et applique au widget
     try {
