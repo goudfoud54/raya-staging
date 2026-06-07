@@ -149,13 +149,72 @@
     if (!profile) { setSub('Profil introuvable'); return false; }
     CTX.user = profile;
     setSub(`Module : ${CURRENT_MODULE} · ${profile.role}`);
+    setupAuthListener();
+    // Charge la conversation depuis localStorage (scopée par user)
+    loadFromStorage(profile.id);
     if (MESSAGES.length === 0) {
       addMessage('system', `✦ Bonjour ${profile.full_name || ''}, je peux t'aider sur cette page (${CURRENT_MODULE}). Pose-moi une question ou glisse un contrat.`);
-      renderSuggestions();
+    }
+    renderMessages();
+    renderSuggestions();
+    // Re-ouvre le panel s'il était ouvert
+    if (localStorage.getItem('eatime_ai_panel_open') === '1') {
+      panel.classList.add('open');
+      fab.style.display = 'none';
     }
     return true;
   }
   function setSub(t) { panel.querySelector('#eai-sub').textContent = t; }
+
+  // ─────── PERSISTENCE ───────
+  function storageKey() { return CTX?.user?.id ? `eatime_ai_chat_${CTX.user.id}` : null; }
+  function saveToStorage() {
+    const k = storageKey();
+    if (!k) return;
+    try {
+      // On stocke un nombre raisonnable de messages (les 50 derniers) pour pas exploser
+      const toSave = MESSAGES.slice(-50).map(m => ({
+        role: m.role, text: m.text,
+        // On ne sauvegarde PAS les attachments base64 (trop lourd)
+        attachments: m.attachments?.map(a => ({ filename: a.filename, size: a.size })) || null,
+        tools: m.tools?.map(t => ({ tool: t.tool })) || null,
+      }));
+      localStorage.setItem(k, JSON.stringify({ messages: toSave, conv_id: CONV_ID, ts: Date.now() }));
+    } catch (_) { /* quota exceeded ou autre */ }
+  }
+  function loadFromStorage(userId) {
+    try {
+      const raw = localStorage.getItem(`eatime_ai_chat_${userId}`);
+      if (!raw) return;
+      const j = JSON.parse(raw);
+      if (j.messages && Array.isArray(j.messages)) {
+        MESSAGES = j.messages;
+        CONV_ID = j.conv_id || null;
+      }
+    } catch (_) { MESSAGES = []; CONV_ID = null; }
+  }
+  function clearStorage(userId) {
+    try {
+      localStorage.removeItem(`eatime_ai_chat_${userId || (CTX?.user?.id)}`);
+      localStorage.removeItem('eatime_ai_panel_open');
+    } catch (_) {}
+  }
+
+  // Écoute la déconnexion : vide le chat à ce moment-là
+  function setupAuthListener() {
+    if (!CTX?.sb) return;
+    try {
+      CTX.sb.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_OUT') {
+          clearStorage();
+          MESSAGES = []; CONV_ID = null;
+          if (CTX) CTX.user = null;
+          panel.classList.remove('open');
+          fab.style.display = 'flex';
+        }
+      });
+    } catch (_) {}
+  }
 
   function renderSuggestions() {
     const el = panel.querySelector('#eai-suggest');
@@ -177,6 +236,7 @@
   // ─────── MESSAGES UI ───────
   function addMessage(role, text, opts = {}) {
     MESSAGES.push({ role, text, ...opts });
+    saveToStorage();
     renderMessages();
   }
   function renderMessages() {
@@ -251,6 +311,7 @@
 
     const userMsg = { role: 'user', text, attachments: ATTACHMENTS.length ? [...ATTACHMENTS] : null };
     MESSAGES.push(userMsg);
+    saveToStorage();
     const sentAttachments = [...ATTACHMENTS];
     ATTACHMENTS = [];
     ta.value = '';
@@ -279,10 +340,12 @@
       }
       CONV_ID = j.conversation_id;
       MESSAGES.push({ role: 'assistant', text: j.response, tools: j.tool_actions });
+      saveToStorage();
       renderMessages();
     } catch (e) {
       TYPING = false;
       addMessage('assistant', '⚠ Erreur réseau : ' + (e.message || e));
+      saveToStorage();
     }
   }
 
@@ -290,15 +353,18 @@
   fab.addEventListener('click', async () => {
     panel.classList.add('open');
     fab.style.display = 'none';
+    localStorage.setItem('eatime_ai_panel_open', '1');
     if (!CTX) await init();
   });
   panel.querySelector('#eai-close').addEventListener('click', () => {
     panel.classList.remove('open');
     fab.style.display = 'flex';
+    localStorage.removeItem('eatime_ai_panel_open');
   });
   panel.querySelector('#eai-clear').addEventListener('click', () => {
     if (!confirm('Nouvelle conversation ? L\'historique actuel sera oublié.')) return;
     MESSAGES = []; CONV_ID = null;
+    saveToStorage();
     addMessage('system', '✦ Nouvelle conversation. En quoi puis-je t\'aider ?');
     renderSuggestions();
   });
