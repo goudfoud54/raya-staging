@@ -938,7 +938,7 @@ function isolerZoneSalarie(t){
   // Cherche le marqueur le plus tardif possible
   const markers=[
     /\bd[’']une\s+part\s*,?/i,                  // "D'une part,"
-    /\bEt\s*:\s*\n/i,                                // "Et :" en début de ligne
+    /\n\s*Et\s*:\s*/i,                              // "Et :" (newline avant)
     /\bENTRE\s+LES\s+SOUSSIGN[EÉ]S?\b/i,        // fallback
   ];
   let startIdx=0;
@@ -1001,8 +1001,17 @@ function parseEmployeData(txt){
   }
 
   // === Nationalité ===
-  const nat=flat.match(/nationalit[ée]\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-]+)/i);
+  // 1) Match explicite "Nationalité : XXX" (tolérant aux OCR errors et accents)
+  let nat=flat.match(/nationalit[éèe]?\s*[:.]?\s*([A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç][A-Za-zéèàâêôûïîçÉÈÀÂÊÔÛÏÎÇ\-]{2,30})/i);
   if(nat) out.nationalite=nat[1].trim().replace(/^./,c=>c.toUpperCase());
+  // 2) Fallback : détection par mots-clés de nationalités connues
+  if(!out.nationalite){
+    const natKeywords=['française','francaise','marocaine','algérienne','algerienne','tunisienne','sénégalaise','senegalaise','malienne','ivoirienne','camerounaise','congolaise','guinéenne','guineenne','portugaise','espagnole','italienne','allemande','belge','suisse','britannique','américaine','americaine','canadienne','roumaine','polonaise','bulgare','ukrainienne','syrienne','libanaise','turque','chinoise','indienne','pakistanaise','bangladaise','vietnamienne','thaïlandaise','thailandaise','marocain','algérien','algerien','tunisien','sénégalais','senegalais','malien','ivoirien','camerounais','congolais','français','francais','portugais','espagnol','italien','allemand','britannique','américain','americain','canadien','roumain','polonais','syrien','libanais','turc','chinois','indien','pakistanais','vietnamien'];
+    for(const kw of natKeywords){
+      const re=new RegExp('\\b'+kw+'\\b','i');
+      if(re.test(flat)){ out.nationalite=kw.charAt(0).toUpperCase()+kw.slice(1); break; }
+    }
+  }
 
   // === Nom + Prénom ===
   // 1) Patterns explicites "Nom : XXX" / "Prénom : YYY" (par ligne)
@@ -1047,6 +1056,29 @@ async function ocrPdf(file){
   const pdf=await pdfjsLib.getDocument({data:buf}).promise;
   const n=Math.min(pdf.numPages,3);
   let text='';
+  // 1) Essai d'abord : extraction de la couche TEXTE NATIVE du PDF (rapide + propre, pas d'OCR)
+  let nativeText='';
+  try{
+    for(let i=1;i<=n;i++){
+      const page=await pdf.getPage(i);
+      const tc=await page.getTextContent();
+      // Reconstitue le texte en préservant les sauts de ligne (selon y position)
+      let lastY=null;
+      const parts=[];
+      for(const it of tc.items){
+        const y=it.transform?it.transform[5]:null;
+        if(lastY!==null && y!==null && Math.abs(y-lastY)>3) parts.push('\n');
+        parts.push(it.str);
+        if(y!==null) lastY=y;
+      }
+      nativeText+=parts.join(' ')+'\n\n';
+    }
+  }catch(_){}
+  // Si le texte natif est suffisant (PDF avec texte), on l'utilise directement
+  if(nativeText.replace(/\s+/g,'').length>200){
+    return nativeText;
+  }
+  // 2) Fallback : PDF scanné → Tesseract OCR
   for(let i=1;i<=n;i++){
     const page=await pdf.getPage(i);
     const viewport=page.getViewport({scale:2});
