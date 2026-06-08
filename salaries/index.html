@@ -931,10 +931,35 @@ if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr
 
 function dateFR(d,m,y){const dd=String(d).padStart(2,'0'),mm=String(m).padStart(2,'0');let yy=String(y);if(yy.length===2)yy=(parseInt(yy)>30?'19':'20')+yy;return `${yy}-${mm}-${dd}`;}
 
+// Isole la ZONE SALARIÉ dans un contrat de travail.
+// Le but : ignorer "Représentée par Monsieur AZZI Rayan" + le siège social,
+// et ne lire que la partie du salarié (après "Et :" / "D'une part," / avant "Il a été convenu").
+function isolerZoneSalarie(t){
+  // Cherche le marqueur le plus tardif possible
+  const markers=[
+    /\bd[’']une\s+part\s*,?/i,                  // "D'une part,"
+    /\bEt\s*:\s*\n/i,                                // "Et :" en début de ligne
+    /\bENTRE\s+LES\s+SOUSSIGN[EÉ]S?\b/i,        // fallback
+  ];
+  let startIdx=0;
+  for(const m of markers){
+    const r=t.match(m);
+    if(r && (r.index+r[0].length) > startIdx) startIdx=r.index+r[0].length;
+  }
+  let zone=t.slice(startIdx);
+  // Coupe AVANT le corps du contrat (où les noms employeur reviennent dans "S.A.S GOUD FOUD est immatriculée...")
+  const stopIdx=zone.search(/\b(?:IL\s+A\s+[EÉ]T[EÉ]\s+CONVENU|ARTICLE\s+N[°]?\s*0?1|\bENGAGEMENT\b)/i);
+  if(stopIdx>0) zone=zone.slice(0, Math.min(stopIdx+50, zone.length));
+  return zone || t;
+}
+
 function parseEmployeData(txt){
   const out={};
-  const t=txt.replace(/[ \t]+/g,' ').replace(/ /g,' ');
+  const tFull=txt.replace(/[ \t]+/g,' ').replace(/ /g,' ');
+  // Isole UNIQUEMENT la zone salarié pour éviter de prendre l'employeur (AZZI, siège social, etc.)
+  const t=isolerZoneSalarie(tFull);
   const flat=t.replace(/\s+/g,' ');
+  const flatFull=tFull.replace(/\s+/g,' '); // pour date d'entrée et type contrat (qui sont dans le corps)
 
   // === N° sécu ===
   const secu=flat.match(/\b([12])[\s.\-]?(\d{2})[\s.\-]?(\d{2})[\s.\-]?(\d{2})[\s.\-]?(\d{3})[\s.\-]?(\d{3})[\s.\-]?(\d{2})\b/);
@@ -950,7 +975,12 @@ function parseEmployeData(txt){
 
   // === Code postal + ville ===
   const cpVille=flat.match(/\b(\d{5})\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-]+(?:[\s\-][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-]+){0,3})\b/);
-  if(cpVille){out.code_postal=cpVille[1];out.ville=cpVille[2].trim();}
+  if(cpVille){
+    out.code_postal=cpVille[1];
+    // Nettoie les mots parasites après la ville (Siret, SIRET, Téléphone, N°, etc.)
+    let v=cpVille[2].trim().replace(/\b(Siret|SIRET|N°|N|RCS|TVA|Téléphone|Tel|Tél|Email|E-mail|Mail|Demeurant|Représentée|Représenté|Représenté|Représentant)\b.*$/i,'').trim();
+    out.ville=v;
+  }
 
   // === Date de naissance ===
   // Format DD/MM/YYYY ou DD.MM.YYYY ou DD-MM-YYYY
@@ -962,11 +992,11 @@ function parseEmployeData(txt){
     if(dobL){out.date_naissance=dateFR(dobL[1],MOIS_FR[dobL[2].toLowerCase()],dobL[3]);}
   }
 
-  // === Date d'embauche / entrée / effet ===
-  let dent=flat.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|date\s+d['’]?\s*effet|date\s+de\s+d[ée]but|prise\s+de\s+fonction|[àa]\s+compter\s+du|embauch[ée]\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?)|engag[ée]?\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?))\s*:?\s*(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})/i);
+  // === Date d'embauche / entrée / effet (cherchée dans TOUT le texte, car dans le corps) ===
+  let dent=flatFull.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|date\s+d['’]?\s*effet|date\s+de\s+d[ée]but|prise\s+de\s+fonction|[àa]\s+compter\s+du|embauch[ée]\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?)|engag[ée]?\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?))\s*:?\s*(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})/i);
   if(dent){out.date_entree=dateFR(dent[1],dent[2],dent[3]);}
   else{
-    const dentL=flat.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|prise\s+de\s+fonction|[àa]\s+compter\s+du)\s*:?\s*(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(\d{4})/i);
+    const dentL=flatFull.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|prise\s+de\s+fonction|[àa]\s+compter\s+du)\s*:?\s*(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(\d{4})/i);
     if(dentL){out.date_entree=dateFR(dentL[1],MOIS_FR[dentL[2].toLowerCase()],dentL[3]);}
   }
 
@@ -1007,7 +1037,7 @@ function parseEmployeData(txt){
     {re:/contrat\s+de\s+professionnalisation/i,v:'professionnalisation'},
     {re:/\bextra\b/i,v:'extra'}
   ];
-  for(const c of contrats){if(c.re.test(flat)){out.type_contrat=c.v;break;}}
+  for(const c of contrats){if(c.re.test(flatFull)){out.type_contrat=c.v;break;}}
 
   return out;
 }
@@ -1053,6 +1083,6 @@ async function ocrExtract(ev){
   ev.target.value='';
 }
 </script>
-<script defer src="../assistant-widget.js?v=4.0"></script>
+<script defer src="../assistant-widget.js?v=4.2"></script>
 </body>
 </html>
