@@ -1101,6 +1101,7 @@ async function ocrExtract(ev){
     else{const{data:{text:t}}=await Tesseract.recognize(file,'fra');text=t;}
     const found=parseEmployeData(text);
     const map={nom:'f_nom',prenom:'f_prenom',date_naissance:'f_naiss',num_secu:'f_secu',
+      nationalite:'f_nat',
       email:'f_email',telephone:'f_tel',adresse:'f_adr',code_postal:'f_cp',ville:'f_ville',
       type_contrat:'f_contrat',date_entree:'f_entree'};
     let n=0;const filled=[];
