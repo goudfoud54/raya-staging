@@ -80,7 +80,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
   <div class="modules" id="modules"></div>
-  <div class="footer">Eatime360 · v4.1 · Fix matching docs DPAE/contrat case-insensitive</div>
+  <div class="footer">Eatime360 · v4.2 · Modules Calendrier RH + Avertissements (procédure légale + PDF)</div>
 </div>
 
 <script>
@@ -91,6 +91,8 @@ let ME=null,MAINT={};
 
 const MODULES=[
   {id:'salaries',ic:'👥',nm:'Gestion Salariés',ds:'Fiches, dispos, contraintes, docs'},
+  {id:'calendrier',ic:'📅',nm:'Calendrier RH',ds:'Fins essai/CDD, visites med, RDV, sanctions'},
+  {id:'avertissements',ic:'⚠️',nm:'Avertissements',ds:'Sanctions, procédure légale, lettres PDF', adminOnly:true},
   {id:'planning',ic:'📅',nm:'Planning',ds:'Grille hebdo, auto-fill, vérifs'},
   {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Kiosk de pointage (1 par snack)'},
   {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes'},
@@ -105,7 +107,7 @@ const MODULES=[
 ];
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
 // Defaults si org.permissions absent
-const DEFAULT_PERMS={moi:['*'],'import-contrats':['admin','manager'],salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],'stock-kiosk':['*'],facturation:['admin'],parametres:['admin']};
+const DEFAULT_PERMS={moi:['*'],'import-contrats':['admin','manager'],salaries:['admin'],calendrier:['admin','manager'],avertissements:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],'stock-kiosk':['*'],facturation:['admin'],parametres:['admin']};
 
 function showSignup(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Créer un compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
 function showLogin(){document.getElementById('signupBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}

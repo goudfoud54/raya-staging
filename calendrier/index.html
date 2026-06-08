@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Calendrier · Eatime360</title>
+<link rel="icon" href="data:,">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --bg:#0b0e14;--panel:#11151c;--panel2:#161a23;--border:#1f2530;--border2:#2a3140;
+  --text:#e6e9ef;--muted:#8b94a3;--muted2:#5a6273;
+  --accent:#3b82f6;--accent-text:#fff;
+  --success:#10b981;--warn:#f59e0b;--danger:#ef4444;--info:#06b6d4;--purple:#8b5cf6;
+}
+[data-theme="light"]{
+  --bg:#f5f7fa;--panel:#fff;--panel2:#fafbfc;--border:#e5e7eb;--border2:#d1d5db;
+  --text:#1f2937;--muted:#6b7280;--muted2:#9ca3af;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px}
+header{display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}
+header h1{margin:0;font-size:18px;font-weight:600}
+header .sp{flex:1}
+.btn{padding:7px 14px;border:1px solid var(--border2);background:var(--panel);color:var(--text);border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .15s}
+.btn:hover{background:var(--panel2);border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.ghost{background:transparent;border-color:var(--border)}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+select,input,textarea{padding:8px 12px;background:var(--panel);color:var(--text);border:1px solid var(--border2);border-radius:8px;font-size:13px;font-family:inherit}
+textarea{resize:vertical;min-height:60px}
+.toolbar{display:flex;align-items:center;gap:10px;padding:14px 20px;background:var(--panel2);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-month{display:flex;align-items:center;gap:6px}
+.nav-month .label{font-size:16px;font-weight:600;min-width:200px;text-align:center;text-transform:capitalize}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.legend .it{display:flex;align-items:center;gap:5px}
+.legend .dot{width:10px;height:10px;border-radius:3px}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border);padding:1px}
+.cal-head{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border);padding:1px 1px 0 1px}
+.cal-head>div{background:var(--panel2);padding:8px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted);letter-spacing:.5px}
+.day{background:var(--panel);min-height:110px;padding:6px;cursor:pointer;position:relative;transition:background .1s}
+.day:hover{background:var(--panel2)}
+.day.other-month{background:var(--bg);opacity:.55}
+.day.today{background:rgba(59,130,246,.08)}
+.day.today .day-num{background:var(--accent);color:#fff;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+.day-num{font-size:12px;color:var(--muted);font-weight:500;margin-bottom:4px;display:inline-block}
+.evt{display:block;padding:2px 6px;margin-bottom:2px;border-radius:4px;font-size:11px;font-weight:500;cursor:pointer;background:var(--accent);color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:filter .1s}
+.evt:hover{filter:brightness(1.1)}
+.evt.more{background:transparent;color:var(--muted);text-decoration:underline;text-align:center;font-style:italic}
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+.modal-bg.open{display:flex}
+.modal{background:var(--panel);border:1px solid var(--border2);border-radius:14px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal h2{margin:0 0 16px 0;font-size:18px}
+.field{margin-bottom:14px}
+.field label{display:block;margin-bottom:5px;font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.field input,.field select,.field textarea{width:100%}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.modal-foot{display:flex;justify-content:space-between;gap:10px;margin-top:20px}
+.modal-foot .left{display:flex;gap:8px}
+.modal-foot .right{display:flex;gap:8px}
+.evt-detail-title{font-size:18px;font-weight:600;margin-bottom:10px}
+.evt-meta{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin-bottom:14px}
+.evt-meta .it{display:flex;align-items:center;gap:5px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;background:var(--panel2);font-size:11px;border:1px solid var(--border)}
+.empty{text-align:center;color:var(--muted);padding:60px 20px}
+@media (max-width:700px){
+  .day{min-height:70px;padding:3px}
+  .evt{font-size:10px;padding:1px 4px}
+  .day-num{font-size:11px}
+  .nav-month .label{min-width:120px;font-size:13px}
+  .legend{display:none}
+  .row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📅 Calendrier</h1>
+  <span class="badge" id="orgBadge">—</span>
+  <span class="sp"></span>
+  <button class="btn ghost" onclick="location.href='../index.html'">← Retour</button>
+  <button class="btn ghost" onclick="recalcAll()" title="Recalculer les événements auto depuis les contrats">↻ Recalc</button>
+  <button class="btn primary" onclick="openCreate()">+ Nouvel événement</button>
+</header>
+
+<div class="toolbar">
+  <div class="nav-month">
+    <button class="btn sm" onclick="navMonth(-1)">‹</button>
+    <span class="label" id="monthLabel">—</span>
+    <button class="btn sm" onclick="navMonth(1)">›</button>
+    <button class="btn sm ghost" onclick="goToday()">Aujourd'hui</button>
+  </div>
+  <span class="sp" style="flex:1"></span>
+  <div class="filters">
+    <select id="fType" onchange="render()">
+      <option value="">Tous types</option>
+      <option value="fin_essai">Fin période d'essai</option>
+      <option value="fin_cdd">Fin de CDD</option>
+      <option value="visite_med_initiale">Visite médicale initiale</option>
+      <option value="visite_med_periodique">Visite médicale périodique</option>
+      <option value="entretien_pro_2ans">Entretien pro (2 ans)</option>
+      <option value="entretien_pro_6ans">Entretien pro (6 ans)</option>
+      <option value="anniv_ancien">Anniversaire embauche</option>
+      <option value="renouv_titre_sejour">Renouv. titre séjour</option>
+      <option value="disciplinaire_convocation">Disciplinaire : convocation</option>
+      <option value="disciplinaire_entretien">Disciplinaire : entretien</option>
+      <option value="disciplinaire_notification">Disciplinaire : notification</option>
+      <option value="disciplinaire_effet">Disciplinaire : date d'effet</option>
+      <option value="rdv_pro">RDV pro</option>
+      <option value="reunion">Réunion</option>
+      <option value="formation">Formation</option>
+      <option value="conge">Congé</option>
+      <option value="autre">Autre</option>
+    </select>
+    <select id="fSal" onchange="render()">
+      <option value="">Tous salariés</option>
+    </select>
+  </div>
+</div>
+
+<div class="legend" style="padding:10px 20px;border-bottom:1px solid var(--border)">
+  <div class="it"><span class="dot" style="background:#f59e0b"></span>Fin essai</div>
+  <div class="it"><span class="dot" style="background:#ef4444"></span>Fin CDD</div>
+  <div class="it"><span class="dot" style="background:#10b981"></span>Visite médicale</div>
+  <div class="it"><span class="dot" style="background:#8b5cf6"></span>Entretien pro</div>
+  <div class="it"><span class="dot" style="background:#06b6d4"></span>Anniversaire</div>
+  <div class="it"><span class="dot" style="background:#dc2626"></span>Disciplinaire</div>
+  <div class="it"><span class="dot" style="background:#3b82f6"></span>RDV / manuel</div>
+</div>
+
+<div class="cal-head">
+  <div>Lundi</div><div>Mardi</div><div>Mercredi</div><div>Jeudi</div>
+  <div>Vendredi</div><div>Samedi</div><div>Dimanche</div>
+</div>
+<div class="cal" id="cal"></div>
+
+<!-- Modal Création / Édition événement -->
+<div class="modal-bg" id="modalEdit">
+  <div class="modal">
+    <h2 id="modalTitle">Nouvel événement</h2>
+    <input type="hidden" id="ev_id">
+    <div class="field">
+      <label>Titre *</label>
+      <input id="ev_titre" placeholder="Ex: RDV avocat, Réunion équipe...">
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Type</label>
+        <select id="ev_type">
+          <option value="rdv_pro">RDV pro</option>
+          <option value="reunion">Réunion</option>
+          <option value="formation">Formation</option>
+          <option value="conge">Congé</option>
+          <option value="renouv_titre_sejour">Renouv. titre séjour</option>
+          <option value="visite_med_initiale">Visite médicale initiale</option>
+          <option value="autre">Autre</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Salarié (optionnel)</label>
+        <select id="ev_salarie"><option value="">— Aucun —</option></select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Date début *</label>
+        <input id="ev_date_debut" type="date">
+      </div>
+      <div class="field">
+        <label>Date fin</label>
+        <input id="ev_date_fin" type="date">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Heure début</label>
+        <input id="ev_heure_debut" type="time">
+      </div>
+      <div class="field">
+        <label>Heure fin</label>
+        <input id="ev_heure_fin" type="time">
+      </div>
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea id="ev_desc" placeholder="Détails, lieu, contact..."></textarea>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Couleur</label>
+        <input id="ev_color" type="color" value="#3b82f6" style="height:38px;padding:2px">
+      </div>
+      <div class="field">
+        <label>Rappel (jours avant)</label>
+        <input id="ev_reminder" type="number" value="7" min="0">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <div class="left">
+        <button class="btn danger sm" id="btnDel" onclick="delEvent()" style="display:none">Supprimer</button>
+      </div>
+      <div class="right">
+        <button class="btn ghost" onclick="closeModal('modalEdit')">Annuler</button>
+        <button class="btn primary" onclick="saveEvent()">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Détail -->
+<div class="modal-bg" id="modalDetail">
+  <div class="modal">
+    <div class="evt-detail-title" id="dt_titre">—</div>
+    <div class="evt-meta">
+      <div class="it">📅 <span id="dt_date">—</span></div>
+      <div class="it" id="dt_sal_wrap" style="display:none">👤 <span id="dt_sal">—</span></div>
+      <div class="it"><span class="badge" id="dt_type">—</span></div>
+      <div class="it" id="dt_auto" style="display:none"><span class="badge" style="background:rgba(245,158,11,.15);color:#f59e0b">AUTO</span></div>
+    </div>
+    <div id="dt_desc" style="color:var(--muted);font-size:13px;line-height:1.5;margin-bottom:14px"></div>
+    <div class="modal-foot">
+      <div class="left">
+        <button class="btn danger sm" id="dt_btnDel" onclick="delEventFromDetail()" style="display:none">Supprimer</button>
+      </div>
+      <div class="right">
+        <button class="btn ghost" onclick="closeModal('modalDetail')">Fermer</button>
+        <button class="btn" id="dt_btnEdit" onclick="editFromDetail()">✎ Modifier</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../assistant-widget.js?v=4.1"></script>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+
+let S = { events:[], salaries:[], org:null, profile:null, currentMonth:null, currentDetailId:null };
+const MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+const TYPE_LABELS = {
+  fin_essai:'Fin période d\'essai', fin_cdd:'Fin de CDD',
+  visite_med_initiale:'Visite médicale initiale', visite_med_periodique:'Visite médicale périodique',
+  entretien_pro_2ans:'Entretien pro (2 ans)', entretien_pro_6ans:'Entretien pro (6 ans)',
+  anniv_ancien:'Anniversaire embauche', renouv_titre_sejour:'Renouv. titre séjour',
+  disciplinaire_convocation:'Convocation entretien préalable',
+  disciplinaire_entretien:'Entretien préalable disciplinaire',
+  disciplinaire_notification:'Notification sanction',
+  disciplinaire_effet:'Date d\'effet sanction',
+  rdv_pro:'RDV pro', reunion:'Réunion', formation:'Formation', conge:'Congé', autre:'Autre'
+};
+
+async function init(){
+  // Auth
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { location.href = '../auth/index.html'; return; }
+  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire)').eq('id', session.user.id).maybeSingle();
+  if (!profile) { alert('Profil introuvable'); return; }
+  if (!['admin','manager','super_admin'].includes(profile.role)) { document.body.innerHTML='<div class="empty">Accès réservé aux administrateurs et managers.</div>'; return; }
+  S.profile = profile;
+  document.getElementById('orgBadge').textContent = profile.organizations?.nom || 'org';
+  if (profile.organizations?.couleur_primaire) {
+    document.documentElement.style.setProperty('--accent', profile.organizations.couleur_primaire);
+  }
+  // Theme persisté
+  const theme = localStorage.getItem('eatime_theme');
+  if (theme) document.documentElement.setAttribute('data-theme', theme);
+
+  S.currentMonth = new Date(); S.currentMonth.setDate(1);
+  await loadAll();
+  render();
+}
+
+async function loadAll(){
+  const [e,s] = await Promise.all([
+    sb.from('calendar_events').select('*').order('date_debut'),
+    sb.from('salaries').select('id,nom,prenom,actif').eq('actif', true).order('nom')
+  ]);
+  S.events = e.data || [];
+  S.salaries = s.data || [];
+  const fS = document.getElementById('fSal');
+  fS.innerHTML = '<option value="">Tous salariés</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
+  const evS = document.getElementById('ev_salarie');
+  evS.innerHTML = '<option value="">— Aucun —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
+}
+
+function navMonth(d){
+  S.currentMonth.setMonth(S.currentMonth.getMonth() + d);
+  render();
+}
+function goToday(){ S.currentMonth = new Date(); S.currentMonth.setDate(1); render(); }
+
+function render(){
+  const m = S.currentMonth;
+  const year = m.getFullYear(), month = m.getMonth();
+  document.getElementById('monthLabel').textContent = `${MONTHS[month]} ${year}`;
+
+  const fType = document.getElementById('fType').value;
+  const fSal = document.getElementById('fSal').value;
+  const filtered = S.events.filter(e => {
+    if (e.status === 'cancelled') return false;
+    if (fType && e.type !== fType) return false;
+    if (fSal && e.salarie_id !== fSal) return false;
+    return true;
+  });
+
+  // Calc grille : 6 semaines × 7 jours = 42 cellules, débute le lundi de la semaine du 1er du mois
+  const first = new Date(year, month, 1);
+  const lastDay = new Date(year, month+1, 0).getDate();
+  // Décalage : lundi=0, dimanche=6
+  let dayOfWeek = first.getDay(); // 0=dim, 1=lun...
+  dayOfWeek = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const start = new Date(year, month, 1 - dayOfWeek);
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Map events par date
+  const evByDate = {};
+  filtered.forEach(e => {
+    const k = e.date_debut;
+    (evByDate[k] = evByDate[k] || []).push(e);
+  });
+
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const inMonth = d.getMonth() === month;
+    const isToday = d.getTime() === today.getTime();
+    const isoDate = d.toISOString().slice(0,10);
+    const evs = evByDate[isoDate] || [];
+    const max = 3;
+    const shown = evs.slice(0, max);
+    const extra = evs.length - max;
+    html += `<div class="day${inMonth?'':' other-month'}${isToday?' today':''}" onclick="dayClick('${isoDate}', event)">
+      <span class="day-num">${d.getDate()}</span>
+      ${shown.map(e=>`<div class="evt" style="background:${e.color||'#3b82f6'}" onclick="event.stopPropagation();openDetail('${e.id}')" title="${esc(e.titre)}">${esc(e.titre)}</div>`).join('')}
+      ${extra>0?`<div class="evt more" onclick="event.stopPropagation();openDetail('${shown[shown.length-1].id}')">+${extra} autre${extra>1?'s':''}</div>`:''}
+    </div>`;
+  }
+  document.getElementById('cal').innerHTML = html;
+}
+
+function esc(s){ return (s||'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function dayClick(iso, e){
+  if (e.target.closest('.evt')) return;
+  // Ouvre création préremplie
+  openCreate(iso);
+}
+
+function openCreate(iso){
+  document.getElementById('modalTitle').textContent = 'Nouvel événement';
+  document.getElementById('ev_id').value = '';
+  document.getElementById('ev_titre').value = '';
+  document.getElementById('ev_type').value = 'rdv_pro';
+  document.getElementById('ev_salarie').value = '';
+  document.getElementById('ev_date_debut').value = iso || new Date().toISOString().slice(0,10);
+  document.getElementById('ev_date_fin').value = '';
+  document.getElementById('ev_heure_debut').value = '';
+  document.getElementById('ev_heure_fin').value = '';
+  document.getElementById('ev_desc').value = '';
+  document.getElementById('ev_color').value = '#3b82f6';
+  document.getElementById('ev_reminder').value = '7';
+  document.getElementById('btnDel').style.display = 'none';
+  document.getElementById('modalEdit').classList.add('open');
+}
+
+function openEdit(id){
+  const e = S.events.find(x=>x.id===id);
+  if (!e) return;
+  if (e.auto_generated) {
+    if (!confirm('Cet événement a été généré automatiquement depuis la fiche salarié. Le modifier ici ne changera PAS la fiche source. Continuer ?')) return;
+  }
+  document.getElementById('modalTitle').textContent = 'Modifier événement';
+  document.getElementById('ev_id').value = e.id;
+  document.getElementById('ev_titre').value = e.titre || '';
+  document.getElementById('ev_type').value = e.type || 'autre';
+  document.getElementById('ev_salarie').value = e.salarie_id || '';
+  document.getElementById('ev_date_debut').value = e.date_debut || '';
+  document.getElementById('ev_date_fin').value = e.date_fin || '';
+  document.getElementById('ev_heure_debut').value = e.heure_debut || '';
+  document.getElementById('ev_heure_fin').value = e.heure_fin || '';
+  document.getElementById('ev_desc').value = e.description || '';
+  document.getElementById('ev_color').value = e.color || '#3b82f6';
+  document.getElementById('ev_reminder').value = e.reminder_days ?? 7;
+  document.getElementById('btnDel').style.display = '';
+  document.getElementById('modalEdit').classList.add('open');
+}
+
+function openDetail(id){
+  const e = S.events.find(x=>x.id===id);
+  if (!e) return;
+  S.currentDetailId = id;
+  const sal = e.salarie_id ? S.salaries.find(s=>s.id===e.salarie_id) : null;
+  document.getElementById('dt_titre').textContent = e.titre;
+  const d = new Date(e.date_debut);
+  let dateStr = d.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  if (e.date_fin && e.date_fin !== e.date_debut) {
+    dateStr += ' → ' + new Date(e.date_fin).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' });
+  }
+  if (e.heure_debut) dateStr += ' · ' + e.heure_debut.slice(0,5) + (e.heure_fin?'–'+e.heure_fin.slice(0,5):'');
+  document.getElementById('dt_date').textContent = dateStr;
+  document.getElementById('dt_type').textContent = TYPE_LABELS[e.type] || e.type;
+  document.getElementById('dt_type').style.background = e.color + '22';
+  document.getElementById('dt_type').style.color = e.color;
+  document.getElementById('dt_type').style.borderColor = e.color + '55';
+  document.getElementById('dt_auto').style.display = e.auto_generated ? '' : 'none';
+  document.getElementById('dt_sal_wrap').style.display = sal ? '' : 'none';
+  if (sal) document.getElementById('dt_sal').textContent = sal.nom + ' ' + (sal.prenom||'');
+  document.getElementById('dt_desc').textContent = e.description || '';
+  document.getElementById('dt_btnDel').style.display = e.auto_generated ? 'none' : '';
+  document.getElementById('modalDetail').classList.add('open');
+}
+
+function editFromDetail(){
+  closeModal('modalDetail');
+  openEdit(S.currentDetailId);
+}
+
+async function delEventFromDetail(){
+  if (!confirm('Supprimer cet événement ?')) return;
+  const { error } = await sb.from('calendar_events').delete().eq('id', S.currentDetailId);
+  if (error) return alert(error.message);
+  closeModal('modalDetail');
+  await loadAll(); render();
+}
+
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+
+async function saveEvent(){
+  const id = document.getElementById('ev_id').value;
+  const titre = document.getElementById('ev_titre').value.trim();
+  const date_debut = document.getElementById('ev_date_debut').value;
+  if (!titre) return alert('Titre requis');
+  if (!date_debut) return alert('Date début requise');
+  const payload = {
+    titre, type: document.getElementById('ev_type').value,
+    salarie_id: document.getElementById('ev_salarie').value || null,
+    date_debut, date_fin: document.getElementById('ev_date_fin').value || null,
+    heure_debut: document.getElementById('ev_heure_debut').value || null,
+    heure_fin: document.getElementById('ev_heure_fin').value || null,
+    all_day: !document.getElementById('ev_heure_debut').value,
+    description: document.getElementById('ev_desc').value || null,
+    color: document.getElementById('ev_color').value,
+    reminder_days: parseInt(document.getElementById('ev_reminder').value)||0,
+    organization_id: S.profile.organization_id,
+    created_by: S.profile.id
+  };
+  let resp;
+  if (id) {
+    delete payload.created_by; delete payload.organization_id;
+    resp = await sb.from('calendar_events').update(payload).eq('id', id);
+  } else {
+    resp = await sb.from('calendar_events').insert(payload);
+  }
+  if (resp.error) return alert(resp.error.message);
+  closeModal('modalEdit');
+  await loadAll(); render();
+}
+
+async function delEvent(){
+  const id = document.getElementById('ev_id').value;
+  if (!id) return;
+  if (!confirm('Supprimer cet événement ?')) return;
+  const { error } = await sb.from('calendar_events').delete().eq('id', id);
+  if (error) return alert(error.message);
+  closeModal('modalEdit');
+  await loadAll(); render();
+}
+
+async function recalcAll(){
+  if (!confirm('Recalculer tous les événements auto (fin essai, fin CDD, visites médicales, etc.) depuis les fiches salariés ?')) return;
+  const btn = event.target; btn.disabled = true; btn.textContent = '⏳ Recalcul...';
+  try {
+    const { data, error } = await sb.rpc('recalc_calendar_auto_events', { p_org_id: S.profile.organization_id });
+    if (error) throw error;
+    const r = data?.[0] || {};
+    alert(`✓ Recalcul terminé.\nEvents auto au total : ${r.events_total||0}\nSupprimés (salariés archivés) : ${r.events_deleted||0}`);
+    await loadAll(); render();
+  } catch(e) { alert('Erreur : ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '↻ Recalc'; }
+}
+
+init();
+</script>
+</body>
+</html>
