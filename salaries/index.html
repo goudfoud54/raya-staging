@@ -755,12 +755,17 @@ function renderFiche(){
   }
 }
 
-// triggerUpload sur clic d'une carte "doc requis"
+// triggerUpload sur clic d'une carte "doc requis" → auto-upload après sélection
 function triggerUpload(key){
   setTab('docs');
   setTimeout(()=>{
     const sel=document.getElementById('nf_type'); if(sel)sel.value=key;
-    const f=document.getElementById('nf_file'); if(f)f.click();
+    const f=document.getElementById('nf_file');
+    if(f){
+      // Auto-upload dès que l'user choisit un fichier (pas besoin de re-cliquer sur "Uploader")
+      f.onchange=(e)=>{ if(e.target.files && e.target.files[0]) uploadDoc(); };
+      f.click();
+    }
   },50);
 }
 
@@ -891,19 +896,45 @@ async function addContrainte(){
 }
 async function delContrainte(cid){await sb.from('salarie_contraintes').delete().eq('id',cid);const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();}
 
+let _uploadingDoc=false;
 async function uploadDoc(){
+  // Anti-double-click : si un upload est déjà en cours, on ignore les clics suivants
+  if(_uploadingDoc){return;}
   const id=currentFiche.id;
-  const f=document.getElementById('nf_file').files[0];
+  const fileInput=document.getElementById('nf_file');
+  const f=fileInput?.files[0];
   if(!f){toast('Choisis un fichier');return;}
   if(f.size>10485760){toast('Fichier > 10 Mo');return;}
-  const type=document.getElementById('nf_type').value;
-  const path=`${id}/${type}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
-  const up=await sb.storage.from('salaries-docs').upload(path,f,{contentType:f.type||'application/octet-stream'});
-  if(up.error){toast('Upload: '+up.error.message);return;}
-  const{error}=await sb.from('salarie_documents').insert({salarie_id:id,type,nom:f.name,path,taille:f.size,content_type:f.type});
-  if(error){toast('DB: '+error.message);return;}
-  const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
-  renderFiche();render();toast('Uploadé ✓');
+  const typeSel=document.getElementById('nf_type');
+  const type=typeSel.value;
+  const typeLabel=(ALL_DOC_TYPES.find(t=>t.key===type)?.label)||type;
+
+  _uploadingDoc=true;
+  // Désactive le bouton + feedback visuel pendant l'upload
+  const btn=document.querySelector('.add-row .btn');
+  const oldText=btn?.textContent;
+  if(btn){btn.disabled=true;btn.style.opacity='0.6';btn.style.cursor='wait';btn.textContent='⏳ Upload…';}
+  if(fileInput)fileInput.disabled=true;
+  if(typeSel)typeSel.disabled=true;
+
+  try{
+    const path=`${id}/${type}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+    const up=await sb.storage.from('salaries-docs').upload(path,f,{contentType:f.type||'application/octet-stream'});
+    if(up.error){toast('Upload: '+up.error.message);return;}
+    const{error}=await sb.from('salarie_documents').insert({salarie_id:id,type,nom:f.name,path,taille:f.size,content_type:f.type});
+    if(error){toast('DB: '+error.message);return;}
+    const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
+    renderFiche();render();
+    toast(`✓ ${typeLabel} ajouté${typeLabel.toLowerCase().endsWith('e')?'':'e'} : ${f.name}`);
+  }catch(err){
+    toast('Erreur : '+(err.message||err));
+  }finally{
+    _uploadingDoc=false;
+    // Reset input pour permettre le re-upload du même fichier après
+    if(fileInput){fileInput.value='';fileInput.disabled=false;fileInput.onchange=null;}
+    if(typeSel)typeSel.disabled=false;
+    // Le bouton est recréé par renderFiche, donc inutile de le ré-activer manuellement
+  }
 }
 async function viewDoc(path){
   // Ouvre en preview dans nouvel onglet (le browser affiche le PDF natif)
