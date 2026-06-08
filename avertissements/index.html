@@ -367,14 +367,26 @@ async function init(){
 }
 
 async function loadAll(){
-  const [d, s] = await Promise.all([
-    sb.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at', { ascending: false }),
-    sb.from('salaries').select('id,nom,prenom,date_entree,date_naissance,adresse,code_postal,ville,poste_intitule,type_contrat').order('nom')
-  ]);
-  S.dossiers = d.data || [];
+  // Charger d'abord les salariés (priorité) puis les dossiers (peut planter si cache PostgREST pas prêt)
+  const s = await sb.from('salaries').select('id,nom,prenom,date_entree,date_naissance,adresse,code_postal,ville,poste_intitule,type_contrat,actif').order('nom');
+  if (s.error) console.error('[avertissements] erreur salaries:', s.error);
   S.salaries = s.data || [];
+  // Dossiers : essai avec join, fallback sans
+  let d = await sb.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at', { ascending: false });
+  if (d.error) {
+    console.warn('[avertissements] join échoué, fallback sans join:', d.error);
+    d = await sb.from('disciplinary_actions').select('*').order('created_at', { ascending: false });
+    // hydrate manuellement le champ salarie depuis S.salaries
+    (d.data || []).forEach(x => {
+      const sal = S.salaries.find(z => z.id === x.salarie_id);
+      x.salarie = sal ? { id: sal.id, nom: sal.nom, prenom: sal.prenom } : null;
+    });
+  }
+  if (d.error) console.error('[avertissements] erreur dossiers:', d.error);
+  S.dossiers = d.data || [];
   const sel = document.getElementById('ed_salarie');
-  sel.innerHTML = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
+  sel.innerHTML = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}${x.actif===false?' (archivé)':''}</option>`).join('');
+  console.log('[avertissements] chargé:', S.salaries.length, 'salariés,', S.dossiers.length, 'dossiers');
 }
 
 function render(){
@@ -407,7 +419,15 @@ function render(){
 function esc(s){return (s||'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmtDate(d){return d?new Date(d).toLocaleDateString('fr-FR'):'—'}
 
-function openNew(){
+async function openNew(){
+  // Re-fetch salariés si la liste est vide
+  if (!S.salaries.length) {
+    const s = await sb.from('salaries').select('id,nom,prenom,date_entree,date_naissance,adresse,code_postal,ville,poste_intitule,type_contrat,actif').order('nom');
+    S.salaries = s.data || [];
+    const sel = document.getElementById('ed_salarie');
+    sel.innerHTML = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}${x.actif===false?' (archivé)':''}</option>`).join('');
+    if (!S.salaries.length) { alert('Aucun salarié trouvé. Vérifie que ton organisation a bien des fiches salariés enregistrées.'); return; }
+  }
   document.getElementById('modalTitle').textContent = 'Nouveau dossier disciplinaire';
   document.getElementById('ed_id').value = '';
   document.getElementById('ed_salarie').value = '';
