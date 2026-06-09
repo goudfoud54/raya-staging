@@ -118,6 +118,9 @@ button{cursor:pointer;border:none;background:none}
 .subitem{display:flex;align-items:center;gap:10px;padding:9px 13px;background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:7px;font-size:12.5px;flex-wrap:wrap}
 .add-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:14px;border-top:1px dashed var(--line-2)}
 .add-row select,.add-row input{padding:7px 10px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);font-size:12px;outline:none}
+/* Champs de gestion des rôles (modal ⚙ Rôles) + sélecteur de niveau (fiche) : fond explicite sinon texte clair sur fond blanc = invisible */
+#rolesBody input,#rolesBody select,.ra-niv{background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:7px;padding:7px 10px;font-size:13px;outline:none}
+#rolesBody input[type=color]{padding:3px;height:34px}
 
 /* ── MODAL ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:30px 14px;overflow:auto;z-index:150}
@@ -168,6 +171,7 @@ button{cursor:pointer;border:none;background:none}
     <div class="h-actions">
       <button class="btn ghost" id="demandesBtn" onclick="openDemandes()" style="position:relative">🔔 Demandes <span id="demandesBadge" style="display:none;background:var(--bad);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:4px;font-weight:700"></span></button>
       <button class="btn ghost" onclick="openExportModal()">Export pointages</button>
+      <button class="btn ghost" onclick="openRolesModal()">⚙ Rôles</button>
       <button class="btn" onclick="openFiche(null)">+ Nouveau salarié</button>
       <a href="../" class="btn ghost">Portail</a>
       <button class="btn ghost" onclick="logout()" title="Déconnexion">↩</button>
@@ -223,8 +227,9 @@ const DOC_OPTIONAL=[
   {key:'autre',label:'Autre'}
 ];
 const ALL_DOC_TYPES=[...DOC_REQUIRED,...DOC_OPTIONAL];
-let S={restos:[],salaries:[],roles:[],dispos:[],contraintes:[],paires:[],docs:[],pts:[]};
+let S={restos:[],salaries:[],roles:[],orgRoles:[],dispos:[],contraintes:[],paires:[],docs:[],pts:[]};
 let currentFiche=null, currentTab='infos';
+let snackPri={};  // affectation restos de la fiche courante : { restaurant_id: priorité }
 
 // ===== AUTH SUPABASE =====
 function showSignup(){document.getElementById('loginBlock').style.display='none';document.getElementById('signupBlock').style.display='flex';document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lockSub').textContent='Créer un compte';document.getElementById('loginErr').textContent='';}
@@ -279,7 +284,7 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 
 // ===== LOAD =====
 async function loadAll(){
-  const [r,s,ro,d,c,p,dx,pt]=await Promise.all([
+  const [r,s,ro,d,c,p,dx,pt,or]=await Promise.all([
     sb.from('restaurants').select('*').eq('actif',true).order('nom'),
     sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
@@ -287,9 +292,13 @@ async function loadAll(){
     sb.from('salarie_contraintes').select('*'),
     sb.from('salarie_paires').select('*'),
     sb.from('salarie_documents').select('*').order('created_at',{ascending:false}),
-    sb.from('pointages').select('*').gte('ts',new Date(Date.now()-90*86400000).toISOString()).order('ts',{ascending:false})
+    sb.from('pointages').select('*').gte('ts',new Date(Date.now()-90*86400000).toISOString()).order('ts',{ascending:false}),
+    sb.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre')
   ]);
-  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.data||[];
+  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.orgRoles=or.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.data||[];
+  // Filtre rôles dynamique
+  const fR=document.getElementById('fRole');
+  if(fR) fR.innerHTML='<option value="">Tous les rôles</option>'+S.orgRoles.map(x=>`<option value="${x.cle}">${escH(x.nom)}</option>`).join('');
   // Compteur demandes en attente
   const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').length;
   const b=document.getElementById('demandesBadge');
@@ -300,6 +309,25 @@ async function loadAll(){
 }
 const snackName=id=>{const r=S.restos.find(x=>x.id===id);return r?r.nom.replace('Raya ',''):'—';};
 const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.role))];
+const rolesFullOf=sid=>S.roles.filter(x=>x.salarie_id===sid);
+const roleName=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return r?r.nom:cle;};
+const roleColor=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return (r&&r.couleur)?r.couleur:'#8b94a3';};
+function escH(s){return (s||'').toString().replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
+function roleAssignHTML(sid){
+  if(!S.orgRoles.length) return '<div style="color:var(--muted);font-size:12.5px">Aucun rôle créé pour ton établissement. <a onclick="openRolesModal()" style="color:var(--gold);cursor:pointer;font-weight:600">⚙ Gérer les rôles</a> pour en créer.</div>';
+  const cur={}; (sid?S.roles.filter(x=>x.salarie_id===sid):[]).forEach(x=>cur[x.role]=x.niveau||'experimente');
+  return S.orgRoles.map(r=>{
+    const on=cur[r.cle]!=null, niv=cur[r.cle]||'experimente';
+    return `<label class="role-assign-row" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)">
+      <input type="checkbox" class="ra-chk" data-cle="${escH(r.cle)}" ${on?'checked':''} onchange="this.closest('.role-assign-row').querySelector('.ra-niv').disabled=!this.checked">
+      <span style="flex:1;font-weight:600"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${roleColor(r.cle)};margin-right:7px"></span>${escH(r.nom)}</span>
+      <select class="ra-niv" data-cle="${escH(r.cle)}" ${on?'':'disabled'} style="width:auto">
+        <option value="experimente" ${niv==='experimente'?'selected':''}>★ Expérimenté</option>
+        <option value="nouveau" ${niv==='nouveau'?'selected':''}>🔰 Nouveau</option>
+      </select>
+    </label>`;
+  }).join('');
+}
 const disposOf=sid=>S.dispos.filter(x=>x.salarie_id===sid);
 const contrOf=sid=>S.contraintes.filter(x=>x.salarie_id===sid);
 const docsOf=sid=>S.docs.filter(x=>x.salarie_id===sid);
@@ -316,6 +344,112 @@ async function setPinAndSave(id){
   toast('Code généré : '+pin);await loadAll();currentFiche=S.salaries.find(x=>x.id===id);renderFiche();
 }
 const TYPL_PT={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pause_fin:'Pause fin'};
+
+// ===== GESTION DES RÔLES DE L'ÉTABLISSEMENT =====
+function slugify(s){return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)||('role'+Date.now());}
+async function reloadOrgRoles(){
+  const{data}=await sb.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre');
+  S.orgRoles=data||[];
+  const fR=document.getElementById('fRole');
+  if(fR){const cur=fR.value;fR.innerHTML='<option value="">Tous les rôles</option>'+S.orgRoles.map(x=>`<option value="${x.cle}">${escH(x.nom)}</option>`).join('');fR.value=cur;}
+}
+function openRolesModal(){
+  document.getElementById('modalHost').innerHTML=`
+  <div class="modal-bg" onclick="if(event.target===this)closeRolesModal()">
+    <div class="modal" style="max-width:560px">
+      <h2>⚙ Rôles de l'établissement</h2>
+      <div style="color:var(--muted);font-size:12.5px;margin-bottom:8px">Crée les rôles propres à ton resto (Cuisinier, Caissier, Runner, Barman, Plongeur, Livreur…). Ils servent à l'assignation des salariés et au planning. Renommer un rôle ne casse pas l'historique.</div>
+      <div id="rolesBody"></div>
+      <div class="modal-actions" style="margin-top:16px"><button class="btn ghost" onclick="closeRolesModal()">Fermer</button></div>
+    </div>
+  </div>`;
+  renderRolesBody();
+}
+function closeRolesModal(){document.getElementById('modalHost').innerHTML='';}
+function renderRolesBody(){
+  const el=document.getElementById('rolesBody'); if(!el)return;
+  let list;
+  if(!S.orgRoles.length){
+    list=`<div style="text-align:center;color:var(--muted);padding:20px 10px;border:1px dashed var(--line-2);border-radius:10px">
+      Aucun rôle pour l'instant.<br>Crée ton premier rôle ci-dessous — ou importe tes anciens rôles en 1 clic.
+      <div style="margin-top:14px"><button class="btn" onclick="importLegacyRoles()">⤵ Importer mes anciens rôles (Cuisine + Réception)</button></div></div>`;
+  } else {
+    list=S.orgRoles.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)">
+      <input type="color" value="${r.couleur||'#8b94a3'}" onchange="updateRole('${r.id}','couleur',this)" style="width:38px;height:32px;padding:2px;cursor:pointer" title="Couleur">
+      <input value="${escH(r.nom)}" data-prev="${escH(r.nom)}" onchange="updateRole('${r.id}','nom',this)" style="flex:1">
+      <button class="btn ghost sm" onclick="deleteRole('${r.id}','${escH(r.cle)}',this)" data-nom="${escH(r.nom)}" title="Retirer ce rôle">✕</button>
+    </div>`).join('');
+  }
+  el.innerHTML=list+`<div style="display:flex;gap:8px;margin-top:16px">
+    <input id="newRoleName" placeholder="Nouveau rôle (ex: Runner, Barman…)" style="flex:1" onkeydown="if(event.key==='Enter')addRole()">
+    <button class="btn" onclick="addRole()">+ Ajouter</button></div>`;
+}
+async function addRole(){
+  const inp=document.getElementById('newRoleName'); const nom=(inp.value||'').trim();
+  if(!nom){toast('Nom du rôle requis');return;}
+  let cle=slugify(nom);
+  if(S.orgRoles.some(r=>r.cle===cle)) cle=cle+'_'+Math.floor(Math.random()*1000);
+  const palette=['#e8a06a','#e0c46a','#6ab0e8','#7fd1a0','#c08be8','#e88b8b','#8be8d1','#d1a0e8'];
+  const couleur=palette[S.orgRoles.length%palette.length];
+  const{error}=await sb.from('org_roles').upsert({organization_id:ME.organization_id,cle,nom,couleur,ordre:S.orgRoles.length,actif:true},{onConflict:'organization_id,cle'});
+  if(error){toast('Erreur: '+error.message);return;}
+  await reloadOrgRoles(); renderRolesBody(); render();
+}
+async function updateRole(id,field,el){
+  const v=(el.value||'').trim();
+  if(field==='nom'&&!v){el.value=el.dataset.prev||'';return;}
+  const{error}=await sb.from('org_roles').update({[field]:v}).eq('id',id);
+  if(error){toast('Erreur: '+error.message);return;}
+  await reloadOrgRoles(); render();
+}
+async function deleteRole(id,cle,btn){
+  const nom=btn.dataset.nom||'ce rôle';
+  const used=S.roles.filter(x=>x.role===cle).length;
+  if(!confirm(`Retirer le rôle « ${nom} » ?`+(used?`\n\n⚠ ${used} salarié(s) ont ce rôle. L'historique des plannings est CONSERVÉ — le rôle est seulement retiré de la liste des rôles assignables.`:''))) return;
+  const{error}=await sb.from('org_roles').update({actif:false}).eq('id',id);
+  if(error){toast('Erreur: '+error.message);return;}
+  await reloadOrgRoles(); renderRolesBody(); render();
+}
+async function importLegacyRoles(){
+  const rows=[
+    {organization_id:ME.organization_id,cle:'cuisine',nom:'Cuisine',couleur:'#e8a06a',ordre:0,actif:true},
+    {organization_id:ME.organization_id,cle:'caisse',nom:'Réception',couleur:'#e0c46a',ordre:1,actif:true},
+  ];
+  const{error}=await sb.from('org_roles').upsert(rows,{onConflict:'organization_id,cle'});
+  if(error){toast('Erreur: '+error.message);return;}
+  await reloadOrgRoles(); renderRolesBody(); render();
+  toast('Rôles importés ✓ Tu peux les renommer.');
+}
+
+// ===== AFFECTATION RESTAURANTS À PRIORITÉ =====
+const assignedToSnack=(s,rid)=>{ const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:null; if(a&&a.length) return a.some(x=>x.restaurant_id===rid); return (s&&s.snack_origine_id)===rid; };
+function initSnackPri(s){
+  snackPri={};
+  const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:[];
+  if(a.length) a.forEach(x=>{ if(x&&x.restaurant_id) snackPri[x.restaurant_id]=x.priorite; });
+  else if(s&&s.snack_origine_id) snackPri[s.snack_origine_id]=1;
+}
+function snackGridHTML(){
+  if(!S.restos.length) return '<div style="color:var(--muted);font-size:12.5px">Aucun restaurant. Crée tes restaurants dans Paramètres.</div>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:8px">'+S.restos.map(r=>{
+    const p=snackPri[r.id], on=p!=null;
+    const badge=on
+      ? `<span style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;font-size:11px;font-weight:800;background:${p===1?'var(--gold)':'var(--line-2)'};color:${p===1?'#1a1a1a':'var(--text)'}">${p}</span>`
+      : `<span style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;font-size:13px;border:1.5px dashed var(--line-2);color:var(--muted)">+</span>`;
+    return `<button type="button" onclick="toggleSnackPri('${r.id}')" title="${escH(r.nom)}" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:9px;border:1.5px solid ${on?'var(--gold)':'var(--line-2)'};background:${on?'rgba(200,160,53,.12)':'var(--surface)'};color:var(--text);cursor:pointer;font-size:13px;font-weight:600">${badge}${escH(r.nom)}${p===1?' <span style="font-size:9px;color:var(--gold);font-weight:800;letter-spacing:.04em">PRINCIPAL</span>':''}</button>`;
+  }).join('')+'</div>';
+}
+function toggleSnackPri(rid){
+  if(snackPri[rid]!=null){
+    const removed=snackPri[rid]; delete snackPri[rid];
+    Object.keys(snackPri).forEach(k=>{ if(snackPri[k]>removed) snackPri[k]--; });   // renumérote
+  } else {
+    const max=Object.values(snackPri).reduce((a,b)=>Math.max(a,b),0);
+    snackPri[rid]=max+1;
+  }
+  const g=document.getElementById('snackGrid'); if(g) g.innerHTML=snackGridHTML();
+}
+function snackPriArray(){ return Object.keys(snackPri).map(rid=>({restaurant_id:rid,priorite:snackPri[rid]})).sort((a,b)=>a.priorite-b.priorite); }
 
 function openExportModal(){
   const to=new Date().toISOString().slice(0,10);
@@ -455,7 +589,7 @@ function render(){
   let list=S.salaries.filter(s=>{
     const fn=fullName(s).toLowerCase();
     if(q && !fn.includes(q)&&!(s.nom||'').toLowerCase().includes(q)) return false;
-    if(fSn==='MULTI'){if(!s.est_multi)return false;} else if(fSn){if(s.snack_origine_id!==fSn)return false;}
+    if(fSn==='MULTI'){if(!s.est_multi)return false;} else if(fSn){if(!assignedToSnack(s,fSn))return false;}
     if(fRo && !rolesOf(s.id).includes(fRo)) return false;
     if(fAc==='1' && !s.actif) return false;
     if(fAc==='0' && s.actif) return false;
@@ -463,7 +597,7 @@ function render(){
   });
   document.getElementById('count').textContent=list.length+' salarié'+(list.length>1?'s':'');
   document.getElementById('tbody').innerHTML=list.map(s=>{
-    const rls=rolesOf(s.id).map(r=>`<span class="chip ${r}">${r}</span>`).join(' ')||'<span class="chip off">—</span>';
+    const rls=rolesFullOf(s.id).map(r=>`<span class="chip" style="background:${roleColor(r.role)}22;color:${roleColor(r.role)}">${r.niveau==='nouveau'?'🔰':'★'} ${escH(roleName(r.role))}</span>`).join(' ')||'<span class="chip off">—</span>';
     const docTypes=docsOf(s.id).map(d=>d.type);
     const reqOK=DOC_REQUIRED.filter(rd=>docTypes.map(t=>(t||'').toLowerCase().trim()).includes(rd.key)).length;
     const reqTot=DOC_REQUIRED.length;
@@ -488,6 +622,7 @@ function render(){
 // ===== FICHE =====
 function openFiche(id){
   currentFiche=id?{...S.salaries.find(x=>x.id===id)}:{actif:true,plafond_heures:48};
+  initSnackPri(currentFiche);
   currentTab='infos';
   document.getElementById('listView').classList.add('hidden');
   const v=document.getElementById('ficheView');
@@ -549,6 +684,7 @@ function renderFiche(){
           <div class="fld"><label>Nom *</label><input id="f_nom" value="${s.nom||''}"></div>
           <div class="fld"><label>Prénom</label><input id="f_prenom" value="${s.prenom||''}"></div>
           <div class="fld"><label>Date de naissance</label><input type="date" id="f_naiss" value="${s.date_naissance||''}"></div>
+          <div class="fld"><label>Sexe</label><select id="f_sexe"><option value="">—</option><option value="M" ${s.sexe==='M'?'selected':''}>Homme</option><option value="F" ${s.sexe==='F'?'selected':''}>Femme</option></select></div>
           <div class="fld"><label>Nationalité</label><input id="f_nat" value="${s.nationalite||''}"></div>
           <div class="fld"><label>N° Sécurité sociale</label><input id="f_secu" value="${s.num_secu||''}"></div>
           <div class="fld"><label>Matricule interne</label><input id="f_matricule" value="${s.matricule||''}"></div>
@@ -577,7 +713,6 @@ function renderFiche(){
       <div class="section">
         <h3>Contrat & affectation</h3>
         <div class="grid2">
-          <div class="fld"><label>Snack d'origine</label><select id="f_snack">${snackOpts}</select></div>
           <div class="fld"><label>Intitulé de poste</label><input id="f_poste" value="${s.poste_intitule||''}"></div>
           <div class="fld"><label>Type de contrat</label><input id="f_contrat" oninput="toggleSortie(this.value)" value="${s.type_contrat||''}" placeholder="CDI, CDD, extra, alternant…"></div>
           <div class="fld"><label>Date d'entrée</label><input type="date" id="f_entree" value="${s.date_entree||''}"></div>
@@ -587,9 +722,9 @@ function renderFiche(){
           <div class="fld"><label>Couleur</label><input type="color" id="f_couleur" value="${s.couleur||'#888888'}"></div>
         </div>
         <div class="chkrow">
-          <label class="chk"><input type="checkbox" id="f_multi" ${s.est_multi?'checked':''}> Multi-snacks</label>
           <label class="chk"><input type="checkbox" id="f_actif" ${(s.actif??true)?'checked':''}> Salarié actif</label>
         </div>
+        <div style="color:var(--muted);font-size:11.5px;margin-top:8px">🏪 L'affectation aux restaurants (principal + secondaires) se règle dans l'onglet <b>Planning</b>.</div>
       </div>
       <div class="section">
         <h3>Notes</h3>
@@ -607,9 +742,14 @@ function renderFiche(){
           <div class="fld"><label>Heures max / semaine</label><input type="number" id="f_hmax" value="${s.heures_max??''}"></div>
           <div class="fld"><label>Plafond légal hebdo</label><input type="number" id="f_plafond" value="${s.plafond_heures??48}"></div>
         </div>
-        <div class="chkrow" style="margin-top:10px">
-          <label class="chk"><input type="checkbox" id="f_r_cuisine" ${rls.includes('cuisine')?'checked':''}> Peut tenir la cuisine</label>
-          <label class="chk"><input type="checkbox" id="f_r_caisse" ${rls.includes('caisse')?'checked':''}> Peut tenir la caisse</label>
+        <div style="margin-top:12px">
+          <label style="font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:4px">Rôles & niveau d'expérience</label>
+          <div id="roleAssign">${roleAssignHTML(s.id)}</div>
+        </div>
+        <div style="margin-top:16px">
+          <label style="font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:6px">Restaurants & priorité d'affectation</label>
+          <div id="snackGrid">${snackGridHTML()}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">Clique un restaurant pour l'assigner — <b>1 = principal</b>, puis 2, 3… en secondaire. Re-clique pour retirer.</div>
         </div>
       </div>
       <div class="section">
@@ -798,8 +938,8 @@ async function saveSalarie(){
     pin_badgeuse:'f_pin'};
   const DATE={date_naissance:'f_naiss',date_entree:'f_entree',date_sortie:'f_sortie'};
   const NUM={plafond_heures:'f_plafond',heures_min:'f_hmin',heures_max:'f_hmax',taux_horaire_brut:'f_taux',coef_charges_perso:'f_coefperso'};
-  const CHK={est_multi:'f_multi',est_mineur:'f_mineur',actif:'f_actif'};
-  const SEL={snack_origine_id:'f_snack'};
+  const CHK={est_mineur:'f_mineur',actif:'f_actif'};
+  const SEL={sexe:'f_sexe'};
   const COL={couleur:'f_couleur'};
   const payload={};
   for(const[k,id]of Object.entries(TXT)){const e=document.getElementById(id);if(e)payload[k]=e.value.trim()||null;}
@@ -808,6 +948,11 @@ async function saveSalarie(){
   for(const[k,id]of Object.entries(CHK)){const e=document.getElementById(id);if(e)payload[k]=e.checked;}
   for(const[k,id]of Object.entries(SEL)){const e=document.getElementById(id);if(e)payload[k]=e.value||null;}
   for(const[k,id]of Object.entries(COL)){const e=document.getElementById(id);if(e)payload[k]=e.value;}
+  // Affectation restaurants à priorité (source = grille snackPri) + synchro des champs legacy
+  const _spArr=snackPriArray();
+  payload.snacks_priorites=_spArr;
+  payload.snack_origine_id=_spArr.length?_spArr[0].restaurant_id:null;
+  payload.est_multi=_spArr.length>1;
 
   // Création : besoin du nom au minimum
   if(!currentFiche.id){
@@ -825,12 +970,13 @@ async function saveSalarie(){
     sid=data.id;currentFiche.id=sid;
   }
 
-  // rôles (si checkboxes présentes)
-  const rc=document.getElementById('f_r_cuisine'), rk=document.getElementById('f_r_caisse');
-  if(rc||rk){
-    const want=[];if(rc?.checked)want.push('cuisine');if(rk?.checked)want.push('caisse');
+  // rôles + niveau d'expérience (assignation dynamique)
+  const raChks=document.querySelectorAll('.ra-chk');
+  if(raChks.length){
     await sb.from('salarie_roles').delete().eq('salarie_id',sid).is('restaurant_id',null);
-    if(want.length)await sb.from('salarie_roles').insert(want.map(r=>({salarie_id:sid,role:r})));
+    const rows=[];
+    raChks.forEach(chk=>{ if(chk.checked){ const cle=chk.dataset.cle; const sel=document.querySelector('.ra-niv[data-cle="'+cle+'"]'); rows.push({salarie_id:sid,role:cle,niveau:(sel&&sel.value)||'experimente'}); } });
+    if(rows.length) await sb.from('salarie_roles').insert(rows);
   }
   toast('Enregistré ✓');await loadAll();
   currentFiche=S.salaries.find(x=>x.id===sid);
@@ -843,17 +989,46 @@ function toggleSortie(v){
   if(el) el.style.display=show?'block':'none';
 }
 
-async function sortirSalarie(){
+const MOTIFS_SORTIE=['Démission','Fin de CDD','Licenciement','Rupture conventionnelle','Abandon de poste','Fin de période d\'essai','Retraite','Autre'];
+function sortirSalarie(){
   if(!currentFiche.id)return;
   const today=new Date().toISOString().slice(0,10);
-  const date=prompt('Date de sortie (AAAA-MM-JJ)',today);
-  if(!date)return;
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){toast('Format date invalide (AAAA-MM-JJ)');return;}
-  const motif=prompt('Motif de la sortie (démission, fin de CDD, licenciement, rupture conventionnelle, abandon de poste, fin de période d\'essai, retraite, autre…)');
-  if(motif===null)return;
+  const cur=currentFiche.date_sortie||today;
+  const curMotif=(currentFiche.motif_sortie||'').trim();
+  const knownIdx=MOTIFS_SORTIE.slice(0,-1).findIndex(m=>m.toLowerCase()===curMotif.toLowerCase());
+  const isAutre=curMotif && knownIdx<0;
+  const inSt='width:100%;background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:8px;padding:10px;font-size:14px;outline:none';
+  const opts=MOTIFS_SORTIE.map((m,i)=>`<option ${((knownIdx>=0&&i===knownIdx)||(isAutre&&m==='Autre'))?'selected':''}>${m}</option>`).join('');
+  document.getElementById('modalHost').innerHTML=`
+  <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+    <div class="modal" style="max-width:440px">
+      <h2>Sortir des effectifs</h2>
+      <div style="color:var(--muted);font-size:12.5px;margin:-10px 0 18px;line-height:1.5">Le dossier est <b style="color:var(--text)">conservé en archive</b> (pointages, planning, sanctions, documents). Tu pourras le réintégrer à tout moment.</div>
+      <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">Date de sortie</label>
+      <input type="date" id="so_date" value="${cur}" style="${inSt};margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">Motif</label>
+      <select id="so_motif" onchange="document.getElementById('so_autre').style.display=this.value==='Autre'?'block':'none'" style="${inSt}">${opts}</select>
+      <input type="text" id="so_autre" placeholder="Préciser le motif…" value="${isAutre?escH(curMotif):''}" style="${inSt};margin-top:8px;display:${isAutre?'block':'none'}">
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">Annuler</button>
+        <button class="btn" onclick="doSortie()">Confirmer la sortie</button>
+      </div>
+    </div>
+  </div>`;
+  setTimeout(()=>document.getElementById('so_date')?.focus(),50);
+}
+async function doSortie(){
+  if(!currentFiche.id)return;
+  const date=val('so_date',false);
+  if(!date){toast('Choisis une date de sortie');return;}
+  let motif=document.getElementById('so_motif').value;
+  if(motif==='Autre') motif=val('so_autre')||'Autre';
   const{error}=await sb.from('salaries').update({date_sortie:date,motif_sortie:motif||null,actif:false}).eq('id',currentFiche.id);
   if(error){toast('Erreur: '+error.message);return;}
-  toast('Salarié sorti ✓');await loadAll();
+  // Propagation planning : on retire les créneaux planifiés À PARTIR de la date de sortie (l'historique d'avant reste intact)
+  await sb.from('planning_creneaux').delete().eq('salarie_id',currentFiche.id).gte('date',date);
+  closeModal();
+  toast('Salarié sorti des effectifs ✓');await loadAll();
   currentFiche=S.salaries.find(x=>x.id===currentFiche.id);
   renderFiche();
 }
@@ -868,12 +1043,39 @@ async function reintegrerSalarie(){
   renderFiche();
 }
 
-async function delSalarie(){
+function delSalarie(){
   if(!currentFiche.id)return;
-  if(!confirm('Supprimer définitivement ce salarié et toutes ses données ?'))return;
+  const nom=[currentFiche.prenom,currentFiche.nom].filter(Boolean).join(' ').trim()||currentFiche.nom||'ce salarié';
+  const inSt='width:100%;background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:8px;padding:10px;font-size:14px;outline:none';
+  document.getElementById('modalHost').innerHTML=`
+  <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+    <div class="modal" style="max-width:460px;border-color:var(--bad)">
+      <h2 style="color:var(--bad)">⚠ Supprimer définitivement ce salarié ?</h2>
+      <div style="font-size:13px;line-height:1.6;color:var(--text)">
+        Cette action est <b style="color:var(--bad)">irréversible</b>. Tout l'historique de
+        <b>${escH(nom)}</b> sera perdu&nbsp;: pointages, planning, sanctions, documents…
+      </div>
+      <div style="background:rgba(200,160,53,.10);border:1px solid var(--line-2);border-radius:10px;padding:12px 14px;margin:16px 0;font-size:12.5px;line-height:1.5;color:var(--muted)">
+        💡 <b style="color:var(--text)">Mieux&nbsp;:</b> sors plutôt le salarié des effectifs (date de sortie). Son dossier reste consultable en archive et reste réintégrable.
+        <div style="margin-top:10px"><button class="btn ghost sm" onclick="closeModal();sortirSalarie()">Sortir des effectifs</button></div>
+      </div>
+      <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">Pour confirmer la suppression, retape le nom&nbsp;: <b style="color:var(--text)">${escH(nom)}</b></label>
+      <input type="text" id="del_confirm" autocomplete="off" oninput="document.getElementById('del_btn').disabled=(this.value.trim()!==document.getElementById('del_btn').dataset.nom)" style="${inSt}">
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">Annuler</button>
+        <button class="btn danger" id="del_btn" data-nom="${escH(nom)}" disabled onclick="doDelSalarie()">Supprimer définitivement</button>
+      </div>
+    </div>
+  </div>`;
+  setTimeout(()=>document.getElementById('del_confirm')?.focus(),50);
+}
+async function doDelSalarie(){
+  if(!currentFiche.id)return;
+  // Nettoie les créneaux de planning rattachés avant suppression (évite toute ligne orpheline résiduelle)
+  await sb.from('planning_creneaux').delete().eq('salarie_id',currentFiche.id);
   const{error}=await sb.from('salaries').delete().eq('id',currentFiche.id);
   if(error){toast('Erreur: '+error.message);return;}
-  toast('Supprimé');await loadAll();closeFiche();
+  closeModal();toast('Salarié supprimé');await loadAll();closeFiche();
 }
 
 async function addDispo(){
@@ -1147,6 +1349,6 @@ async function ocrExtract(ev){
   ev.target.value='';
 }
 </script>
-<script defer src="../assistant-widget.js?v=4.2"></script>
+<script defer src="../assistant-widget.js?v=4.8"></script>
 </body>
 </html>

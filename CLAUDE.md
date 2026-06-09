@@ -1,39 +1,114 @@
 # Eatime360 — Brief pour Claude Code
 
-SaaS multi-tenant de gestion de restaurants. HTML/JS statique servi par GitHub Pages, backend Supabase (Auth + Postgres + Storage + Edge Functions + RLS).
+SaaS **multi-tenant de gestion de restaurants** (snacks/fast-food). RH, planning, pointage, HACCP, stock, finance, facturation, le tout isolé par organisation. Front statique HTML/JS servi par GitHub Pages, backend 100 % Supabase (Auth + Postgres + Storage + Edge Functions + RLS).
 
-## Stack
-- **Front** : HTML/JS pur, Supabase JS SDK depuis CDN, pas de build step.
-- **Backend** : Supabase project TEST `ynnqvtfayrdteqtgxeuk` (TOUJOURS travailler sur celui-là, jamais PROD `cnuepnkwsvzgzitegemb` sans validation explicite).
-- **Edge functions** (Deno) : `assistant-chat` (agent IA Mistral), `import-contrat-ai`, `check-stock-alerts`.
+## Stack & architecture
+- **Front** : ~21 pages HTML **autonomes**, une par module (`<module>/index.html`). Pas de build, pas de bundler, pas de router, pas de framework. Chaque page embarque son propre JS/CSS inline et crée son propre client Supabase. JS vanilla.
+- **4 fichiers partagés à la racine** :
+  - `index.html` : portail + login (liste les modules selon rôle/permissions, gère suspension d'org + maintenance modules).
+  - `theme.js` : applique le thème clair/sombre depuis `localStorage` ET auto-injecte le widget IA sur chaque page. **À charger en `<head>` de toute nouvelle page.**
+  - `assistant-widget.js` : chatbot flottant « Eatime AI ». S'auto-injecte partout SAUF kiosques + `/moi/` (blacklist). Réservé admin/manager/super_admin. Appelle l'Edge Function `assistant-chat`.
+  - `autocomplete.js` : composant d'autocomplétion réutilisable (`EatimeAutocomplete.enhance(selectEl, {placeholder})`). Garde le `<select>` comme source de vérité (caché) et superpose un champ de recherche ; intercepte les écritures de `select.value`. Utilisé pour les pickers de salariés (avertissements, calendrier, pilotage, haccp, parametres). Inclure via `<script src="../autocomplete.js?v=X"></script>`.
+- **Backend Supabase** :
+  - Projet **TEST** `ynnqvtfayrdteqtgxeuk` → **TOUJOURS travailler dessus**.
+  - Projet **PROD** `cnuepnkwsvzgzitegemb` → **JAMAIS toucher sans validation explicite**.
+  - URL + clé **anon** sont en clair dans chaque page (normal, c'est la clé publique). La sécurité repose sur les RLS.
+- **Edge Functions (Deno)** — code **hors de ce repo** (vit côté Supabase) :
+  - `assistant-chat` : agent IA conversationnel (Mistral) + tool-calls. Reçoit messages + PJ base64 + `current_module`.
+  - `import-contrat-ai` : OCR/extraction de contrats PDF via Gemini (utilisé par `import-contrats/`).
+  - `admin-users` : gestion Auth côté serveur (reset password, changement email, liste users) — utilisé par `parametres/`.
+  - `mcp/authorize` : serveur OAuth2 PKCE pour l'intégration MCP/Claude (front = `oauth/authorize.html`).
+  - `check-stock-alerts` : cron d'alertes feuille de stock (email + WhatsApp).
+  - `legal-enhance` : reformule motif + détail des faits d'une sanction en langage juridique (Mistral `mistral-small-2506`). Réservée admin/super_admin, journalise dans `ia_usage_log`. Appelée par `avertissements/`.
+  - Secrets Mistral côté Supabase : `MISTRAL_API_KEY` (+ `SUPABASE_URL`/`ANON`/`SERVICE_ROLE_KEY`). Toutes les Edge Functions ont CORS `*` → joignables depuis `localhost`.
 - **Repo GitHub** : `goudfoud54/raya-staging`, déploiement auto via GitHub Pages sur la branche `main`.
 
-## Workflow local
-1. `python3 -m http.server 8000` à la racine du repo
-2. Ouvrir `http://localhost:8000` (auth Supabase fonctionne en local car les RLS sont sur le projet TEST distant)
-3. Modifier, recharger Cmd+R, tester
-4. Quand validé : `git add -A && git commit -m "..." && git push`
+## Les deux modèles d'authentification (IMPORTANT)
+1. **Supabase Auth (email/mot de passe)** — modules admin/manager. Flux : `signInWithPassword` → charge `profiles` (rôle + `organization_id`) → charge `organizations` (thème/permissions/suspension). Un `role==='salarie'` est **redirigé auto vers `/moi/`**.
+2. **PIN salarié (`salaries.pin_badgeuse`, 4-6 chiffres)** — utilisé par les **kiosques** (`badgeuse`, `haccp-kiosk`, `stock-kiosk`) et `dispos/`. **Pas de session Supabase Auth** : le snack est choisi puis stocké en `localStorage`, le salarié s'identifie par PIN. ⚠️ PIN devinable, pas de rate-limit.
 
-## Règles strictes
-- **JAMAIS** modifier la DB PROD `cnuepnkwsvzgzitegemb` sans demander d'abord
-- **JAMAIS** désactiver une RLS policy sans valider l'impact multi-tenant
-- **JAMAIS** créer un fichier `.md` non demandé ailleurs que dans `/staging/` ou la racine du projet
-- **TOUJOURS** incrémenter la version du footer dans `index.html` après chaque modif visible
-- **TOUJOURS** ajouter un cache buster `?v=X.Y` aux scripts modifiés pour bypasser le cache GitHub Pages
-- **TOUJOURS** isoler par organization_id (multi-tenant strict)
+Rôles : `super_admin` (voit toutes les orgs, bypass maintenance/suspension) > `admin` > `manager` > `salarie`.
+
+## Modèle de données (tables Supabase par domaine)
+- **Cœur multi-tenant** : `organizations` (couleurs, logo, `coef_charges`, `permissions` JSONB, `suspended`), `profiles` (lié à `auth.users`, porte `role` + `organization_id` + `salarie_id` optionnel), `restaurants` (= « snacks », points de vente), `system_modules` (maintenance globale par super_admin).
+- **RH** : `salaries`, `salarie_roles` (cuisine/caisse), `salarie_dispos` (indispos ponctuelles/récurrentes, `statut_demande`), `salarie_contraintes`, `salarie_documents`, `invitations` (onboarding par token 14j, RPC `get_invitation_public`), `disciplinary_actions` (avertissements), `calendar_events` (auto-générés via RPC `recalc_calendar_auto_events`).
+- **Planning/pointage** : `planning_creneaux` (clé unique `restaurant_id,salarie_id,date,service`), `planning_effectifs` (+ `nb_experimentes` : min d'expérimentés requis), `planning_regles`, `pointages` (types `arrivee`/`pause_debut`/`pause_fin`/`sortie`), `team_tasks` (Kanban pilotage).
+- **Rôles configurables (v5.2+)** : `org_roles` (par org : `cle` slug stable, `nom`, `couleur`, `ordre`, `actif` soft-delete ; RLS `auth_org()`). **Plus aucun rôle hardcodé** : `planning_creneaux.role` / `planning_effectifs.role` / `salarie_roles.role` stockent la `cle`. `salarie_roles.niveau` (`'experimente'`/`'nouveau'`) = niveau d'expérience par rôle (global, `restaurant_id` null). Gestion des rôles (CRUD + import 1-clic des anciens cuisine/caisse) dans **Gestion Salariés › ⚙ Rôles**. Le planning charge `org_roles` et tout (effectifs en accordéon par rôle, auto-fill qui priorise les expérimentés, vérifs, badges ★/🔰) est dynamique. Si 0 rôle : états vides invitant à en créer.
+- **Affectation multi-restaurants (v5.5+)** : `salaries.snacks_priorites` (jsonb `[{restaurant_id, priorite}]`) remplace le couple `snack_origine_id` (unique) + `est_multi`. Ces 2 colonnes sont **conservées et synchronisées** (`snack_origine_id` = resto priorité 1 ; `est_multi` = plusieurs restos) → planning, auto-fill et assistant IA restent compatibles. UI : grille de cases numérotées (1=principal, 2/3/4 secondaires) dans **fiche salarié › onglet Planning** (plus de dropdown). Planning : candidat d'un resto = `worksAt(s, restoId)` (présent dans `snacks_priorites`, fallback legacy) ; l'auto-fill priorise le resto **principal** du salarié via `snackPrioriteOf()`.
+- **HACCP** : `haccp_equipements`, `haccp_zones_nettoyage`, `haccp_releves_temperature`, `haccp_huiles`, `haccp_receptions` (+ `haccp_reception_controles`), `haccp_nettoyages`. Saisies kiosk taguées `saisi_par_pin`.
+- **Stock** : `stock_produits`, `stock_max` (seuils par resto), `stock_saisies`, `stock_snapshots_mensuels`, `fournisseurs`, `stock_alertes_config`.
+- **Finance** : `fin_ca_journalier`, `fin_depenses`, `fin_categories`, `fin_encaissements`, `fin_versements`, `fin_comptes_bancaires`, `fin_transactions_bancaires`, `fin_regles_catego`, `fin_imports_bancaires`.
+- **Facturation** : `clients`, `produits`, `factures` (+ `factures_lignes`), `fact_paiements`, `fact_parametres`, `bons_livraison`. RPC `next_facture_number`.
+- ⚠️ **Identité légale de l'org** (raison sociale, SIRET, adresse, IBAN, `representant_legal`, `representant_qualite`, `signature_data`…) → vit dans **`fact_parametres`**, PAS dans `organizations` (qui n'a que `nom` + `couleur_primaire`). Tout courrier/PDF officiel (factures, lettres disciplinaires) doit lire `fact_parametres`. Ne jamais demander `adresse`/`siret` à `organizations` (→ 400 PostgREST). Éditable à 2 endroits : `parametres/` (onglet **Société** : identité + représentant + signature dessinée/importée, stockée en data-URL dans `signature_data`) et `facturation/` (banque + mentions facture). Les upserts partiels (`onConflict: organization_id`) coexistent sans s'écraser.
+- `salaries.sexe` (`'M'`/`'F'`) → utilisé pour la civilité (Monsieur/Madame) des courriers. `disciplinary_actions.mode_remise` (`'lrar'`/`'main_propre'`) → adapte la mention + ajoute une décharge en fin de PDF.
+- **`avertissements/` (v5.1) = module à workflow procédural** : le parcours d'un dossier suit des étapes selon le type (simple : Création→Notifiée ; lourd : Création→Convocation→Entretien planifié→Entretien réalisé→Notifiée→Clôturé ; rupture conv.). Les boutons de génération PDF n'apparaissent qu'à l'étape pertinente (ex. pas de lettre de licenciement avant l'entretien préalable). Délais légaux calculés en jours ouvrables (5 j convocation→entretien, 2 j à 1 mois entretien→notification, prescription 2 mois). Création via **wizard 2 questions** (salarié + type de manquement suggérant la sanction). PDF : société en haut à gauche, salarié en haut à droite, gras inline via helper `paraRich`, objet personnalisé, signature auto.
+- **Faits précis (v5.7)** : `disciplinary_actions.faits_heure` (heure des faits, reprise dans le PDF « …à 11h00 »), `faits_impact` (lien de causalité/préjudice → paragraphe dédié dans la lettre, reformulé par `legal-enhance`), `faits_restaurant_id` (lieu = restaurant → le PDF imprime nom+adresse+ville). `restaurants` += `adresse/code_postal/ville` (saisis dans Paramètres › Restaurants). Étape Notification = **récap lecture seule** des données figées de la création (bloc `#identBlock` masqué, `#recapPanel` affiché) ; revenir au pill « Création » pour rééditer.
+- **Planning — créneaux à la minute par poste (v5.9)** : la colonne `planning_effectifs.vagues jsonb` stocke `[{deb,fin},…]` (une vague = un poste avec son propre horaire). Éditeur `openShiftsEditor(jt,svc,role)` accessible via le bouton **⏱** (doré = vagues custom définies) dans chaque cellule « requis » du modal Réglages ; supporte « Appliquer aussi à » d'autres jours-types. `getShifts()` est la source de vérité : l'auto-fill (`autoFillCore`) place un salarié par vague sur ses heures exactes (`heure_debut`/`heure_fin`), pas juste un volume global. Sans vagues → fallback `DEF_TIME(svc)` × `nb_cible`. Les inputs effectifs (requis/★) ont un fond/texte thémés explicites (sinon invisibles en dark).
+- **Planning — cohérence & expérience par créneau (v6.0)** : `loadWeek` charge **tous** les salariés (plus de filtre `actif=true`) et un prédicat `onRoster(s)` (sorti avant la semaine affichée → masqué ; supprimé → absent ; sinon visible) gate **lignes, compteurs `renderEffectifs`, coûts et candidats auto-fill** → fini les lignes/compteurs fantômes en semaines futures (historique intact dans sa propre semaine). `autoFillCore` purge en début de run les créneaux orphelins des jours traités. Côté `/salaries/`, `doSortie` supprime les créneaux `>= date_sortie` et `doDelSalarie` purge les créneaux avant suppression. **Expérience = par créneau** : chaque vague porte `exp:bool` (`vagues=[{deb,fin,exp}]`), réglée via une case « ★ expérimenté » dans l'éditeur de Postes ; l'auto-fill priorise un expérimenté sur les créneaux marqués (`shift.exp`) et `renderChecks` produit une alerte **ciblée sur le poste précis** sinon. La colonne « dont ★ » de la grille Effectifs cibles est **supprimée** (redondante). Audit : les autres modules filtrent déjà `actif=true` ; avertissements liste les sortis avec le label « (archivé) » (intentionnel).
+- **Planning — barre d'outils & feedback (v6.0)** : boutons d'action en **pictogrammes seuls** (classe `.ic`, tooltip `title`) — gardés en clair : sélecteur snack, nav semaine, zoom, vue Salarié/Poste. Auto-fill affiche un **overlay bloquant** (`#autofillOverlay`, spinner + barre de progression par jour) avec garde anti-double-clic `_autofillRunning`.
+- **Salariés — modales propres (v5.9)** : `sortirSalarie()` ouvre une modale (`#modalHost`) avec vrai date picker (`#so_date`) + select de motif (+ « Autre » → texte libre) → `doSortie()` ; plus de `prompt()` natif. `delSalarie()` = modale d'avertissement renforcée : alternative « Sortir des effectifs » proposée + bouton destructif `#del_btn` désactivé tant que le nom complet n'est pas retapé dans `#del_confirm` → `doDelSalarie()`.
+- **Avertissements — finitions juridiques & UX (v6.1)** : (P1) `fmtDateLong` inclut désormais le **jour de la semaine** (« le dimanche 7 juin 2026 ») et tous les PDF passent par lui (la mise à pied aussi). (P2) `legal-enhance` v4 : le prompt force l'**adresse directe à la 2ᵉ personne** (« vous avez… ») dans `motif_detail`/`faits_impact`. (P3) Boutons de génération **grisés** (classe `.isdis`) tant que les champs requis du type manquent — `requiredForPdf(kind,type)`/`missingFieldsFor` + tooltip listant les manques, `onGenClick` bloque et alerte, `refreshPdfButtons` re-évalue à chaque saisie (listener `input` sur `#modalEdit`). (P4) **Lieu d'entretien = dropdown restos** (`#ed_entretien_restaurant`) qui remplit le champ texte `entretien_lieu` (pas de colonne FK ajoutée) ; helper `restoFullStr`. (P5) Mentions par type : convocation = rappel neutre du motif + renfort « jusqu'au licenciement pour faute grave » si grave/lourde ; mise à pied = salaire non versé + plafond CCN ; licenciement = solde/certificat/France Travail (art. L1234-19/20) ; **nouvelle lettre `kind==='rupture'`** (rétractation 15 j, homologation DREETS, indemnité ≥ légale). (P6) Chaque génération **archive** le PDF dans le bucket `disciplinary-docs` (`${dossierId}/${kind}.pdf`, upsert) ; bouton **📄 PDF** sur les cartes → `openDocsMenu` (voir/télécharger via signed URLs). (P7) **Filtres** liste salarié + type (`#flt_salarie`/`#flt_type`), combinables avec le statut, persistés en localStorage (`avert_flt_*`).
+- **Mémoire dossier / antécédents** : à l'ouverture d'un dossier, les sanctions antérieures du salarié (`status in ('sanction_notifiee','cloture')`) sont chargées et affichées (encart cochable). Les lettres de sanction/licenciement intègrent un paragraphe « Nous vous rappelons que… » listant les antécédents cochés (solidité prud'hommes). Migration `migrations/v5.1_avertissements.sql` (colonne `antecedents_included jsonb`) **écrite mais à appliquer sur GO** ; tant qu'elle n'est pas appliquée, `HAS_ANTECEDENTS_COL=false` dans le JS → la sélection est en mémoire (le PDF la lit), non persistée.
+- **Intégrations** : `api_keys` (hash SHA256, scopes), `wa_bot_config` (bot WhatsApp).
+- **Storage buckets** : `salaries-docs` (`{salarie_id}/{type}/{ts}_{nom}`), `org-logos` (`{org_id}/{ts}_{nom}`, max 2 Mo).
 
 ## Modules en place
-- /salaries/ : fiches RH (avec OCR pré-remplissage contrat, agent IA conversationnel)
-- /planning/ : grille hebdo
-- /badgeuse/ + /stock-kiosk/ + /haccp-kiosk/ : kiosques PIN salarié
-- /moi/ : espace salarié mobile (planning, indispos, pointages, tâches)
-- /haccp/ /stock/ /facturation/ /finance/ /parametres/
-- /calendrier/ : RH (auto events depuis contrats)
-- /avertissements/ : sanctions disciplinaires + génération PDF (admin only)
-- /pilotage/ : Kanban tâches équipe
+| Route | Rôle d'accès | Auth | Fonction |
+|---|---|---|---|
+| `/` (index) | tous | Supabase | Portail + login + routage modules |
+| `/salaries/` | admin | Supabase | Fiches RH, docs, OCR contrat (Tesseract+pdf.js côté client) |
+| `/moi/` | salarié | Supabase | Espace perso mobile (planning, indispos, pointages, tâches) |
+| `/invite/` | public+token | Supabase signup | Onboarding par lien d'invitation |
+| `/calendrier/` | admin/manager | Supabase | Calendrier RH (events auto : fin essai/CDD, visites méd…) |
+| `/avertissements/` | admin | Supabase | Sanctions disciplinaires + lettres PDF (jsPDF) |
+| `/pilotage/` | admin/manager | Supabase | Kanban tâches équipe (`team_tasks`) |
+| `/planning/` | admin/manager | Supabase | Grille hebdo, auto-fill, coûts, export PDF/Excel |
+| `/badgeuse/` | salarié | **PIN** | Kiosque pointage (1 par snack) |
+| `/dispos/` | salarié | **PIN** | Déclaration d'indispos |
+| `/haccp/` | admin/manager | Supabase | Dashboard HACCP + rapports PDF DDPP |
+| `/haccp-kiosk/` | salarié | **PIN** | Saisie terrain HACCP |
+| `/stock/` | admin/manager | Supabase | Référentiel, feuille de besoin, snapshots |
+| `/stock-kiosk/` | salarié | **PIN** | Inventaire terrain |
+| `/finance/` | admin/manager | Supabase | CA, dépenses, trésorerie, ratios (Chart.js, import relevés) |
+| `/facturation/` | admin | Supabase | Clients, factures, paiements, PDF |
+| `/import-contrats/` | admin/manager | Supabase | Import IA contrats (Edge `import-contrat-ai`) |
+| `/bulk-upload-contrats/` | admin/manager | Supabase | Upload massif docs (⚠️ voir dette ci-dessous) |
+| `/parametres/` | admin (+super) | Supabase | Org, users/invitations, restos, permissions, API keys, WhatsApp, maintenance |
+| `/oauth/authorize.html` | public | clé API | Écran OAuth2 PKCE pour MCP/Claude |
+
+## Libs CDN courantes (chargées par page selon besoin)
+`@supabase/supabase-js@2` (partout) · `jspdf` + `jspdf-autotable` (PDF) · `xlsx` / SheetJS + `papaparse` (imports Excel/CSV) · `chart.js` (finance) · `tesseract.js` + `pdfjs-dist` (OCR client dans `salaries/`).
+
+## Règles strictes
+- **JAMAIS** modifier la DB PROD `cnuepnkwsvzgzitegemb` sans demander d'abord.
+- **JAMAIS** désactiver/affaiblir une RLS policy sans valider l'impact multi-tenant — **l'isolation repose presque entièrement sur les RLS** (peu de filtres `organization_id` côté requête).
+- **JAMAIS** créer un fichier `.md` non demandé ailleurs qu'à la racine.
+- **TOUJOURS** isoler par `organization_id` (sur les `INSERT` notamment) ; pour les nouvelles pages, filtrer aussi côté requête quand c'est possible (cf. `finance/`, `facturation/` qui le font bien).
+- **TOUJOURS** incrémenter la version du footer dans `index.html` après chaque modif visible (format `vMAJEURE.MINEURE`).
+- **TOUJOURS** ajouter un cache buster `?v=X.Y` aux scripts modifiés (bypass cache GitHub Pages). Ex. `assistant-widget.js?v=4.0`.
+- **TOUJOURS** charger `theme.js` dans le `<head>` d'une nouvelle page (thème + widget IA auto-injectés).
+
+## Conventions front
+- Pattern de page : login view ↔ app view (toggle `.hidden`), check session → check rôle → charge org → applique thème (`--gold` surchargé par `ORG.couleur_primaire`).
+- Thème : `data-theme="dark|light"` sur `<html>`, variables CSS (`--bg`, `--card`, `--gold`…). Couleur primaire surchargeable par org.
+- Les kiosques persistent le snack choisi en `localStorage` (`*_kiosk_snack`).
+
+## Dette technique connue (NE PAS reproduire ; corriger seulement si demandé)
+- 🚨 `badgeuse/index.html` : mot de passe admin **hardcodé** (`Rayan1301`) dans du code public.
+- ⚠️ `bulk-upload-contrats/` : 6 **UUID salariés codés en dur**, aucun filtre `organization_id` → faille multi-tenant. À refactorer pour charger les fiches depuis la DB filtrées par org.
+- ⚠️ `haccp-kiosk/` : lookup PIN **sans** `eq('organization_id', …)` → collision possible entre orgs. `stock-kiosk/` le fait correctement (modèle à suivre).
+- ⚠️ `facturation/` : lignes de facture **stockées en double** (JSONB `factures.lignes` + table `factures_lignes`) — risque de désync.
+- ⚠️ `finance/` : masse salariale calculée **côté client** depuis `planning_creneaux` (grossier, ignore congés/absences) — devrait être une RPC.
+- ⚠️ Aucune vérification de rôle n'est sûre côté client (contournable) ; la vraie barrière, ce sont les RLS.
+
+## Workflow local
+1. `python3 -m http.server 8000` à la racine du repo.
+2. Ouvrir `http://localhost:8000` (l'auth Supabase fonctionne en local — RLS sur le projet TEST distant).
+3. Modifier, recharger (Cmd+R), tester dans le navigateur.
+4. Quand validé : `git add -A && git commit -m "..." && git push` → déploie via GitHub Pages.
 
 ## Tests
-Pas de framework de test automatisé pour l'instant. Validation manuelle via navigateur en local.
+Pas de framework de test automatisé. Validation **manuelle via navigateur** en local. Penser à tester les deux mondes d'auth (Supabase Auth + PIN kiosque) selon le module touché.
 
 ## Versions
-La version actuelle est dans le footer de `index.html`. Format : `vMAJEURE.MINEURE`. Incrémenter à chaque changement visible.
+Version actuelle dans le footer de `index.html` (`vMAJEURE.MINEURE`). Incrémenter à chaque changement visible.

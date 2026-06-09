@@ -87,6 +87,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
     <div class="tabs" id="tabsBar">
       <button class="tab active" data-tab="apparence" onclick="setTab('apparence')">🎨 Apparence</button>
       <button class="tab" data-tab="organisation" onclick="setTab('organisation')">🏢 Organisation</button>
+      <button class="tab" data-tab="societe" onclick="setTab('societe')">🏛 Société (légal)</button>
       <button class="tab" data-tab="utilisateurs" onclick="setTab('utilisateurs')">👥 Utilisateurs</button>
       <button class="tab" data-tab="restaurants" onclick="setTab('restaurants')">🏪 Restaurants</button>
       <button class="tab" data-tab="permissions" onclick="setTab('permissions')">🔐 Permissions</button>
@@ -161,6 +162,54 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
 
     <div style="display:flex;justify-content:flex-end;gap:10px;margin:6px 0 26px">
       <button class="btn" onclick="saveAll()">💾 Enregistrer (identité, couleurs, paie)</button>
+    </div>
+    </div>
+
+    <!-- ─────────── ONGLET SOCIÉTÉ (légal) ─────────── -->
+    <div class="tab-pane" data-pane="societe">
+    <div class="section">
+      <h3>Identité légale de la société</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:12px">Ces informations apparaissent sur les documents officiels : courriers disciplinaires (avertissements, convocations, licenciements) et factures.</div>
+      <div class="grid2">
+        <div class="fld"><label>Raison sociale *</label><input id="soc_raison_sociale" placeholder="Ex: RAYA GROUP"></div>
+        <div class="fld"><label>Forme juridique</label><input id="soc_forme" placeholder="SAS, SARL, EI…"></div>
+        <div class="fld"><label>SIRET</label><input id="soc_siret" placeholder="123 456 789 00012"></div>
+        <div class="fld"><label>RCS</label><input id="soc_rcs" placeholder="Ex: Nancy B 123 456 789"></div>
+        <div class="fld"><label>N° TVA intracommunautaire</label><input id="soc_tva" placeholder="FR…"></div>
+        <div class="fld"><label>Code APE / NAF</label><input id="soc_ape" placeholder="5610C"></div>
+        <div class="fld"><label>Capital social (€)</label><input id="soc_capital" type="number" step="0.01" placeholder="10000"></div>
+        <div class="fld"><label>Téléphone</label><input id="soc_tel"></div>
+        <div class="fld"><label>Email</label><input id="soc_email"></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Représentant légal (signataire des courriers)</h3>
+      <div class="grid2">
+        <div class="fld"><label>Nom du dirigeant</label><input id="soc_rep" placeholder="Ex: Rayan AZZI"></div>
+        <div class="fld"><label>Qualité</label><input id="soc_rep_qualite" placeholder="Gérant, Président, Directeur…"></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Adresse du siège</h3>
+      <div class="fld"><label>Adresse</label><input id="soc_adresse"></div>
+      <div class="grid2">
+        <div class="fld"><label>Code postal</label><input id="soc_cp"></div>
+        <div class="fld"><label>Ville</label><input id="soc_ville"></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Signature</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:10px">Dessine la signature ci-dessous (souris ou tactile) ou importe une image. Elle sera ajoutée automatiquement aux courriers générés.</div>
+      <canvas id="sigPad" width="500" height="170" style="background:#fff;border:1px dashed var(--line-2);border-radius:8px;max-width:100%;touch-action:none;cursor:crosshair"></canvas>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="btn ghost sm" type="button" onclick="clearSig()">Effacer</button>
+        <label class="btn ghost sm" style="cursor:pointer">📷 Importer une image<input type="file" id="sigUpload" accept="image/*" onchange="uploadSig(event)" class="hidden"></label>
+        <span id="sigState" style="font-size:11.5px;color:var(--muted)"></span>
+      </div>
+      <div style="margin-top:10px"><img id="sigPreview" style="display:none;max-height:90px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:4px"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin:6px 0 26px">
+      <button class="btn" onclick="saveSociete()">💾 Enregistrer les infos société</button>
     </div>
     </div>
 
@@ -379,6 +428,7 @@ async function loadProfileAndShow(){
   loadUsers();
   loadSalariesForInvite();
   loadRestos();
+  loadSociete();
   document.getElementById('mcpUrl').textContent=SUPA_URL+'/functions/v1/mcp';
   loadApiKeys();
   // Vue Bot WhatsApp : super_admin (SAV) voit le panneau technique, sinon vue commerciale
@@ -404,6 +454,61 @@ function setTab(name){
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('active',p.dataset.pane===name));
   localStorage.setItem('parametres_tab',name);
   window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ─────────── ONGLET SOCIÉTÉ (identité légale + signature) ───────────
+let SOC=null, sigData=null;
+async function loadSociete(){
+  const{data}=await sb.from('fact_parametres').select('*').eq('organization_id',ORG.id).maybeSingle();
+  SOC=data||{};
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=(v==null?'':v);};
+  set('soc_raison_sociale',SOC.raison_sociale); set('soc_forme',SOC.forme_juridique);
+  set('soc_siret',SOC.siret); set('soc_rcs',SOC.rcs); set('soc_tva',SOC.num_tva);
+  set('soc_ape',SOC.ape_code); set('soc_capital',SOC.capital_social);
+  set('soc_tel',SOC.telephone); set('soc_email',SOC.email);
+  set('soc_rep',SOC.representant_legal); set('soc_rep_qualite',SOC.representant_qualite);
+  set('soc_adresse',SOC.adresse); set('soc_cp',SOC.code_postal); set('soc_ville',SOC.ville);
+  sigData=SOC.signature_data||null;
+  renderSig(); initSigPad();
+}
+function renderSig(){
+  const img=document.getElementById('sigPreview'),st=document.getElementById('sigState');
+  if(!img||!st)return;
+  if(sigData){img.src=sigData;img.style.display='';st.textContent='✓ Signature enregistrée';}
+  else{img.style.display='none';st.textContent='Aucune signature';}
+}
+function initSigPad(){
+  const c=document.getElementById('sigPad'); if(!c||c._init)return; c._init=true;
+  const ctx=c.getContext('2d'); ctx.lineWidth=2.2; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#111';
+  let drawing=false;
+  const pos=e=>{const r=c.getBoundingClientRect();const t=(e.touches&&e.touches[0])?e.touches[0]:e;return{x:(t.clientX-r.left)*(c.width/r.width),y:(t.clientY-r.top)*(c.height/r.height)};};
+  const start=e=>{drawing=true;const p=pos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);e.preventDefault();};
+  const move=e=>{if(!drawing)return;const p=pos(e);ctx.lineTo(p.x,p.y);ctx.stroke();e.preventDefault();};
+  const end=()=>{if(!drawing)return;drawing=false;sigData=c.toDataURL('image/png');renderSig();};
+  c.addEventListener('mousedown',start); c.addEventListener('mousemove',move); window.addEventListener('mouseup',end);
+  c.addEventListener('touchstart',start,{passive:false}); c.addEventListener('touchmove',move,{passive:false}); c.addEventListener('touchend',end);
+}
+function clearSig(){const c=document.getElementById('sigPad');if(c)c.getContext('2d').clearRect(0,0,c.width,c.height);sigData=null;renderSig();}
+function uploadSig(ev){
+  const f=ev.target.files&&ev.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{const img=new Image();img.onload=()=>{const c=document.getElementById('sigPad'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);const r=Math.min(c.width/img.width,c.height/img.height);const w=img.width*r,h=img.height*r;ctx.drawImage(img,(c.width-w)/2,(c.height-h)/2,w,h);sigData=c.toDataURL('image/png');renderSig();};img.src=rd.result;};
+  rd.readAsDataURL(f);
+}
+async function saveSociete(){
+  const v=id=>{const e=document.getElementById(id);return (e&&e.value.trim())?e.value.trim():null;};
+  const cap=(()=>{const e=document.getElementById('soc_capital');const n=parseFloat((e&&e.value||'').replace(',','.'));return isNaN(n)?null:n;})();
+  if(!v('soc_raison_sociale')){toast('La raison sociale est requise');return;}
+  const payload={organization_id:ORG.id,
+    raison_sociale:v('soc_raison_sociale'),forme_juridique:v('soc_forme'),siret:v('soc_siret'),
+    rcs:v('soc_rcs'),num_tva:v('soc_tva'),ape_code:v('soc_ape'),capital_social:cap,
+    telephone:v('soc_tel'),email:v('soc_email'),
+    representant_legal:v('soc_rep'),representant_qualite:v('soc_rep_qualite'),
+    adresse:v('soc_adresse'),code_postal:v('soc_cp'),ville:v('soc_ville'),
+    signature_data:sigData};
+  const{error}=await sb.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
+  if(error){toast('Erreur : '+error.message);return;}
+  toast('Infos société enregistrées ✓');
 }
 async function loadWaUserStatus(){
   // Affiche un statut "actif" si un bot est déjà configuré + en ligne pour cette org
@@ -538,6 +643,7 @@ async function loadSalariesForInvite(){
   const{data}=await sb.from('salaries').select('id,nom,prenom').eq('actif',true).order('nom');
   const sel=document.getElementById('inv_salarie');
   sel.innerHTML='<option value="">— Aucune —</option>'+(data||[]).map(s=>`<option value="${s.id}">${s.nom} ${s.prenom||''}</option>`).join('');
+  EatimeAutocomplete.enhance(sel, { placeholder:'Aucune — tape un nom…' });
 }
 function buildInviteLink(token){
   // origine + chemin → on remonte de /parametres/ vers /invite/
@@ -587,7 +693,7 @@ async function removeUser(id,name){
 // ────────────────────────────────  RESTAURANTS / SNACKS  ────────────────────────────────
 let RESTOS_CACHE=[];
 async function loadRestos(){
-  const{data,error}=await sb.from('restaurants').select('id,nom,code_pin,actif,created_at').eq('organization_id',ORG.id).order('nom');
+  const{data,error}=await sb.from('restaurants').select('id,nom,code_pin,actif,created_at,adresse,code_postal,ville').eq('organization_id',ORG.id).order('nom');
   if(error){document.getElementById('restosList').innerHTML='<div style="color:var(--bad)">'+error.message+'</div>';return;}
   RESTOS_CACHE=data||[];
   if(!RESTOS_CACHE.length){document.getElementById('restosList').innerHTML='<div style="color:var(--muted);padding:8px">Aucun restaurant. Crée le premier ci-dessous.</div>';return;}
@@ -650,6 +756,13 @@ async function openEditResto(id){
     <div class="fld"><label>Nom</label><input id="er_nom" value="${r.nom.replace(/"/g,'&quot;')}"></div>
     <div class="fld"><label>Code PIN (kiosques)</label><input id="er_pin" value="${r.code_pin||''}" maxlength="6" inputmode="numeric"></div>
     <div class="fld"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="er_actif" ${r.actif?'checked':''} style="width:auto"> Restaurant actif</label></div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">📍 Adresse (imprimée sur les courriers d'avertissement)</div>
+    <div class="fld"><label>Adresse</label><input id="er_adresse" value="${(r.adresse||'').replace(/"/g,'&quot;')}" placeholder="1 boulevard …"></div>
+    <div class="grid2">
+      <div class="fld"><label>Code postal</label><input id="er_cp" value="${(r.code_postal||'').replace(/"/g,'&quot;')}"></div>
+      <div class="fld"><label>Ville</label><input id="er_ville" value="${(r.ville||'').replace(/"/g,'&quot;')}"></div>
+    </div>
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">🔔 Alertes feuille de stock</div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Si la feuille de stock n'a pas été remplie à l'heure indiquée, on envoie une alerte mail et (optionnel) WhatsApp dans le groupe configuré.</div>
@@ -744,7 +857,8 @@ async function saveEditResto(id){
   if(!nom){err.textContent='Nom requis';return;}
   if(pin && !/^\d{3,6}$/.test(pin)){err.textContent='PIN : 3 à 6 chiffres';return;}
   // 1. update restaurant
-  const{error}=await sb.from('restaurants').update({nom,code_pin:pin,actif}).eq('id',id);
+  const v=id2=>{const e=document.getElementById(id2);return e&&e.value.trim()?e.value.trim():null;};
+  const{error}=await sb.from('restaurants').update({nom,code_pin:pin,actif,adresse:v('er_adresse'),code_postal:v('er_cp'),ville:v('er_ville')}).eq('id',id);
   if(error){err.textContent=error.message;return;}
   // 2. upsert config alertes
   const cfg={
@@ -829,6 +943,7 @@ function openEditUser(id){
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  EatimeAutocomplete.enhance(document.getElementById('eu_salarie'), { placeholder:'Aucune — tape un nom…' });
   overlay.addEventListener('click',e=>{if(e.target===overlay)closeEditUser();});
 }
 function closeEditUser(){const m=document.getElementById('editUserModal');if(m)m.remove();}
@@ -1064,6 +1179,7 @@ async function saveAll(){
   toast('Paramètres enregistrés ✓');
 }
 </script>
-<script defer src="../assistant-widget.js?v=4.0"></script>
+<script defer src="../assistant-widget.js?v=4.8"></script>
+<script src="../autocomplete.js?v=1.0"></script>
 </body>
 </html>

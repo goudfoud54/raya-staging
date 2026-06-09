@@ -192,12 +192,15 @@
   let LIVE_ATTACHMENTS = [];
   let CONV_ID = null;
   let TYPING = false;
+  let AUTH_LISTENER_SET = false;
 
   // ─────── INIT auth check ───────
   async function init() {
-    const r = ensureSb();
-    if (!r) { fab.style.display = 'none'; return false; }
-    CTX = r;
+    if (!CTX) {
+      const r = ensureSb();
+      if (!r) { fab.style.display = 'none'; return false; }
+      CTX = r;
+    }
     const { data: { session } } = await CTX.sb.auth.getSession();
     if (!session) {
       // Pas connecté → on garde le fab caché
@@ -302,7 +305,8 @@
 
   // Écoute la déconnexion : vide le chat à ce moment-là
   function setupAuthListener() {
-    if (!CTX?.sb) return;
+    if (AUTH_LISTENER_SET || !CTX?.sb) return;
+    AUTH_LISTENER_SET = true;
     try {
       CTX.sb.auth.onAuthStateChange((event, session) => {
         if (event === 'SIGNED_OUT') {
@@ -310,7 +314,11 @@
           MESSAGES = []; CONV_ID = null;
           if (CTX) CTX.user = null;
           panel.classList.remove('open');
-          fab.style.display = 'flex';
+          fab.style.display = 'none';
+        } else if (session && !CTX.user) {
+          // Connexion détectée (ex: login "in-page" sur le portail, sans rechargement)
+          // → on (ré)évalue le rôle et on affiche la bulle si admin/manager/super_admin
+          init().catch(() => {});
         }
       });
     } catch (_) {}
@@ -517,6 +525,11 @@
   const themeObs = new MutationObserver(() => {});
   themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-  // Auto-init session check - immédiat pour hydrater au plus tôt
-  init().catch(() => {});
+  // Bootstrap : établit le client Supabase + écoute les changements d'auth AVANT tout,
+  // pour que la bulle apparaisse aussi après un login "in-page" (portail) sans rechargement.
+  (function bootstrap(){
+    const r = ensureSb();
+    if (r) { CTX = r; setupAuthListener(); }
+    init().catch(() => {});
+  })();
 })();

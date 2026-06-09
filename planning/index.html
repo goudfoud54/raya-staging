@@ -23,6 +23,15 @@ button{cursor:pointer;border:none;background:none}
 .btn:disabled{opacity:.3;cursor:not-allowed}
 .btn.ghost{background:transparent;color:var(--text);border-color:var(--line-2)}
 .btn.ghost:hover{background:rgba(255,255,255,.04)}
+/* Boutons icône seule de la barre d'outils */
+.ic{width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:9px;background:transparent;border:1px solid var(--line-2);color:var(--text);font-size:17px;cursor:pointer;position:relative;transition:background .12s,border-color .12s}
+.ic:hover{background:rgba(255,255,255,.06);border-color:var(--gold)}
+.ic.accent{background:var(--gold);border-color:var(--gold);color:#1a1a1a}
+.ic.accent:hover{filter:brightness(1.06)}
+.ic[disabled]{opacity:.4;cursor:default}
+.ic .ic-badge{position:absolute;top:-5px;right:-5px;background:var(--bad);color:#fff;font-size:10px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.af-spin{width:44px;height:44px;border:4px solid var(--line-2);border-top-color:var(--gold);border-radius:50%;margin:0 auto;animation:afspin .8s linear infinite}
+@keyframes afspin{to{transform:rotate(360deg)}}
 .btn.sm{padding:5px 9px;font-size:11px}
 
 .lock{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;z-index:100}
@@ -139,16 +148,16 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button id="vSal" onclick="setView('sal')" style="padding:5px 10px;font-size:11px">👥 Salarié</button>
         <button id="vPoste" onclick="setView('poste')" style="padding:5px 10px;font-size:11px">🪑 Poste</button>
       </div>
-      <button class="btn ghost" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
-      <button class="btn ghost" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
-      <button class="btn ghost" onclick="openDemandes()" style="position:relative" title="Demandes d'indisponibilités à valider">🔔 Demandes <span id="demandesBadge" style="display:none;background:var(--bad);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:4px;font-weight:700"></span></button>
-      <button class="btn" onclick="autoFillWeek()" title="Remplir la semaine en fonction des dispos & règles">🎲 Auto-fill</button>
-      <button class="btn ghost" onclick="openReglages()">⚙ Réglages</button>
-      <button class="btn ghost" onclick="document.getElementById('xlsxFile').click()">📥 Import Excel</button>
+      <button class="ic" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
+      <button class="ic" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
+      <button class="ic" onclick="openDemandes()" title="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
+      <button class="ic accent" onclick="autoFillWeek()" title="Auto-fill : remplir la semaine selon les dispos & règles" aria-label="Auto-fill">🎲</button>
+      <button class="ic" onclick="openReglages()" title="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
+      <button class="ic" onclick="document.getElementById('xlsxFile').click()" title="Importer un planning Excel" aria-label="Import Excel">📥</button>
       <input type="file" id="xlsxFile" accept=".xlsx,.xlsm" style="display:none" onchange="handleImport(event)">
-      <button class="btn ghost" onclick="openPdfModal()">📄 Export PDF</button>
-      <a href="../" class="btn ghost">Portail</a>
-      <button class="btn ghost" onclick="logout()" title="Déconnexion">↩</button>
+      <button class="ic" onclick="openPdfModal()" title="Exporter le planning en PDF" aria-label="Export PDF">📄</button>
+      <a href="../" class="ic" title="Retour au portail" aria-label="Portail">🏠</a>
+      <button class="ic" onclick="logout()" title="Déconnexion" aria-label="Déconnexion">↩</button>
     </div>
   </div>
 
@@ -161,6 +170,15 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 
 <div id="pdfModal"></div>
 <div id="shiftsModal"></div>
+<div id="autofillOverlay" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(10,10,14,.72);align-items:center;justify-content:center">
+  <div style="background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:30px 38px;text-align:center;min-width:290px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div class="af-spin"></div>
+    <div style="font-size:15px;font-weight:600;margin-top:18px">🎲 Génération du planning…</div>
+    <div id="afSub" style="color:var(--muted);font-size:12.5px;margin-top:6px">Analyse des disponibilités</div>
+    <div style="height:7px;background:var(--surface);border-radius:6px;margin-top:16px;overflow:hidden"><div id="afBar" style="height:100%;width:0;background:var(--gold);transition:width .25s"></div></div>
+    <div style="color:var(--muted2);font-size:11px;margin-top:10px">Merci de patienter, ne ferme pas la page.</div>
+  </div>
+</div>
 <div id="pdfHost" style="position:absolute;left:-9999px;top:0;background:#fff;color:#000;width:1400px;visibility:visible"></div>
 
 <style>
@@ -195,7 +213,7 @@ let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
-let S={restos:[],salaries:[],roles:[],dispos:[],creneaux:[],allCreneauxWeek:[],effectifs:[],regles:[]};
+let S={restos:[],salaries:[],roles:[],orgRoles:[],dispos:[],creneaux:[],allCreneauxWeek:[],effectifs:[],regles:[]};
 let SNACK=null, MONDAY=null;
 let CONFLICTS=new Set();
 let VIEW_MODE=localStorage.getItem('pl_view')||'sal';
@@ -211,13 +229,10 @@ function updateViewButtons(){
 // Shifts par défaut quand vagues non définies
 function getShifts(jt,svc,role){
   const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===role);
-  if(e && e.vagues && Array.isArray(e.vagues) && e.vagues.length) return e.vagues.map(v=>({deb:v.deb,fin:v.fin}));
-  const fallback={midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}};
-  const [d,f]=fallback[svc][role];
-  // Si pas d'effectif en base, on récupère le nb_cible via targetFor (qui a les defaults hardcodés)
-  let n=e?e.nb_cible:null;
-  if(n==null){const i={'Lu-Me':0,'Je':3,'Ve':4,'Sa':5,'Di':6}[jt];n=targetFor(i,svc)[role];}
-  return Array(n).fill(0).map(()=>({deb:d,fin:f}));
+  if(e && e.vagues && Array.isArray(e.vagues) && e.vagues.length) return e.vagues.map(v=>({deb:v.deb,fin:v.fin,exp:!!v.exp}));
+  const [d,f]=DEF_TIME(svc);
+  const n=e?(e.nb_cible||0):0;
+  return Array(n).fill(0).map(()=>({deb:d,fin:f,exp:false}));
 }
 // ===== UNDO/REDO =====
 let UNDO=[], REDO=[], _txn=null;
@@ -355,59 +370,83 @@ async function init(){
 
 async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
-  const[s,ro,d,cr,crAll,eff,reg]=await Promise.all([
-    sb.from('salaries').select('*').eq('actif',true).order('nom'),
+  const[s,ro,d,cr,crAll,eff,reg,orr]=await Promise.all([
+    sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
     sb.from('salarie_dispos').select('*'),
     sb.from('planning_creneaux').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to),
     sb.from('planning_creneaux').select('*').gte('date',from).lt('date',to),
     sb.from('planning_effectifs').select('*'),
-    sb.from('planning_regles').select('*')
+    sb.from('planning_regles').select('*'),
+    sb.from('org_roles').select('*').eq('actif',true).order('ordre')
   ]);
-  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];
+  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];
   render();
 }
 function dayJourType(i){if(i<=2)return 'Lu-Me';if(i===3)return 'Je';if(i===4)return 'Ve';if(i===5)return 'Sa';return 'Di';}
 
+const salById=id=>S.salaries.find(s=>s.id===id);
+// Un salarié est "sur l'effectif" de la semaine affichée s'il n'est ni supprimé (absent) ni sorti AVANT cette semaine.
+// → ses créneaux passés restent visibles dans leur semaine, mais il disparaît des semaines postérieures à sa sortie.
+function onRoster(s){
+  if(!s) return false; // supprimé : plus aucune ligne en base
+  const ws=fmtDate(MONDAY);
+  if(s.date_sortie) return s.date_sortie>=ws; // sorti : visible jusqu'à la semaine de sortie incluse
+  return s.actif!==false;                     // sans date de sortie : visible si actif
+}
 const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.role))];
 const roleMain=sid=>{const r=rolesOf(sid);return r[0]||null;};
+// ===== Rôles configurables + niveau =====
+const roleNom=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return r?r.nom:cle;};
+const roleCol=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return (r&&r.couleur)?r.couleur:'#8b94a3';};
+const roleNiveau=(sid,cle)=>{const r=S.roles.find(x=>x.salarie_id===sid&&x.role===cle);return r?(r.niveau||'experimente'):'experimente';};
+const isExp=(sid,cle)=>roleNiveau(sid,cle)==='experimente';
+// Affectation multi-restos à priorité (fallback legacy snack_origine_id/est_multi pour les fiches non migrées)
+function worksAt(s,rid){ const a=Array.isArray(s.snacks_priorites)?s.snacks_priorites:null; if(a&&a.length) return a.some(x=>x.restaurant_id===rid); return s.snack_origine_id===rid || !!s.est_multi; }
+function snackPrioriteOf(s,rid){ const a=Array.isArray(s.snacks_priorites)?s.snacks_priorites:null; if(a&&a.length){ const m=a.find(x=>x.restaurant_id===rid); return m?m.priorite:99; } return s.snack_origine_id===rid?1:(s.est_multi?5:99); }
+function escP(s){return (s||'').toString().replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
+function escJS(s){return (s||'').toString().replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
+const DEF_TIME=svc=>svc==='midi'?['11:00','14:30']:['18:30','23:30'];
 const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
 
+// Renvoie, par rôle (cle), { cible, exp } d'après les effectifs configurés pour ce snack.
+// Plus aucun rôle ni défaut hardcodé : si rien n'est configuré → 0.
 function targetFor(dayIndex,service){
-  // 1) Préférer les effectifs configurés en base pour ce snack
   const jt=dayJourType(dayIndex);
-  const fromDb=S.effectifs.filter(e=>e.restaurant_id===SNACK.id && e.jour_type===jt && e.service===service);
-  if(fromDb.length){
-    const t={cuisine:0,caisse:0};fromDb.forEach(e=>{if(t[e.role]!=null)t[e.role]=e.nb_cible;});
-    return t;
-  }
-  // 2) Sinon defaults hardcodés
-  const isGC=SNACK.nom.toLowerCase().includes('grand');
-  if(isGC){
-    if(service==='midi') return dayIndex===6?{cuisine:0,caisse:0}:{cuisine:4,caisse:2};
-    if(dayIndex<=3) return {cuisine:4,caisse:3};
-    if(dayIndex<=5) return {cuisine:5,caisse:3};
-    return {cuisine:3,caisse:1};
-  }
-  if(service==='midi') return dayIndex===6?{cuisine:0,caisse:0}:{cuisine:3,caisse:1};
-  if(dayIndex<=3) return {cuisine:3,caisse:1};
-  if(dayIndex<=5) return {cuisine:4,caisse:2};
-  return {cuisine:3,caisse:1};
+  const t={};
+  S.orgRoles.forEach(r=>{
+    const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id && x.jour_type===jt && x.service===service && x.role===r.cle);
+    t[r.cle]={cible:e?(e.nb_cible||0):0, exp:e?(e.nb_experimentes||0):0};
+  });
+  return t;
 }
 
 function getCreneau(sid,date,svc){return S.creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);}
 
 function renderEffectifs(){
+  if(!S.orgRoles.length){
+    document.getElementById('effGrid').innerHTML='<div style="padding:16px;color:var(--muted);font-size:12.5px;line-height:1.5">Aucun rôle défini.<br>Crée tes rôles dans <b>Gestion Salariés › ⚙ Rôles</b>, puis règle les effectifs ici.</div>';
+    return;
+  }
+  const cls=(n,tgt)=>n===tgt?'cnt-ok':(n<tgt?'cnt-under':'cnt-over');
   const html=JOURS.map((j,i)=>{
     const date=fmtDate(dateOfDay(i));
-    const counts={midi:{cuisine:0,caisse:0},soir:{cuisine:0,caisse:0}};
-    S.creneaux.filter(c=>c.date===date && c.heure_debut).forEach(c=>{
-      if(counts[c.service] && counts[c.service][c.role]!=null) counts[c.service][c.role]++;
-    });
     const svcHTML=['midi','soir'].map(svc=>{
       const t=targetFor(i,svc);
-      const cls=(n,tgt)=>n===tgt?'cnt-ok':(n<tgt?'cnt-under':'cnt-over');
-      return `<div class="eff-svc"><span class="lbl">${svc==='midi'?'Midi':'Soir'}</span><span class="cnt"><span class="${cls(counts[svc].cuisine,t.cuisine)}" title="Cuisine">${counts[svc].cuisine}/${t.cuisine}C</span><span class="${cls(counts[svc].caisse,t.caisse)}" title="Réception">${counts[svc].caisse}/${t.caisse}R</span></span></div>`;
+      const parts=S.orgRoles.map(r=>{
+        const tgt=t[r.cle]||{cible:0,exp:0};
+        if(!tgt.cible) return '';
+        const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
+        const n=assigned.length;
+        const ini=escP((r.nom||'?').trim().charAt(0).toUpperCase());
+        // Expérimentés : nombre de créneaux marqués "exp requis" non tenus par un expérimenté
+        const shifts=getShifts(dayJourType(i),svc,r.cle).filter(v=>v.exp);
+        let expMiss=0;
+        shifts.forEach(v=>{const c=assigned.find(x=>(x.heure_debut||'').slice(0,5)===v.deb); if(!c||!isExp(c.salarie_id,r.cle))expMiss++;});
+        const expBad=expMiss>0?` <span class="cnt-under" title="${expMiss} créneau(x) « expérimenté requis » non couvert(s)">★!${expMiss}</span>`:'';
+        return `<span class="${cls(n,tgt.cible)}" title="${escP(r.nom)}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${roleCol(r.cle)};margin-right:3px;vertical-align:middle"></span>${n}/${tgt.cible}${ini}</span>${expBad}`;
+      }).filter(Boolean).join(' ');
+      return `<div class="eff-svc"><span class="lbl">${svc==='midi'?'Midi':'Soir'}</span><span class="cnt">${parts||'<span style="color:var(--muted)">—</span>'}</span></div>`;
     }).join('');
     return `<div class="eff-day"><h4><span>${j} <span style="font-weight:400;color:var(--muted)">${dateOfDay(i).getDate()}</span></span><button class="dice" onclick="autoFillDay(${i})" title="Remplir auto ce jour">🎲</button></h4>${svcHTML}</div>`;
   }).join('');
@@ -415,9 +454,10 @@ function renderEffectifs(){
 }
 
 function renderTable(){
-  // salariés à afficher : du snack OU multi OU déjà créneau cette semaine
+  // salariés à afficher : sur l'effectif de la semaine ET (du snack OU déjà un créneau cette semaine)
+  // onRoster exclut les sortis (semaines postérieures à leur date_sortie) et les supprimés → zéro ligne fantôme.
   const sidsWithCreneau=new Set(S.creneaux.map(c=>c.salarie_id));
-  const list=S.salaries.filter(s=>s.snack_origine_id===SNACK.id || s.est_multi || sidsWithCreneau.has(s.id))
+  const list=S.salaries.filter(s=>onRoster(s) && (worksAt(s,SNACK.id) || sidsWithCreneau.has(s.id)))
     .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return(ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
 
   // header
@@ -431,8 +471,7 @@ function renderTable(){
 
   let tbody='<tbody>';
   list.forEach((s,rowIdx)=>{
-    const role=roleMain(s.id)||'';
-    const roleTag=role==='cuisine'?'<span class="role-c">C</span>':(role==='caisse'?'<span class="role-k">R</span>':'');
+    const roleTag=rolesOf(s.id).map(cle=>`<span title="${escP(roleNom(cle))} · ${isExp(s.id,cle)?'expérimenté':'nouveau'}" style="background:${roleCol(cle)}22;color:${roleCol(cle)};border:1px solid ${roleCol(cle)}55;border-radius:5px;padding:0 4px;font-size:9.5px;font-weight:700;margin-left:3px;white-space:nowrap">${escP((roleNom(cle).charAt(0)||'').toUpperCase())}${isExp(s.id,cle)?'★':'🔰'}</span>`).join('');
     const col=s.couleur||'#666';
     tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span>${fullName(s)}${roleTag}</td>`;
     let colIdx=0;
@@ -495,7 +534,7 @@ function renderTable(){
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
       let dayCost=0;
-      S.creneaux.filter(c=>c.date===date).forEach(c=>{ dayCost += (_dur3(c.heure_debut,c.heure_fin)/60) * tauxOf(c.salarie_id); });
+      S.creneaux.filter(c=>c.date===date&&onRoster(salById(c.salarie_id))).forEach(c=>{ dayCost += (_dur3(c.heure_debut,c.heure_fin)/60) * tauxOf(c.salarie_id); });
       footHTML+=`<td colspan="4" style="text-align:center;font-weight:700;color:${dayCost>0?'var(--ok)':'var(--muted)'};font-size:12px">${dayCost>0?dayCost.toFixed(0)+' €':'—'}</td>`;
     });
     footHTML+=`<td style="text-align:center;font-weight:700;color:var(--ok);background:rgba(63,184,127,.1);font-size:13px">${totalBrutSem.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">brut hebdo</small></td>`;
@@ -571,15 +610,23 @@ function renderChecks(){
   const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
 
   // 1. Effectifs cibles
-  const eff=[];
+  const eff=[], expMiss=[];
   for(let i=0;i<7;i++)for(const svc of ['midi','soir']){
     const t=targetFor(i,svc);const date=fmtDate(dateOfDay(i));
-    const cn=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='cuisine'&&c.heure_debut).length;
-    const ck=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role==='caisse'&&c.heure_debut).length;
-    if(cn!==t.cuisine) eff.push(`${JOURS[i]} ${svc} · Cuisine : ${cn}/${t.cuisine}`);
-    if(ck!==t.caisse) eff.push(`${JOURS[i]} ${svc} · Réception : ${ck}/${t.caisse}`);
+    S.orgRoles.forEach(r=>{
+      const tgt=t[r.cle]||{cible:0};
+      const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
+      const n=assigned.length;
+      if(n!==tgt.cible) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${n}/${tgt.cible}`);
+      // Expérimenté requis : contrôlé créneau par créneau (vagues marquées exp)
+      getShifts(dayJourType(i),svc,r.cle).filter(v=>v.exp).forEach(v=>{
+        const c=assigned.find(x=>(x.heure_debut||'').slice(0,5)===v.deb);
+        if(!c||!isExp(c.salarie_id,r.cle)) expMiss.push(`${JOURS[i]} ${svc} · ${r.nom} · poste ${v.deb}→${v.fin} : expérimenté requis${c?' (tenu par un non-expérimenté)':' (non couvert)'}`);
+      });
+    });
   }
   CHECKS.push({lbl:'Effectifs cibles',ok:eff.length===0,details:eff});
+  CHECKS.push({lbl:'Expérimentés requis par poste',ok:expMiss.length===0,details:expMiss});
 
   // 2. Doublons inter-snack
   const conf=[];
@@ -606,7 +653,7 @@ function renderChecks(){
 
   // 4. ≥ 1 jour off
   const noOff=[];
-  const list=S.salaries.filter(s=>s.snack_origine_id===SNACK.id||s.est_multi);
+  const list=S.salaries.filter(s=>worksAt(s,SNACK.id));
   list.forEach(s=>{const d=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));if(d.size>=7)noOff.push(nameOf(s.id)+' : 7 jours travaillés');});
   CHECKS.push({lbl:'≥ 1 jour off',ok:noOff.length===0,details:noOff});
 
@@ -687,7 +734,7 @@ function renderPosteTable(){
   const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
   // Construire la liste des postes (svc, role, index) avec max sur la semaine
   const rows=[];
-  for(const[svc,role]of[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']]){
+  for(const svc of ['midi','soir'])for(const _r of S.orgRoles){const role=_r.cle;
     let maxN=0;
     for(let i=0;i<7;i++){const s=getShifts(dayJourType(i),svc,role);if(s.length>maxN)maxN=s.length;}
     for(let k=0;k<maxN;k++)rows.push({svc,role,k});
@@ -708,12 +755,12 @@ function renderPosteTable(){
     const groupKey=svc+'-'+role;
     // Ligne d'en-tête de section quand le groupe change
     if(lastGroup!==groupKey){
-      const roleLbl=role==='cuisine'?'Cuisine':'Réception';
+      const roleLbl=roleNom(role);
       const groupColor=svc==='midi'?'rgba(232,160,106,.15)':'rgba(91,156,255,.12)';
       html+=`<tr><td colspan="8" style="background:${groupColor};padding:8px 14px;font-size:11px;font-weight:700;color:${svc==='midi'?'#e8a06a':'#5b9cff'};text-transform:uppercase;letter-spacing:.08em;border-top:2px solid var(--line)">${groupLbl} · ${roleLbl}</td></tr>`;
       lastGroup=groupKey;
     }
-    const roleSym=role==='cuisine'?'Cuisinier':'Caissier';
+    const roleSym=roleNom(role);
     const bg=svc==='midi'?'rgba(232,160,106,.04)':'rgba(91,156,255,.04)';
     html+=`<tr><td class="salname" style="background:${bg}"><b>${roleSym} ${k+1}</b></td>`;
     for(let i=0;i<7;i++){
@@ -725,7 +772,7 @@ function renderPosteTable(){
       const cr=matchingByOrder[k]||null;
       const candidates=S.salaries.filter(s=>{
         if(s.actif===false)return false;
-        if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
+        if(!worksAt(s,SNACK.id))return false;
         if(!rolesOf(s.id).includes(role))return false;
         return true;
       }).sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
@@ -736,7 +783,7 @@ function renderPosteTable(){
       html+=`<td style="background:${selColor?selColor+'25':bg};${selColor?'border-left:3px solid '+selColor:''};${isConf?'box-shadow:inset 0 0 0 1.5px var(--bad);':''};padding:5px 6px">
         <select onchange="assignPosteCell('${date}','${svc}','${role}','${shift.deb}','${shift.fin}',this.value,'${cr?cr.id:''}')" style="width:100%;background:transparent;border:1px solid var(--line-2);color:var(--text);padding:4px 6px;border-radius:5px;font-size:11.5px;font-weight:600;cursor:pointer">
           <option value="">— vacant —</option>
-          ${candidates.map(s=>`<option value="${s.id}" ${s.id===selSid?'selected':''}>${fullName(s)}</option>`).join('')}
+          ${candidates.map(s=>`<option value="${s.id}" ${s.id===selSid?'selected':''}>${fullName(s)} ${isExp(s.id,role)?'★':'🔰'}</option>`).join('')}
         </select>
         <div style="color:var(--muted);font-size:10px;text-align:center;margin-top:3px;font-family:monospace">${shift.deb}→${shift.fin}</div>
       </td>`;
@@ -804,39 +851,48 @@ function openReglages(){
     <button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML='';render()">✕ Fermer</button>
   </div>`;
 
-  // === EFFECTIFS ===
-  html+=`<div style="margin-bottom:24px">
-    <div style="font-size:14px;font-weight:600;margin-bottom:4px">Effectifs cibles</div>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:12px">Nombre de salariés requis par jour et service · <b style="color:var(--text)">C</b> = cuisine, <b style="color:var(--text)">R</b> = réception</div>
-    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;overflow:hidden">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:rgba(255,255,255,.03)">
-          <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Jour</th>
-          <th colspan="2" style="padding:10px;text-align:center;font-weight:600;color:#e8a06a;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-left:1px solid var(--line)">Midi</th>
-          <th colspan="2" style="padding:10px;text-align:center;font-weight:600;color:#5b9cff;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-left:1px solid var(--line)">Soir</th>
-        </tr><tr style="background:rgba(255,255,255,.015);font-size:10.5px;color:var(--muted)">
-          <th></th>
-          <th style="padding:5px;border-left:1px solid var(--line)">Cuisine</th><th style="padding:5px">Réception</th>
-          <th style="padding:5px;border-left:1px solid var(--line)">Cuisine</th><th style="padding:5px">Réception</th>
-        </tr></thead><tbody>`;
-  JOUR_TYPES.forEach(jt=>{
-    const get=(svc,role)=>targetForJT(jt,svc)[role];
-    const hasVagues=(svc,role)=>{const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===role);return e&&e.vagues&&e.vagues.length;};
-    html+=`<tr style="border-top:1px solid var(--line)"><td style="padding:10px 14px;font-weight:600">${JOUR_TYPE_LABELS[jt]}</td>`;
-    for(const[svc,role]of[['midi','cuisine'],['midi','caisse'],['soir','cuisine'],['soir','caisse']]){
-      const borderL=svc==='midi'&&role==='cuisine' || svc==='soir'&&role==='cuisine' ? 'border-left:1px solid var(--line);' : '';
-      const n=get(svc,role); const cfg=hasVagues(svc,role);
-      html+=`<td style="padding:6px 8px;text-align:center;${borderL}">
-        <button onclick="openShiftsEditor('${jt}','${svc}','${role}')" style="width:64px;padding:6px 8px;border-radius:6px;border:1px solid ${cfg?'var(--gold)':'var(--line-2)'};background:${cfg?'rgba(200,160,53,.08)':'var(--bg)'};color:var(--text);font-size:13px;font-weight:600;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;line-height:1.1">
-          <span>${n}</span>
-          <span style="font-size:9px;color:var(--muted);font-weight:400">${cfg?'⚙ détaillé':'défaut'}</span>
-        </button>
-      </td>`;
-    }
-    html+='</tr>';
-  });
-  html+='</tbody></table>';
-  html+='<div style="color:var(--muted);font-size:11.5px;margin-top:10px">💡 Clique sur un chiffre pour définir l\'heure exacte de chaque poste (ex : <i>cuisinier à 10:00, un autre à 10:30, deux à 11:30…</i>). L\'auto-fill respectera ces horaires.</div>';
+  // === EFFECTIFS CIBLES (cartes par rôle, design aéré) ===
+  html+=`<div style="margin-bottom:26px">
+    <div style="font-size:15px;font-weight:600;margin-bottom:4px">Effectifs cibles</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:14px;line-height:1.5">Nombre de personnes requises par jour-type et service. Clique l'horloge <span style="color:var(--gold)">⏱</span> d'un service pour fixer l'horaire exact de chaque poste et marquer ceux qui exigent un <b style="color:var(--gold)">expérimenté ★</b>.</div>`;
+  if(!S.orgRoles.length){
+    html+=`<div style="background:var(--surface);border:1px dashed var(--line-2);border-radius:12px;padding:20px;color:var(--muted);font-size:12.5px;text-align:center">Aucun rôle. Crée d'abord tes rôles dans <b>Gestion Salariés › ⚙ Rôles</b>, puis reviens ici.</div>`;
+  } else {
+    const svcMeta={midi:{lbl:'Midi',col:'#e8a06a'},soir:{lbl:'Soir',col:'#7aa2ff'}};
+    S.orgRoles.forEach((r,ri)=>{
+      const open=ri===0;
+      html+=`<div style="border:1px solid var(--line-2);border-radius:14px;margin-bottom:12px;overflow:hidden;background:var(--card)">
+        <div onclick="const b=this.nextElementSibling;const o=b.style.display==='none';b.style.display=o?'':'none';this.querySelector('.chev').style.transform=o?'rotate(90deg)':'';" style="display:flex;align-items:center;gap:10px;padding:13px 16px;cursor:pointer;background:var(--surface);font-weight:600;font-size:13.5px;user-select:none">
+          <span class="chev" style="display:inline-block;transition:transform .15s;color:var(--muted);font-size:11px;${open?'transform:rotate(90deg)':''}">▶</span>
+          <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${roleCol(r.cle)}"></span>${escP(r.nom)}
+        </div>
+        <div style="display:${open?'':'none'};padding:6px 14px 14px">
+          <table style="width:100%;border-collapse:separate;border-spacing:0 4px;font-size:12.5px">
+            <thead><tr style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">
+              <th style="text-align:left;padding:2px 8px;font-weight:600">Jour</th>
+              <th style="padding:2px 8px;font-weight:600;color:${svcMeta.midi.col}">Midi</th>
+              <th style="padding:2px 8px;font-weight:600;color:${svcMeta.soir.col}">Soir</th>
+            </tr></thead><tbody>`;
+      JOUR_TYPES.forEach((jt,ji)=>{
+        const zebra=ji%2?'background:var(--surface)':'';
+        html+=`<tr style="${zebra}"><td style="padding:8px 8px;font-weight:600;border-radius:8px 0 0 8px">${JOUR_TYPE_LABELS[jt]}</td>`;
+        for(const svc of ['midi','soir']){
+          const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===r.cle);
+          const nb=e?(e.nb_cible||0):0;
+          const vagues=(e&&Array.isArray(e.vagues))?e.vagues:[];
+          const hasV=vagues.length>0;
+          const nExp=vagues.filter(v=>v.exp).length;
+          const inpSt='width:48px;text-align:center;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--line-2);border-radius:7px;font-size:13px';
+          const expTag=nExp>0?`<span style="margin-left:2px;color:var(--gold);font-size:10.5px;font-weight:700" title="${nExp} poste(s) « expérimenté requis »">★${nExp}</span>`:'';
+          const clk=nb>0?`<button onclick="openShiftsEditor('${jt}','${svc}','${escJS(r.cle)}')" title="${hasV?'Horaires définis — modifier les postes':'Définir l\'heure exacte de chaque poste'}" style="margin-left:5px;padding:5px 7px;border-radius:7px;border:1px solid ${hasV?'var(--gold)':'var(--line-2)'};background:${hasV?'rgba(200,160,53,.16)':'var(--bg)'};color:${hasV?'var(--gold)':'var(--muted)'};cursor:pointer;font-size:12px;line-height:1;vertical-align:middle">⏱</button>`:'';
+          const rad=svc==='soir'?'border-radius:0 8px 8px 0':'';
+          html+=`<td style="padding:5px 8px;white-space:nowrap;${rad}"><input type="number" min="0" value="${nb}" data-jt="${jt}" data-svc="${svc}" data-role="${escP(r.cle)}" data-f="cible" onchange="saveEffField(this)" style="${inpSt}">${clk}${expTag}</td>`;
+        }
+        html+='</tr>';
+      });
+      html+='</tbody></table></div></div>';
+    });
+  }
   html+='</div>';
 
   // === RÈGLES ===
@@ -915,6 +971,32 @@ function targetForJT(jt,svc){
   const i={'Lu-Me':0,'Je':3,'Ve':4,'Sa':5,'Di':6}[jt];
   return targetFor(i,svc);
 }
+async function saveEffField(inp){
+  const jt=inp.dataset.jt,svc=inp.dataset.svc,role=inp.dataset.role,f=inp.dataset.f;
+  const v=Math.max(0,parseInt(inp.value)||0); inp.value=v;
+  const col=f==='exp'?'nb_experimentes':'nb_cible';
+  const existing=S.effectifs.find(e=>e.restaurant_id===SNACK.id&&e.jour_type===jt&&e.service===svc&&e.role===role);
+  if(existing){
+    const{error}=await sb.from('planning_effectifs').update({[col]:v}).eq('id',existing.id);
+    if(error){alert('Erreur: '+error.message);return;} existing[col]=v;
+  } else {
+    const payload={restaurant_id:SNACK.id,jour_type:jt,service:svc,role,nb_cible:0,nb_experimentes:0}; payload[col]=v;
+    const{data,error}=await sb.from('planning_effectifs').insert(payload).select().single();
+    if(error){alert('Erreur: '+error.message);return;} S.effectifs.push(data);
+  }
+  // Afficher/masquer le bouton ⏱ (éditeur de postes) selon le requis, sans rouvrir le modal
+  if(f==='cible'){
+    const td=inp.parentElement; let b=td.querySelector('button');
+    if(v>0 && !b){
+      b=document.createElement('button');
+      b.textContent='⏱'; b.title='Définir l\'heure exacte de chaque poste';
+      b.setAttribute('style','margin-left:4px;padding:4px 6px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--muted);cursor:pointer;font-size:12px;line-height:1;vertical-align:middle');
+      b.onclick=()=>openShiftsEditor(jt,svc,role);
+      td.appendChild(b);
+    } else if(v===0 && b){ b.remove(); }
+  }
+  setSS('ok','Effectif sauvegardé'); renderEffectifs(); renderChecks();
+}
 async function saveEffectif(inp){
   const jt=inp.dataset.jt,svc=inp.dataset.svc,role=inp.dataset.role,nb=parseInt(inp.value)||0;
   const existing=S.effectifs.find(e=>e.restaurant_id===SNACK.id&&e.jour_type===jt&&e.service===svc&&e.role===role);
@@ -941,15 +1023,14 @@ function openShiftsEditor(jt,svc,role){
   const e=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===jt&&x.service===svc&&x.role===role);
   let shifts;
   if(e && e.vagues && Array.isArray(e.vagues) && e.vagues.length){
-    shifts=e.vagues.map(v=>({deb:v.deb,fin:v.fin}));
+    shifts=e.vagues.map(v=>({deb:v.deb,fin:v.fin,exp:!!v.exp}));
   } else {
-    const def={midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}};
-    const i={'Lu-Me':0,'Je':3,'Ve':4,'Sa':5,'Di':6}[jt];
-    const n=e?e.nb_cible:targetFor(i,svc)[role];
-    shifts=Array(n).fill(0).map(()=>({deb:def[svc][role][0],fin:def[svc][role][1]}));
+    const [d,f]=DEF_TIME(svc);
+    const n=e?(e.nb_cible||0):0;
+    shifts=Array(n).fill(0).map(()=>({deb:d,fin:f,exp:false}));
   }
   SHIFTS_STATE={jt,svc,role,shifts,existingId:e?.id};
-  const roleLbl=role==='cuisine'?'Cuisine':'Réception';
+  const roleLbl=roleNom(role);
   const svcLbl=svc==='midi'?'Midi':'Soir';
   let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px">
     <div><h3 style="margin:0;font-size:16px">Postes ${svcLbl} · ${roleLbl}</h3>
@@ -979,22 +1060,23 @@ function renderShiftsList(){
   const list=document.getElementById('shiftsList');if(!list)return;
   if(!SHIFTS_STATE.shifts.length){list.innerHTML='<div style="color:var(--muted);font-size:12px;text-align:center;padding:14px">Aucun poste — clique « + Ajouter un poste »</div>';return;}
   list.innerHTML=SHIFTS_STATE.shifts.map((s,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;${i>0?'border-top:1px solid var(--line)':''}">
-      <span style="color:var(--muted);font-size:11.5px;min-width:64px;font-weight:600">Poste ${i+1}</span>
+    <div style="display:flex;align-items:center;gap:8px;padding:9px 4px;flex-wrap:wrap;${i>0?'border-top:1px solid var(--line)':''}">
+      <span style="color:var(--muted);font-size:11.5px;min-width:58px;font-weight:600">Poste ${i+1}</span>
       <input type="time" value="${s.deb||''}" onchange="updShift(${i},'deb',this.value)" style="padding:6px 9px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">
       <span style="color:var(--muted)">→</span>
       <input type="time" value="${s.fin||''}" onchange="updShift(${i},'fin',this.value)" style="padding:6px 9px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">
-      <button class="btn danger sm" style="margin-left:auto" onclick="delShift(${i})" title="Supprimer">×</button>
+      <label title="Ce poste doit être tenu par un salarié expérimenté" style="display:flex;align-items:center;gap:5px;margin-left:auto;font-size:11.5px;color:${s.exp?'var(--gold)':'var(--muted)'};cursor:pointer;user-select:none;white-space:nowrap">
+        <input type="checkbox" ${s.exp?'checked':''} onchange="updShift(${i},'exp',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--gold)">★ expérimenté</label>
+      <button class="btn danger sm" onclick="delShift(${i})" title="Supprimer ce poste">×</button>
     </div>
   `).join('');
 }
 function addShift(){
-  const def={midi:{cuisine:['10:00','14:00'],caisse:['11:00','14:00']},soir:{cuisine:['18:00','23:30'],caisse:['18:30','00:00']}};
-  const [d,f]=def[SHIFTS_STATE.svc][SHIFTS_STATE.role];
-  SHIFTS_STATE.shifts.push({deb:d,fin:f});renderShiftsList();
+  const [d,f]=DEF_TIME(SHIFTS_STATE.svc);
+  SHIFTS_STATE.shifts.push({deb:d,fin:f,exp:false});renderShiftsList();
 }
 function delShift(i){SHIFTS_STATE.shifts.splice(i,1);renderShiftsList();}
-function updShift(i,which,val){SHIFTS_STATE.shifts[i][which]=val;}
+function updShift(i,which,val){SHIFTS_STATE.shifts[i][which]=val; if(which==='exp')renderShiftsList();}
 async function saveShifts(){
   const{jt,svc,role,shifts,existingId}=SHIFTS_STATE;
   shifts.sort((a,b)=>(a.deb||'').localeCompare(b.deb||''));
@@ -1025,7 +1107,7 @@ function closeShiftsEditor(){document.getElementById('shiftsModal').innerHTML=''
 function updateDemandesBadge(){
   const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').length;
   const b=document.getElementById('demandesBadge');
-  if(b){if(pending){b.textContent=pending;b.style.display='inline-block';}else{b.style.display='none';}}
+  if(b){if(pending){b.textContent=pending;b.style.display='flex';}else{b.style.display='none';}}
 }
 async function openDemandes(){
   // Reload dispos pour avoir les dernières demandes
@@ -1182,21 +1264,47 @@ async function autoFillWeek(){
   if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
   await autoFillCore([0,1,2,3,4,5,6]);
 }
+let _autofillRunning=false;
+function showAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o){o.style.display='flex';updateAutofillProgress(0,1,'Analyse des disponibilités…');}}
+function hideAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o)o.style.display='none';}
+function updateAutofillProgress(done,total,sub){
+  const bar=document.getElementById('afBar'),s=document.getElementById('afSub');
+  if(bar)bar.style.width=Math.round(100*done/Math.max(1,total))+'%';
+  if(s&&sub)s.textContent=sub;
+}
+const _yield=()=>new Promise(r=>setTimeout(r,0));
 async function autoFillCore(dayIndices){
+  if(_autofillRunning)return;            // anti double-clic
+  _autofillRunning=true;
+  showAutofillOverlay();
   setSS('busy','Remplissage en cours…');
   beginTxn();
   let added=0,skipped=0;
+  try{
+  // Purge des créneaux orphelins (salarié sorti/supprimé) sur les jours traités → pas de double-réservation ni de fantôme
+  const purgeDates=dayIndices.map(di=>fmtDate(dateOfDay(di)));
+  const orphans=S.creneaux.filter(c=>purgeDates.includes(c.date) && !onRoster(salById(c.salarie_id)));
+  if(orphans.length){
+    const oids=orphans.map(c=>c.id).filter(Boolean);
+    if(oids.length) await sb.from('planning_creneaux').delete().in('id',oids);
+    const odel=new Set(oids);
+    S.creneaux=S.creneaux.filter(c=>!odel.has(c.id));
+    S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!odel.has(c.id));
+  }
   const hoursWeek=sid=>S.creneaux.filter(c=>c.salarie_id===sid).reduce((a,c)=>a+_autoDur(c.heure_debut,c.heure_fin),0)/60;
-  for(const di of dayIndices){
+  for(let dIdx=0;dIdx<dayIndices.length;dIdx++){
+    const di=dayIndices[dIdx];
     const date=fmtDate(dateOfDay(di));
     const jt=dayJourType(di);
+    updateAutofillProgress(dIdx,dayIndices.length,`${JOURS[di]} ${dateOfDay(di).getDate()} — placement en cours…`);
+    await _yield();   // laisse le navigateur repeindre la barre de progression
     for(const svc of ['midi','soir']){
-      for(const role of ['cuisine','caisse']){
+      for(const _r of S.orgRoles){const role=_r.cle;
         // Récupère les shifts définis (vagues) ou défauts
         const shifts=getShifts(jt,svc,role);
         if(!shifts.length)continue;
-        // Cherche les shifts déjà couverts (matching heure_debut)
-        const currentCreneaux=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut);
+        // Cherche les shifts déjà couverts (matching heure_debut) — uniquement par des salariés sur l'effectif
+        const currentCreneaux=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut&&onRoster(salById(c.salarie_id)));
         const filledIdx=new Set();
         const usedSids=new Set(currentCreneaux.map(c=>c.salarie_id));
         currentCreneaux.forEach(c=>{
@@ -1214,8 +1322,8 @@ async function autoFillCore(dayIndices){
         for(const shift of realToFill){
           // Candidats pour ce shift précis
           const candidates=S.salaries.filter(s=>{
-            if(s.actif===false)return false;
-            if(s.snack_origine_id!==SNACK.id && !s.est_multi)return false;
+            if(!onRoster(s))return false;
+            if(!worksAt(s,SNACK.id))return false;
             if(!rolesOf(s.id).includes(role))return false;
             if(usedSids.has(s.id))return false;
             if(S.creneaux.find(c=>c.salarie_id===s.id&&c.date===date&&c.service===svc))return false;
@@ -1225,9 +1333,11 @@ async function autoFillCore(dayIndices){
             const plaf=s.plafond_heures||48;if(hoursWeek(s.id)>=plaf)return false;
             return true;
           }).sort((a,b)=>{
+            // Ce créneau exige un expérimenté → on les place en priorité absolue
+            if(shift.exp){const ae=isExp(a.id,role)?0:1,be=isExp(b.id,role)?0:1;if(ae!==be)return ae-be;}
             const ha=hoursWeek(a.id),hb=hoursWeek(b.id);
             if(Math.abs(ha-hb)>1.5)return ha-hb;
-            const aH=a.snack_origine_id===SNACK.id?0:1,bH=b.snack_origine_id===SNACK.id?0:1;return aH-bH;
+            const aH=snackPrioriteOf(a,SNACK.id),bH=snackPrioriteOf(b,SNACK.id);if(aH!==bH)return aH-bH;return 0;
           });
           if(!candidates.length){skipped++;continue;}
           const s=candidates[0];usedSids.add(s.id);
@@ -1238,9 +1348,17 @@ async function autoFillCore(dayIndices){
       }
     }
   }
+  updateAutofillProgress(dayIndices.length,dayIndices.length,'Finalisation…');
   endTxn();
   await loadWeek();
   setSS('ok',`✓ ${added} créneau(x) ajouté(s)${skipped?` · ${skipped} non couvert(s)`:''}`);
+  }catch(err){
+    setSS('err','Erreur auto-fill : '+(err.message||err));
+    endTxn();
+  }finally{
+    hideAutofillOverlay();
+    _autofillRunning=false;
+  }
 }
 
 // ===== SÉLECTION & COPIER/COLLER =====
@@ -1557,7 +1675,7 @@ function hexMix(hex,alpha){const m=String(hex||'').match(/^#?([0-9a-f]{6})/i);if
 
 function drawSnackPage(doc,resto,creneaux){
   const sids=new Set(creneaux.map(c=>c.salarie_id));
-  const list=S.salaries.filter(s=>s.actif!==false && (s.snack_origine_id===resto.id||s.est_multi||sids.has(s.id)))
+  const list=S.salaries.filter(s=>s.actif!==false && (worksAt(s,resto.id)||sids.has(s.id)))
     .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return (ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
   const get=(sid,date,svc)=>creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);
   // Titre
@@ -1615,7 +1733,7 @@ function buildPrintPage(resto,creneaux){
   const div=document.createElement('div');div.className='pg';
   // salariés concernés : ceux qui ont au moins un créneau ce mois OU snack origine OU multi
   const sids=new Set(creneaux.map(c=>c.salarie_id));
-  const list=S.salaries.filter(s=>s.actif!==false && (s.snack_origine_id===resto.id||s.est_multi||sids.has(s.id)))
+  const list=S.salaries.filter(s=>s.actif!==false && (worksAt(s,resto.id)||sids.has(s.id)))
     .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return (ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
   const get=(sid,date,svc)=>creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);
   let html=`<h1>Planning ${shortSnack(resto.nom)}</h1><h2>Semaine ${isoWeek(MONDAY)} · ${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} au ${new Date(MONDAY.getTime()+6*86400000).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}</h2>`;
@@ -1643,6 +1761,6 @@ function buildPrintPage(resto,creneaux){
   return div;
 }
 </script>
-<script defer src="../assistant-widget.js?v=4.0"></script>
+<script defer src="../assistant-widget.js?v=4.8"></script>
 </body>
 </html>

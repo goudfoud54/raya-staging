@@ -234,7 +234,8 @@ textarea{resize:vertical;min-height:60px}
   </div>
 </div>
 
-<script src="../assistant-widget.js?v=4.1"></script>
+<script src="../assistant-widget.js?v=4.8"></script>
+<script src="../autocomplete.js?v=1.0"></script>
 
 <script>
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
@@ -287,6 +288,8 @@ async function loadAll(){
   fS.innerHTML = '<option value="">Tous salariés</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
   const evS = document.getElementById('ev_salarie');
   evS.innerHTML = '<option value="">— Aucun —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
+  EatimeAutocomplete.enhance(fS, { placeholder:'Tous salariés — tape un nom…' });
+  EatimeAutocomplete.enhance(evS, { placeholder:'Aucun — tape un nom…' });
 }
 
 function navMonth(d){

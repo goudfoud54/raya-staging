@@ -32,18 +32,29 @@ header .sp{flex:1}
 .btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
 .btn.success{background:var(--success);color:#fff;border-color:var(--success)}
 .btn.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.isdis{opacity:.45;cursor:not-allowed}
 select,input,textarea{padding:8px 12px;background:var(--panel);color:var(--text);border:1px solid var(--border2);border-radius:8px;font-size:13px;font-family:inherit}
 textarea{resize:vertical;min-height:80px}
 .container{max-width:1100px;margin:0 auto;padding:20px}
 .disclaimer{background:rgba(245,158,11,.1);border:1px solid #f59e0b55;color:#f59e0b;padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:12px}
 .disclaimer b{color:var(--text)}
+.subtabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.subtab{padding:8px 15px;border:1px solid var(--border2);background:var(--panel);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted)}
+.subtab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .list{display:flex;flex-direction:column;gap:10px}
+.filterbar{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:end}
+.filterbar .ff{display:flex;flex-direction:column;gap:4px}
+.filterbar .ff label{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700}
+.filterbar select{padding:7px 11px;border:1px solid var(--border2);background:var(--panel);color:var(--text);border-radius:8px;font-size:13px;min-width:190px;outline:none}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;cursor:pointer;transition:border-color .15s}
 .card:hover{border-color:var(--accent)}
 .card-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .card-head .name{font-size:15px;font-weight:600}
 .card-head .sp{flex:1}
-.card-meta{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:6px;flex-wrap:wrap}
+.card-meta{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:6px;flex-wrap:wrap;align-items:center}
+.card-pdf{margin-left:auto;padding:4px 10px;font-size:11.5px;font-weight:600;border:1px solid var(--border2);background:var(--panel);color:var(--text);border-radius:7px;cursor:pointer}
+.card-pdf:hover{border-color:var(--accent);color:var(--accent)}
 .badge{display:inline-block;padding:3px 9px;border-radius:10px;font-size:11px;font-weight:600;border:1px solid var(--border)}
 .bd-draft{background:rgba(139,148,163,.15);color:var(--muted);border-color:#5a627355}
 .bd-conv{background:rgba(245,158,11,.15);color:#f59e0b;border-color:#f59e0b55}
@@ -56,12 +67,14 @@ textarea{resize:vertical;min-height:80px}
 .type-bg-mise{background:rgba(220,38,38,.15);color:#dc2626;border-color:#dc262655}
 .type-bg-licen{background:rgba(127,29,29,.15);color:#fff;border-color:#7f1d1d}
 .type-bg-rupt{background:rgba(34,197,94,.12);color:#22c55e;border-color:#22c55e55}
+.deadline{font-weight:700}
+.deadline.late{color:var(--danger)} .deadline.soon{color:var(--warn)} .deadline.ok{color:var(--success)}
 .empty{text-align:center;color:var(--muted);padding:60px 20px;background:var(--panel);border:1px dashed var(--border2);border-radius:12px}
 
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
 .modal-bg.open{display:flex}
-.modal{background:var(--panel);border:1px solid var(--border2);border-radius:14px;padding:24px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.modal h2{margin:0 0 16px 0;font-size:18px}
+.modal{background:var(--panel);border:1px solid var(--border2);border-radius:14px;padding:24px;max-width:780px;width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal h2{margin:0 0 14px 0;font-size:18px}
 .modal h3{margin:18px 0 10px 0;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);padding-bottom:6px}
 .field{margin-bottom:14px}
 .field label{display:block;margin-bottom:5px;font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px}
@@ -70,20 +83,34 @@ textarea{resize:vertical;min-height:80px}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .modal-foot{display:flex;justify-content:space-between;gap:10px;margin-top:20px;padding-top:14px;border-top:1px solid var(--border)}
 .modal-foot .right{display:flex;gap:8px}
-.steps{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
-.step{flex:1;min-width:140px;padding:10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted);text-align:center}
-.step.done{background:rgba(16,185,129,.1);border-color:#10b98155;color:#10b981}
-.step.current{background:rgba(59,130,246,.15);border-color:var(--accent);color:var(--accent);font-weight:600}
-.step .num{display:inline-block;width:20px;height:20px;border-radius:50%;background:var(--border2);color:var(--text);font-size:11px;line-height:20px;margin-right:4px;font-weight:700}
+.steps{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.step{flex:1;min-width:115px;padding:9px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:11.5px;color:var(--muted);text-align:center;transition:.15s}
+.step.done{background:rgba(16,185,129,.12);border-color:#10b98155;color:#10b981;cursor:pointer}
+.step.done:hover{filter:brightness(1.15)}
+.step.current{background:rgba(59,130,246,.16);border-color:var(--accent);color:var(--accent);font-weight:700;cursor:pointer;animation:pulseStep 1.9s ease-in-out infinite}
+.step.future{opacity:.5}
+.step .num{display:inline-block;width:19px;height:19px;border-radius:50%;background:var(--border2);color:var(--text);font-size:11px;line-height:19px;margin-right:4px;font-weight:700}
 .step.done .num{background:#10b981;color:#fff}
 .step.current .num{background:var(--accent);color:#fff}
-.warn-box{background:rgba(239,68,68,.08);border:1px solid #ef444455;color:#ef4444;padding:10px 14px;border-radius:8px;font-size:12px;margin:10px 0}
+@keyframes pulseStep{0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.4)}50%{box-shadow:0 0 0 5px rgba(59,130,246,0)}}
+.assistant-banner{background:rgba(6,182,212,.1);border:1px solid #06b6d455;padding:11px 14px;border-radius:10px;margin-bottom:14px;font-size:13px;line-height:1.45}
+.assistant-banner b{color:var(--info)}
+.ant-box{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+.ant-box .ant-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:8px}
+.ant-item{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;padding:7px 0;border-top:1px solid var(--border)}
+.ant-item input[type=checkbox]{width:auto;margin-top:2px;cursor:pointer}
+.warn-box{background:rgba(239,68,68,.09);border:1px solid #ef444455;color:#ef4444;padding:10px 14px;border-radius:8px;font-size:12px;margin:10px 0}
+.ok-box{background:rgba(16,185,129,.09);border:1px solid #10b98155;color:#10b981;padding:10px 14px;border-radius:8px;font-size:12px;margin:10px 0}
+.orange-box{background:rgba(245,158,11,.1);border:1px solid #f59e0b55;color:#f59e0b;padding:10px 14px;border-radius:8px;font-size:12px;margin:10px 0}
 .info-box{background:rgba(59,130,246,.08);border:1px solid #3b82f655;color:#3b82f6;padding:10px 14px;border-radius:8px;font-size:12px;margin:10px 0}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-@media (max-width:700px){
-  .row,.row3{grid-template-columns:1fr}
-  .steps{flex-direction:column}
-}
+.advance{display:flex;justify-content:flex-end;margin-top:16px}
+.wiz-opt{display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;background:var(--panel2);border:1px solid var(--border2);border-radius:10px;cursor:pointer;font-size:13.5px;transition:.15s;color:var(--text)}
+.wiz-opt:hover{border-color:var(--accent);background:var(--panel)}
+.wiz-opt b{display:block;margin-bottom:3px}
+.wiz-opt small{color:var(--muted)}
+.locked-note{font-size:11.5px;color:var(--muted);margin-top:4px}
+@media (max-width:700px){ .row,.row3{grid-template-columns:1fr} .steps{flex-direction:column} }
 </style>
 </head>
 <body>
@@ -98,7 +125,18 @@ textarea{resize:vertical;min-height:80px}
 
 <div class="container">
   <div class="disclaimer">
-    <b>⚖️ Information juridique</b> — Ce module facilite la procédure mais ne se substitue pas à un conseil juridique. Pour toute sanction lourde (licenciement, mise à pied), consulter un avocat ou votre OPCO. Les délais légaux sont automatiquement calculés selon le Code du travail français.
+    <b>⚖️ Information juridique</b> — Ce module facilite la procédure mais ne se substitue pas à un conseil juridique. Pour toute sanction lourde (licenciement, mise à pied), consulter un avocat ou votre OPCO. Les délais légaux sont calculés en jours ouvrables (hors jours fériés) selon le Code du travail français.
+  </div>
+
+  <div class="subtabs" id="subtabs">
+    <div class="subtab active" data-tab="encours" onclick="setListTab('encours')">📋 Dossiers en cours</div>
+    <div class="subtab" data-tab="cloture" onclick="setListTab('cloture')">🗄 Dossiers clôturés</div>
+  </div>
+
+  <div class="filterbar" id="filterbar">
+    <div class="ff"><label>Salarié</label><select id="flt_salarie" onchange="applyFilters()"><option value="">Tous</option></select></div>
+    <div class="ff"><label>Type de sanction</label><select id="flt_type" onchange="applyFilters()"><option value="">Tous</option></select></div>
+    <button class="btn ghost" id="fltReset" onclick="resetFilters()" style="align-self:end;display:none">✕ Réinitialiser</button>
   </div>
 
   <div id="list" class="list"></div>
@@ -107,16 +145,29 @@ textarea{resize:vertical;min-height:80px}
 <!-- Modal Nouveau / Édition -->
 <div class="modal-bg" id="modalEdit">
   <div class="modal">
-    <h2 id="modalTitle">Nouveau dossier disciplinaire</h2>
+    <h2 id="modalTitle">Dossier disciplinaire</h2>
     <input type="hidden" id="ed_id">
+    <input type="hidden" id="ed_status" value="draft">
 
+    <!-- Encart antécédents -->
+    <div id="antecedentsBox"></div>
+
+    <!-- Assistant inline : étape + à faire -->
+    <div class="assistant-banner" id="assistantBanner"></div>
+
+    <!-- Steps cliquables -->
     <div class="steps" id="steps"></div>
 
+    <!-- Récapitulatif en lecture seule (affiché après l'étape Création) -->
+    <div id="recapPanel"></div>
+
+    <!-- Identification (modifiable uniquement à l'étape Création) -->
+    <div id="identBlock">
     <h3>Identification</h3>
     <div class="row">
       <div class="field">
         <label>Salarié concerné *</label>
-        <select id="ed_salarie"><option value="">— Sélectionner —</option></select>
+        <select id="ed_salarie" onchange="onSalarieChange()"><option value="">— Sélectionner —</option></select>
       </div>
       <div class="field">
         <label>Type de sanction *</label>
@@ -132,187 +183,169 @@ textarea{resize:vertical;min-height:80px}
         </select>
       </div>
     </div>
-
     <div id="legalInfo" class="info-box"></div>
-
-    <h3>Faits reprochés</h3>
-    <div class="row">
-      <div class="field">
-        <label>Date des faits</label>
-        <input id="ed_faits_date" type="date">
-      </div>
-      <div class="field">
-        <label>Lieu</label>
-        <input id="ed_faits_lieu" placeholder="Snack Raya Carnot...">
-      </div>
-    </div>
-    <div class="field">
-      <label>Motif court (1 ligne) *</label>
-      <input id="ed_motif_court" placeholder="Ex: Retards répétés, abandon de poste, insubordination...">
-    </div>
-    <div class="field">
-      <label>Détail des faits *</label>
-      <textarea id="ed_motif_detail" placeholder="Décrire précisément les faits, dates, témoins, antécédents. Plus c'est précis, plus la sanction sera défendable en cas de contestation."></textarea>
     </div>
 
-    <div id="procedureSection">
-      <h3>Procédure entretien préalable</h3>
-      <div class="warn-box" id="warnDelai" style="display:none">
-        ⏱ <b>Attention</b> : la convocation à entretien préalable doit être envoyée par lettre recommandée AR ou remise en main propre contre décharge, au moins <b>5 jours ouvrables avant</b> la date d'entretien.
+    <!-- SECTION : Création / Faits -->
+    <div data-step-section="creation">
+      <h3>Faits reprochés</h3>
+      <div class="row">
+        <div class="field"><label>Date des faits</label><input id="ed_faits_date" type="date" onchange="checkPrescription()"></div>
+        <div class="field"><label>Heure des faits <small style="color:var(--muted);font-weight:400;text-transform:none">(optionnel)</small></label><input id="ed_faits_heure" type="time"></div>
+      </div>
+      <div class="field">
+        <label>Lieu (restaurant)</label>
+        <select id="ed_faits_restaurant" onchange="onFaitsLieuChange()"><option value="">— Choisir un restaurant —</option></select>
+        <input id="ed_faits_lieu" placeholder="Adresse / lieu précis (déplacement, événement extérieur…)" style="margin-top:8px;display:none">
+      </div>
+      <div id="warnPrescription"></div>
+      <div class="field"><label>Motif court (1 ligne) *</label><input id="ed_motif_court" placeholder="Ex: Retards répétés, abandon de poste, insubordination..."></div>
+      <div class="field">
+        <label>Détail des faits *</label>
+        <textarea id="ed_motif_detail" placeholder="Décrire précisément les faits, dates, témoins, antécédents. Plus c'est précis, plus la sanction sera défendable en cas de contestation."></textarea>
+      </div>
+      <div class="field">
+        <label>Impact / préjudice subi par l'entreprise <small style="color:var(--muted);font-weight:400;text-transform:none">(lien de causalité)</small></label>
+        <textarea id="ed_faits_impact" placeholder="Ex : cette absence a désorganisé le service du midi, contraint deux collègues à effectuer des heures supplémentaires, et entraîné une perte de chiffre d'affaires estimée à 400 € sur la journée."></textarea>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">✨ Au clic sur « Valider », l'IA reformulera le motif, le détail ET cet impact en langage juridique.</div>
+      </div>
+    </div>
+
+    <!-- SECTION : Convocation -->
+    <div data-step-section="convocation">
+      <h3>Convocation à entretien préalable</h3>
+      <div id="warnConvoc"></div>
+      <div class="row">
+        <div class="field"><label>Date envoi convocation</label><input id="ed_convoc_date" type="date" onchange="checkConvocDelai()"></div>
+        <div class="field"><label>Date entretien</label><input id="ed_entretien_date" type="date" onchange="checkConvocDelai()"></div>
       </div>
       <div class="row">
-        <div class="field">
-          <label>Date envoi convocation</label>
-          <input id="ed_convoc_date" type="date" onchange="checkDelai()">
+        <div class="field"><label>Heure entretien</label><input id="ed_entretien_heure" type="time"></div>
+        <div class="field"><label>Lieu entretien</label>
+          <select id="ed_entretien_restaurant" onchange="onEntretienLieuChange()"><option value="">— Choisir un restaurant —</option></select>
+          <input id="ed_entretien_lieu" placeholder="Adresse / lieu précis de l'entretien" style="margin-top:8px;display:none">
         </div>
-        <div class="field">
-          <label>Date entretien</label>
-          <input id="ed_entretien_date" type="date" onchange="checkDelai()">
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>Heure entretien</label>
-          <input id="ed_entretien_heure" type="time">
-        </div>
-        <div class="field">
-          <label>Lieu entretien</label>
-          <input id="ed_entretien_lieu" placeholder="Ex: bureau direction, snack Carnot">
-        </div>
-      </div>
-      <div class="field">
-        <label>Salarié assistant (CSE ou conseiller du salarié)</label>
-        <input id="ed_entretien_assistant" placeholder="Optionnel — Le salarié a le droit d'être assisté">
-      </div>
-      <div class="field">
-        <label>Compte-rendu / PV entretien</label>
-        <textarea id="ed_entretien_pv" placeholder="Une fois l'entretien réalisé : explications du salarié, position de l'employeur..."></textarea>
       </div>
     </div>
 
-    <div id="notifSection">
+    <!-- SECTION : Attente entretien -->
+    <div data-step-section="attente">
+      <div class="info-box" id="attenteInfo">Entretien programmé. Une fois l'entretien tenu, passe à l'étape suivante pour saisir le compte-rendu.</div>
+    </div>
+
+    <!-- SECTION : Entretien réalisé -->
+    <div data-step-section="entretien">
+      <h3>Compte-rendu de l'entretien</h3>
+      <div class="field"><label>Salarié assistant (CSE ou conseiller du salarié)</label><input id="ed_entretien_assistant" placeholder="Optionnel — Le salarié a le droit d'être assisté"></div>
+      <div class="field"><label>Compte-rendu / PV entretien *</label><textarea id="ed_entretien_pv" placeholder="Explications du salarié, position de l'employeur..."></textarea></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none"><input type="checkbox" id="ed_entretien_held" style="width:auto"> L'entretien préalable a bien été tenu</label></div>
+    </div>
+
+    <!-- SECTION : Notification -->
+    <div data-step-section="notifie">
       <h3>Notification de la sanction</h3>
-      <div class="info-box" id="infoNotifDelai">
-        ⏱ La notification doit intervenir <b>au minimum 2 jours ouvrables</b> et <b>au maximum 1 mois</b> après l'entretien.
-      </div>
+      <div id="notifPanel"></div>
+      <div class="info-box">⏱ La notification doit intervenir <b>au minimum 2 jours ouvrables</b> et <b>au maximum 1 mois</b> après l'entretien.</div>
+      <div id="warnNotif"></div>
       <div class="row">
-        <div class="field">
-          <label>Date notification</label>
-          <input id="ed_notif_date" type="date">
+        <div class="field"><label>Date notification</label><input id="ed_notif_date" type="date" onchange="checkNotifDelai()"></div>
+        <div class="field"><label>Date d'effet</label><input id="ed_effet_date" type="date"></div>
+      </div>
+      <div id="mapSection" style="display:none">
+        <h3>Mise à pied (jours)</h3>
+        <div class="row3">
+          <div class="field"><label>Date début</label><input id="ed_map_debut" type="date"></div>
+          <div class="field"><label>Date fin</label><input id="ed_map_fin" type="date"></div>
+          <div class="field"><label>Nb jours</label><input id="ed_map_jours" type="number" min="1" max="3"></div>
         </div>
-        <div class="field">
-          <label>Date d'effet</label>
-          <input id="ed_effet_date" type="date">
+      </div>
+      <div id="indemSection" style="display:none">
+        <h3>Indemnités (licenciement)</h3>
+        <div class="row3">
+          <div class="field"><label>Indem. licenciement (€)</label><input id="ed_ind_lic" type="number" step="0.01"></div>
+          <div class="field"><label>Indem. préavis (€)</label><input id="ed_ind_pre" type="number" step="0.01"></div>
+          <div class="field"><label>Indem. CP (€)</label><input id="ed_ind_cp" type="number" step="0.01"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Préavis (jours)</label><input id="ed_preavis_jours" type="number"></div>
+          <div class="field" style="display:flex;align-items:flex-end"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none"><input type="checkbox" id="ed_preavis_eff" style="width:auto"> Préavis effectué</label></div>
         </div>
       </div>
     </div>
 
-    <div id="mapSection" style="display:none">
-      <h3>Mise à pied (jours)</h3>
-      <div class="row3">
-        <div class="field">
-          <label>Date début MAP</label>
-          <input id="ed_map_debut" type="date">
-        </div>
-        <div class="field">
-          <label>Date fin MAP</label>
-          <input id="ed_map_fin" type="date">
-        </div>
-        <div class="field">
-          <label>Nb jours</label>
-          <input id="ed_map_jours" type="number" min="1" max="3">
-        </div>
-      </div>
+    <!-- SECTION : Clôture -->
+    <div data-step-section="cloture">
+      <div class="ok-box" id="clotureInfo">✓ Dossier clôturé. Les champs sont en lecture seule.</div>
     </div>
 
-    <div id="indemSection" style="display:none">
-      <h3>Indemnités (licenciement)</h3>
-      <div class="row3">
-        <div class="field">
-          <label>Indem. licenciement (€)</label>
-          <input id="ed_ind_lic" type="number" step="0.01">
-        </div>
-        <div class="field">
-          <label>Indem. préavis (€)</label>
-          <input id="ed_ind_pre" type="number" step="0.01">
-        </div>
-        <div class="field">
-          <label>Indem. CP (€)</label>
-          <input id="ed_ind_cp" type="number" step="0.01">
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>Préavis (jours)</label>
-          <input id="ed_preavis_jours" type="number">
-        </div>
-        <div class="field" style="display:flex;align-items:flex-end">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="ed_preavis_eff" style="width:auto"> Préavis effectué
-          </label>
-        </div>
-      </div>
-    </div>
+    <!-- Notes (toujours) -->
+    <div class="field" style="margin-top:14px"><label>Notes internes</label><input id="ed_notes" placeholder="Visible uniquement par l'admin"></div>
 
-    <h3>Statut</h3>
-    <div class="row">
-      <div class="field">
-        <label>Statut du dossier</label>
-        <select id="ed_status">
-          <option value="draft">Brouillon</option>
-          <option value="convocation_envoyee">Convocation envoyée</option>
-          <option value="entretien_planifie">Entretien planifié</option>
-          <option value="entretien_realise">Entretien réalisé</option>
-          <option value="sanction_notifiee">Sanction notifiée</option>
-          <option value="cloture">Clôturé</option>
-          <option value="annulee">Annulée</option>
-          <option value="contestee">Contestée (prud'hommes)</option>
+    <!-- Génération de documents (contextuelle) -->
+    <div id="pdfZone">
+      <h3>📄 Génération du courrier</h3>
+      <div class="field"><label>Mode de remise du courrier</label>
+        <select id="ed_mode_remise">
+          <option value="lrar">Lettre recommandée avec AR (LR/AR)</option>
+          <option value="main_propre">Remise en main propre contre décharge</option>
         </select>
       </div>
-      <div class="field">
-        <label>Notes internes</label>
-        <input id="ed_notes" placeholder="Visible uniquement par l'admin">
-      </div>
+      <div class="actions" id="pdfButtons"></div>
+      <div id="pdfHint" style="color:var(--muted);font-size:11px;margin-top:6px"></div>
     </div>
 
-    <h3>📄 Génération de documents</h3>
-    <div class="actions">
-      <button class="btn warn" onclick="generatePDF('convocation')">📄 Convocation entretien</button>
-      <button class="btn" onclick="generatePDF('sanction')">📄 Lettre de sanction</button>
-      <button class="btn" onclick="generatePDF('avertissement')">📄 Avertissement simple</button>
-      <button class="btn" onclick="generatePDF('mise_a_pied')">📄 Notification mise à pied</button>
-      <button class="btn danger" onclick="generatePDF('licenciement')">📄 Lettre de licenciement</button>
-    </div>
-    <div style="color:var(--muted);font-size:11px;margin-top:6px">
-      Les courriers doivent être envoyés en <b>recommandé AR</b> (LR/AR) ou remis en main propre contre décharge.
-    </div>
+    <!-- Bouton avancer dans le workflow -->
+    <div class="advance" id="advanceBox"></div>
 
     <div class="modal-foot">
-      <div>
-        <button class="btn danger sm" id="btnDel" onclick="delDossier()" style="display:none">Supprimer dossier</button>
-      </div>
+      <div><button class="btn danger sm" id="btnDel" onclick="delDossier()" style="display:none">Supprimer dossier</button></div>
       <div class="right">
-        <button class="btn ghost" onclick="closeModal()">Annuler</button>
-        <button class="btn primary" onclick="saveDossier()">Enregistrer</button>
+        <button class="btn ghost" onclick="closeModal()">Fermer</button>
       </div>
     </div>
   </div>
 </div>
 
-<script src="../assistant-widget.js?v=4.1"></script>
+<!-- Wizard de création -->
+<div class="modal-bg" id="wizard">
+  <div class="modal" style="max-width:560px">
+    <h2 id="wizTitle">Nouveau dossier — Étape 1/2</h2>
+    <div id="wizStep1">
+      <p style="color:var(--muted);font-size:13px;margin:0 0 14px">Quel salarié est concerné ?</p>
+      <div class="field"><select id="wiz_salarie"><option value="">— Sélectionner —</option></select></div>
+      <div class="modal-foot"><div></div><div class="right">
+        <button class="btn ghost" onclick="closeWizard()">Annuler</button>
+        <button class="btn primary" onclick="wizardNext()">Continuer →</button>
+      </div></div>
+    </div>
+    <div id="wizStep2" style="display:none">
+      <p style="color:var(--muted);font-size:13px;margin:0 0 14px">Quel type de manquement ? <span style="color:var(--info)">On te suggère la sanction adaptée.</span></p>
+      <div id="wizOpts"></div>
+      <div class="modal-foot"><div><button class="btn ghost sm" onclick="wizardBack()">← Retour</button></div><div class="right">
+        <button class="btn ghost" onclick="closeWizard()">Annuler</button>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<script src="../assistant-widget.js?v=4.8"></script>
+<script src="../autocomplete.js?v=1.0"></script>
 
 <script>
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 
+// Persistance des antécédents inclus : colonne antecedents_included appliquée le 2026-06-09.
+const HAS_ANTECEDENTS_COL = true;
+
 const TYPE_LABELS = {
-  avertissement:'Avertissement simple', blame:'Blâme',
+  avertissement:'Avertissement', blame:'Blâme',
   mise_a_pied_disciplinaire:'Mise à pied disciplinaire',
   mise_a_pied_conservatoire:'Mise à pied conservatoire',
-  licenciement_simple:'Licenciement faute simple',
-  licenciement_grave:'Licenciement faute grave',
-  licenciement_lourde:'Licenciement faute lourde',
+  licenciement_simple:'Licenciement pour faute simple',
+  licenciement_grave:'Licenciement pour faute grave',
+  licenciement_lourde:'Licenciement pour faute lourde',
   rupture_conventionnelle:'Rupture conventionnelle'
 };
 const STATUS_LABELS = {
@@ -331,241 +364,576 @@ const TYPE_CLASS = {
   licenciement_simple:'type-bg-licen', licenciement_grave:'type-bg-licen', licenciement_lourde:'type-bg-licen',
   rupture_conventionnelle:'type-bg-rupt'
 };
-const STEPS_ORDER = ['draft','convocation_envoyee','entretien_planifie','entretien_realise','sanction_notifiee','cloture'];
-const STEP_LABELS = ['Création','Convocation','Entretien planifié','Entretien réalisé','Sanction notifiée','Clôturé'];
 
 const LEGAL_INFOS = {
-  avertissement: '✓ Procédure simple : lettre recommandée AR ou remise main propre contre décharge. <b>Pas d\'entretien préalable obligatoire</b>. Prescription des faits : 2 mois.',
+  avertissement: '✓ Procédure simple : courrier en LR/AR ou remise main propre contre décharge. <b>Pas d\'entretien préalable obligatoire</b>. Prescription des faits : 2 mois.',
   blame: '✓ Identique à l\'avertissement : pas d\'entretien préalable obligatoire, mais inscrit au dossier disciplinaire.',
-  mise_a_pied_disciplinaire: '⚠ <b>Entretien préalable OBLIGATOIRE</b>. Durée max 3 jours ouvrables (sinon = licenciement déguisé). Convocation 5 jours ouvrables avant. Notification 2 j à 1 mois après entretien.',
-  mise_a_pied_conservatoire: '⚠ Mesure provisoire pendant procédure de licenciement (faute grave généralement). Salaire suspendu, à régulariser si licenciement non prononcé.',
-  licenciement_simple: '⚠ Procédure stricte : convocation entretien préalable (LR/AR ou main propre, 5 jours ouvrables avant), entretien, notification 2 j à 1 mois après. Préavis dû + indemnité de licenciement (1/4 mois par année jusqu\'à 10 ans, 1/3 au-delà).',
-  licenciement_grave: '⚠ Mise à pied conservatoire possible. Pas de préavis, pas d\'indemnité de licenciement. <b>Indemnité compensatrice CP</b> due.',
-  licenciement_lourde: '⚠ Cas exceptionnel (intention de nuire). Identique faute grave + <b>perte indemnité CP</b> jusqu\'en 2016 (jurisprudence). Très risqué : consulter avocat.',
-  rupture_conventionnelle: '✓ Procédure amiable. Entretien(s), CERFA 14598*01, délai rétractation 15 jours calendaires, homologation DREETS (15 jours ouvrés). Indemnité au moins égale à l\'indemnité légale de licenciement.'
+  mise_a_pied_disciplinaire: '⚠ <b>Entretien préalable OBLIGATOIRE</b>. Durée max 3 jours ouvrables. Convocation 5 jours ouvrables avant. Notification 2 j à 1 mois après entretien.',
+  mise_a_pied_conservatoire: '⚠ Mesure provisoire pendant une procédure de licenciement (faute grave). Salaire suspendu, à régulariser si licenciement non prononcé.',
+  licenciement_simple: '⚠ Procédure stricte : convocation entretien préalable (5 jours ouvrables avant), entretien, notification 2 j à 1 mois après. Préavis + indemnité de licenciement.',
+  licenciement_grave: '⚠ Mise à pied conservatoire possible. Pas de préavis, pas d\'indemnité de licenciement. Indemnité compensatrice de CP due.',
+  licenciement_lourde: '⚠ Cas exceptionnel (intention de nuire). Identique faute grave. Très risqué : consulter un avocat.',
+  rupture_conventionnelle: '✓ Procédure amiable : entretien(s), CERFA 14598*01, délai de rétractation 15 jours calendaires, homologation DREETS (15 jours ouvrés).'
 };
 
-let S = { dossiers:[], salaries:[], org:null, profile:null };
+// ─────────── DÉFINITION DES WORKFLOWS ───────────
+const WF = {
+  simple: [
+    { key:'creation', label:'Création', status:'draft', sec:'creation', requires:['ed_salarie','ed_motif_court','ed_motif_detail'],
+      assistant:"Renseigne le salarié, les faits et le motif. Tu peux générer la lettre puis la notifier.",
+      next:"Valider et notifier la sanction" },
+    { key:'notifie', label:'Notifiée → Clôturé', status:'sanction_notifiee', sec:'notifie', requires:['ed_notif_date'],
+      assistant:"Génère la lettre, remets-la au salarié (LR/AR ou main propre), puis clôture le dossier.",
+      next:"Clôturer le dossier" },
+    { key:'cloture', label:'Clôturé', status:'cloture', sec:'cloture', requires:[], assistant:"Dossier clôturé. Lecture seule.", next:null, locked:true },
+  ],
+  lourd: [
+    { key:'creation', label:'Création', status:'draft', sec:'creation', requires:['ed_salarie','ed_motif_court','ed_motif_detail','ed_faits_date'],
+      assistant:"Décris les faits et la sanction envisagée, puis prépare la convocation à l'entretien préalable.",
+      next:"Valider et préparer la convocation" },
+    { key:'convocation', label:'Convocation', status:'convocation_envoyee', sec:'convocation', requires:['ed_convoc_date','ed_entretien_date'],
+      assistant:"Programme l'entretien (≥ 5 jours ouvrables après l'envoi), génère la convocation et envoie-la en LRAR à l'adresse du salarié.",
+      next:"Valider — convocation envoyée" },
+    { key:'attente', label:'Entretien planifié', status:'entretien_planifie', sec:'attente', requires:[],
+      assistant:"Entretien programmé. Une fois l'entretien tenu, passe à l'étape suivante.",
+      next:"L'entretien a eu lieu" },
+    { key:'entretien', label:'Entretien réalisé', status:'entretien_realise', sec:'entretien', requires:['ed_entretien_pv','ed_entretien_held'],
+      assistant:"Saisis le compte-rendu de l'entretien et coche « entretien tenu ». La notification interviendra entre 2 jours ouvrables et 1 mois après.",
+      next:"Valider — entretien réalisé" },
+    { key:'notifie', label:'Sanction notifiée', status:'sanction_notifiee', sec:'notifie', requires:['ed_notif_date'],
+      assistant:"Notifie la sanction (2 j ouvrables à 1 mois après l'entretien) puis génère la lettre de sanction / licenciement.",
+      next:"Valider et clôturer" },
+    { key:'cloture', label:'Clôturé', status:'cloture', sec:'cloture', requires:[], assistant:"Dossier clôturé. Lecture seule.", next:null, locked:true },
+  ],
+  rupture: [
+    { key:'creation', label:'Création', status:'draft', sec:'creation', requires:['ed_salarie','ed_motif_court'],
+      assistant:"Renseigne le salarié et le contexte de la rupture conventionnelle.", next:"Étape suivante : entretien(s)" },
+    { key:'entretiens', label:'Entretien(s)', status:'entretien_planifie', sec:'attente', requires:[],
+      assistant:"Tenez le(s) entretien(s) préparatoire(s) à la rupture.", next:"Signer le CERFA 14598*01" },
+    { key:'cerfa', label:'CERFA', status:'entretien_realise', sec:'cloture', requires:[],
+      assistant:"Remplissez et signez le CERFA n°14598*01 (hors outil), puis démarrez le délai de rétractation.", next:"Démarrer la rétractation (15 j)" },
+    { key:'retractation', label:'Rétractation 15j', status:'sanction_notifiee', sec:'cloture', requires:[],
+      assistant:"Délai de rétractation de 15 jours calendaires. À l'issue, demandez l'homologation à la DREETS.", next:"Clôturer (homologué)" },
+    { key:'cloture', label:'Clôturé', status:'cloture', sec:'cloture', requires:[], assistant:"Rupture clôturée. Lecture seule.", next:null, locked:true },
+  ],
+};
+function wfKey(type){ if(type==='avertissement'||type==='blame')return 'simple'; if(type==='rupture_conventionnelle')return 'rupture'; return 'lourd'; }
+function wfSteps(type){ return WF[wfKey(type)]; }
+function stepIndexByStatus(type,status){ const st=wfSteps(type); let i=st.findIndex(s=>s.status===status); return i<0?0:i; }
+
+let S = { dossiers:[], salaries:[], restos:[], profile:null, params:null, antecedents:[], antIncluded:new Set(), curStepIdx:0, listTab:'encours',
+  filterSalarie:(localStorage.getItem('avert_flt_sal')||''), filterType:(localStorage.getItem('avert_flt_type')||'') };
 
 async function init(){
-  const { data: { session } } = await sb.auth.getSession();
+  const { data:{ session } } = await sb.auth.getSession();
   if (!session) { location.href = '../auth/index.html'; return; }
-  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire, adresse, code_postal, ville, siret)').eq('id', session.user.id).maybeSingle();
-  if (!profile) return;
-  if (!['admin','super_admin'].includes(profile.role)) {
-    document.body.innerHTML = '<div class="empty" style="margin:80px auto;max-width:500px">⛔ Accès réservé aux administrateurs uniquement (données sensibles).</div>';
-    return;
-  }
+  const { data: profile, error: pErr } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire)').eq('id', session.user.id).maybeSingle();
+  if (pErr || !profile) { document.body.innerHTML = '<div class="empty" style="margin:80px auto;max-width:500px">⚠️ Impossible de charger votre profil. Rechargez la page.</div>'; return; }
+  if (!['admin','super_admin'].includes(profile.role)) { document.body.innerHTML = '<div class="empty" style="margin:80px auto;max-width:500px">⛔ Accès réservé aux administrateurs.</div>'; return; }
   S.profile = profile;
+  const fp = await sb.from('fact_parametres').select('*').eq('organization_id', profile.organization_id).maybeSingle();
+  S.params = fp.data || {};
   document.getElementById('orgBadge').textContent = profile.organizations?.nom || 'org';
   if (profile.organizations?.couleur_primaire) document.documentElement.style.setProperty('--accent', profile.organizations.couleur_primaire);
-  const theme = localStorage.getItem('eatime_theme');
-  if (theme) document.documentElement.setAttribute('data-theme', theme);
-
+  const theme = localStorage.getItem('eatime_theme'); if (theme) document.documentElement.setAttribute('data-theme', theme);
   await loadAll();
   render();
 }
 
 async function loadAll(){
-  // Charger d'abord les salariés (priorité) puis les dossiers (peut planter si cache PostgREST pas prêt)
-  const s = await sb.from('salaries').select('id,nom,prenom,date_entree,date_naissance,adresse,code_postal,ville,poste_intitule,type_contrat,actif').order('nom');
-  if (s.error) console.error('[avertissements] erreur salaries:', s.error);
+  const SAL_COLS = 'id,nom,prenom,sexe,date_entree,date_naissance,adresse,code_postal,ville,poste_intitule,type_contrat,actif';
+  const s = await sb.from('salaries').select(SAL_COLS).order('nom');
+  if (s.error) console.error('[avert] salaries:', s.error);
   S.salaries = s.data || [];
-  // Dossiers : essai avec join, fallback sans
+  const rr = await sb.from('restaurants').select('id,nom,adresse,code_postal,ville').eq('organization_id', S.profile.organization_id).eq('actif',true).order('nom');
+  S.restos = rr.data || [];
+  const restoOpts = '<option value="">— Choisir un restaurant —</option>' + S.restos.map(r=>`<option value="${r.id}">${esc(r.nom)}</option>`).join('') + '<option value="__autre__">Autre / saisir manuellement…</option>';
+  const rsel = document.getElementById('ed_faits_restaurant');
+  if (rsel) rsel.innerHTML = restoOpts;
+  const esel = document.getElementById('ed_entretien_restaurant');
+  if (esel) esel.innerHTML = restoOpts;
   let d = await sb.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at', { ascending: false });
   if (d.error) {
-    console.warn('[avertissements] join échoué, fallback sans join:', d.error);
     d = await sb.from('disciplinary_actions').select('*').order('created_at', { ascending: false });
-    // hydrate manuellement le champ salarie depuis S.salaries
-    (d.data || []).forEach(x => {
-      const sal = S.salaries.find(z => z.id === x.salarie_id);
-      x.salarie = sal ? { id: sal.id, nom: sal.nom, prenom: sal.prenom } : null;
-    });
+    (d.data || []).forEach(x => { const sal = S.salaries.find(z=>z.id===x.salarie_id); x.salarie = sal ? {id:sal.id,nom:sal.nom,prenom:sal.prenom} : null; });
   }
-  if (d.error) console.error('[avertissements] erreur dossiers:', d.error);
   S.dossiers = d.data || [];
-  const sel = document.getElementById('ed_salarie');
-  sel.innerHTML = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}${x.actif===false?' (archivé)':''}</option>`).join('');
-  console.log('[avertissements] chargé:', S.salaries.length, 'salariés,', S.dossiers.length, 'dossiers');
+  const opts = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${esc(x.nom)} ${esc(x.prenom||'')}${x.actif===false?' (archivé)':''}</option>`).join('');
+  const sel = document.getElementById('ed_salarie'); sel.innerHTML = opts; EatimeAutocomplete.enhance(sel, { placeholder:'Tape un nom de salarié…' });
+  const wsel = document.getElementById('wiz_salarie'); wsel.innerHTML = opts; EatimeAutocomplete.enhance(wsel, { placeholder:'Tape un nom de salarié…' });
+  populateFilters();
 }
 
+// ─────────── LISTE ───────────
+function setListTab(t){ S.listTab=t; document.querySelectorAll('.subtab').forEach(x=>x.classList.toggle('active',x.dataset.tab===t)); render(); }
+// ─────────── FILTRES LISTE (salarié + type), persistés en localStorage ───────────
+function populateFilters(){
+  const fs=document.getElementById('flt_salarie'); const ft=document.getElementById('flt_type');
+  if(!fs||!ft) return;
+  // Salariés réellement présents dans des dossiers (plus pertinent que toute la base)
+  const ids=[...new Set(S.dossiers.map(d=>d.salarie_id).filter(Boolean))];
+  const sals=ids.map(id=>{ const s=S.salaries.find(x=>x.id===id); const dd=S.dossiers.find(d=>d.salarie_id===id); const nm=s?`${s.nom} ${s.prenom||''}`.trim():(dd&&dd.salarie?`${dd.salarie.nom} ${dd.salarie.prenom||''}`.trim():'—'); return {id,nm}; }).sort((a,b)=>a.nm.localeCompare(b.nm));
+  fs.innerHTML='<option value="">Tous les salariés</option>'+sals.map(s=>`<option value="${s.id}">${esc(s.nm)}</option>`).join('');
+  // Types présents dans les dossiers
+  const types=[...new Set(S.dossiers.map(d=>d.type).filter(Boolean))].sort((a,b)=>(TYPE_LABELS[a]||a).localeCompare(TYPE_LABELS[b]||b));
+  ft.innerHTML='<option value="">Tous les types</option>'+types.map(t=>`<option value="${t}">${esc(TYPE_LABELS[t]||t)}</option>`).join('');
+  fs.value=S.filterSalarie||''; ft.value=S.filterType||'';
+}
+function applyFilters(){
+  S.filterSalarie=document.getElementById('flt_salarie').value||'';
+  S.filterType=document.getElementById('flt_type').value||'';
+  localStorage.setItem('avert_flt_sal',S.filterSalarie); localStorage.setItem('avert_flt_type',S.filterType);
+  render();
+}
+function resetFilters(){
+  S.filterSalarie=''; S.filterType='';
+  localStorage.removeItem('avert_flt_sal'); localStorage.removeItem('avert_flt_type');
+  const fs=document.getElementById('flt_salarie'), ft=document.getElementById('flt_type');
+  if(fs)fs.value=''; if(ft)ft.value='';
+  render();
+}
+function nextDeadline(d){
+  // renvoie {date, label} de la prochaine échéance légale, ou null
+  const today = new Date(); today.setHours(0,0,0,0);
+  if (d.status==='entretien_realise' && d.entretien_date){ const lim=addDays(d.entretien_date,30); return {date:lim,label:'notifier avant'}; }
+  if ((d.status==='convocation_envoyee'||d.status==='entretien_planifie') && d.entretien_date){ return {date:new Date(d.entretien_date),label:'entretien'}; }
+  if (d.status==='draft' && d.faits_date){ const lim=addDays(d.faits_date,60); return {date:lim,label:'prescription faits'}; }
+  return null;
+}
 function render(){
   const list = document.getElementById('list');
-  if (!S.dossiers.length) {
-    list.innerHTML = '<div class="empty">Aucun dossier disciplinaire.<br><br>Cliquer sur <b>+ Nouveau dossier</b> pour démarrer.</div>';
-    return;
+  const closedSet = ['cloture','annulee','contestee'];
+  let items = S.dossiers.filter(d => S.listTab==='cloture' ? closedSet.includes(d.status) : !closedSet.includes(d.status));
+  // Filtres salarié + type (combinables)
+  if (S.filterSalarie) items = items.filter(d=>d.salarie_id===S.filterSalarie);
+  if (S.filterType) items = items.filter(d=>d.type===S.filterType);
+  const fr=document.getElementById('fltReset'); if(fr) fr.style.display=(S.filterSalarie||S.filterType)?'':'none';
+  if (S.listTab==='encours'){
+    items = items.map(d=>({d, dl:nextDeadline(d)})).sort((a,b)=>{
+      const ta=a.dl?a.dl.date.getTime():8e15, tb=b.dl?b.dl.date.getTime():8e15; return ta-tb;
+    }).map(x=>x.d);
   }
-  list.innerHTML = S.dossiers.map(d => {
+  if (!items.length){ const filtered=(S.filterSalarie||S.filterType); list.innerHTML = `<div class="empty">${filtered?'Aucun dossier ne correspond aux filtres.':(S.listTab==='cloture'?'Aucun dossier clôturé.':'Aucun dossier en cours.<br><br>Clique sur <b>+ Nouveau dossier</b>.')}</div>`; return; }
+  list.innerHTML = items.map(d => {
     const sal = d.salarie ? `${d.salarie.nom} ${d.salarie.prenom||''}` : '—';
-    const typeCls = TYPE_CLASS[d.type] || '';
-    const statCls = STATUS_CLASS[d.status] || 'bd-draft';
+    const dl = nextDeadline(d);
+    let dlHtml='';
+    if (dl){ const days=Math.round((dl.date - new Date())/86400000); const cls=days<0?'late':(days<=3?'soon':'ok');
+      dlHtml=`<span class="deadline ${cls}">⏳ ${dl.label} : ${fmtDate(dl.date)} (${days<0?'dépassé de '+(-days)+'j':'J-'+days})</span>`; }
     return `<div class="card" onclick="openEdit('${d.id}')">
       <div class="card-head">
-        <span class="badge ${typeCls}">${TYPE_LABELS[d.type]||d.type}</span>
-        <span class="name">${esc(sal)}</span>
-        <span class="sp"></span>
-        <span class="badge ${statCls}">${STATUS_LABELS[d.status]||d.status}</span>
+        <span class="badge ${TYPE_CLASS[d.type]||''}">${TYPE_LABELS[d.type]||d.type}</span>
+        <span class="name">${esc(sal)}</span><span class="sp"></span>
+        <span class="badge ${STATUS_CLASS[d.status]||'bd-draft'}">${STATUS_LABELS[d.status]||d.status}</span>
       </div>
       <div style="margin-top:8px;font-size:13px">${esc(d.motif_court||'')}</div>
       <div class="card-meta">
         ${d.faits_date?`<span>📍 Faits : ${fmtDate(d.faits_date)}</span>`:''}
         ${d.entretien_date?`<span>👥 Entretien : ${fmtDate(d.entretien_date)}</span>`:''}
         ${d.notification_date?`<span>📨 Notifié : ${fmtDate(d.notification_date)}</span>`:''}
-        ${d.date_effet?`<span>⚡ Effet : ${fmtDate(d.date_effet)}</span>`:''}
+        ${dlHtml}
+        <button class="card-pdf" onclick="openDocsMenu('${d.id}',event)" title="Voir / télécharger les courriers générés">📄 PDF</button>
       </div>
     </div>`;
   }).join('');
 }
-function esc(s){return (s||'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))}
+function esc(s){return (s||'').toString().replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmtDate(d){return d?new Date(d).toLocaleDateString('fr-FR'):'—'}
+function fmtDateLong(d){return d?new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'__________'}
+function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
+function joursOuvrables(d1,d2){ if(!d1||!d2)return null; let n=0; const a=new Date(d1),b=new Date(d2); for(let t=new Date(a.getTime()+86400000);t<=b;t.setDate(t.getDate()+1)){const w=t.getDay();if(w!==0&&w!==6)n++;} return n; }
 
-async function openNew(){
-  // Re-fetch salariés si la liste est vide
-  if (!S.salaries.length) {
-    const s = await sb.from('salaries').select('id,nom,prenom,date_entree,date_naissance,adresse,code_postal,ville,poste_intitule,type_contrat,actif').order('nom');
-    S.salaries = s.data || [];
-    const sel = document.getElementById('ed_salarie');
-    sel.innerHTML = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}${x.actif===false?' (archivé)':''}</option>`).join('');
-    if (!S.salaries.length) { alert('Aucun salarié trouvé. Vérifie que ton organisation a bien des fiches salariés enregistrées.'); return; }
+// ─────────── WIZARD ───────────
+const WIZ_OPTS = [
+  { t:'avertissement', titre:'Manquement isolé (1ʳᵉ fois)', desc:'Retard, absence injustifiée ponctuelle, négligence légère → Avertissement' },
+  { t:'mise_a_pied_disciplinaire', titre:'Récidive après un avertissement', desc:'Le salarié a déjà été averti et recommence → Mise à pied disciplinaire' },
+  { t:'licenciement_grave', titre:'Faute grave', desc:'Vol, violence, insubordination caractérisée, stupéfiants, abandon de poste → Licenciement faute grave' },
+  { t:'rupture_conventionnelle', titre:'Départ à l\'amiable', desc:'Rupture négociée d\'un commun accord → Rupture conventionnelle' },
+  { t:'avertissement', titre:'Je choisis moi-même', desc:'Ouvrir le dossier et choisir le type manuellement', manual:true },
+];
+function openNew(){
+  if (!S.salaries.length){ alert('Aucun salarié enregistré pour ton organisation.'); return; }
+  document.getElementById('wiz_salarie').value='';
+  document.getElementById('wizStep1').style.display='';
+  document.getElementById('wizStep2').style.display='none';
+  document.getElementById('wizTitle').textContent='Nouveau dossier — Étape 1/2';
+  document.getElementById('wizard').classList.add('open');
+}
+function closeWizard(){ document.getElementById('wizard').classList.remove('open'); }
+function wizardBack(){ document.getElementById('wizStep1').style.display=''; document.getElementById('wizStep2').style.display='none'; document.getElementById('wizTitle').textContent='Nouveau dossier — Étape 1/2'; }
+function wizardNext(){
+  const sid = document.getElementById('wiz_salarie').value;
+  if (!sid){ alert('Choisis un salarié.'); return; }
+  document.getElementById('wizStep1').style.display='none';
+  document.getElementById('wizStep2').style.display='';
+  document.getElementById('wizTitle').textContent='Nouveau dossier — Étape 2/2';
+  document.getElementById('wizOpts').innerHTML = WIZ_OPTS.map((o,i)=>`<button class="wiz-opt" onclick="wizardPick(${i})"><b>${esc(o.titre)}</b><small>${esc(o.desc)}</small></button>`).join('');
+}
+function wizardPick(i){
+  const o = WIZ_OPTS[i];
+  const sid = document.getElementById('wiz_salarie').value;
+  closeWizard();
+  openModal(null, { salarie_id:sid, type:o.t });
+}
+
+// ─────────── MODAL ───────────
+function blankFields(){
+  ['ed_faits_lieu','ed_faits_heure','ed_faits_impact','ed_motif_court','ed_motif_detail','ed_convoc_date','ed_entretien_date','ed_entretien_heure','ed_entretien_lieu','ed_entretien_assistant','ed_entretien_pv','ed_notif_date','ed_effet_date','ed_map_debut','ed_map_fin','ed_map_jours','ed_ind_lic','ed_ind_pre','ed_ind_cp','ed_preavis_jours','ed_notes'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('ed_preavis_eff').checked=false;
+  document.getElementById('ed_entretien_held').checked=false;
+  document.getElementById('ed_faits_date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('ed_faits_restaurant').value='';
+  document.getElementById('ed_faits_lieu').style.display='none';
+  document.getElementById('ed_entretien_restaurant').value='';
+  const _eman=document.getElementById('ed_entretien_lieu'); _eman.style.display='none'; _eman.readOnly=false;
+  document.getElementById('ed_mode_remise').value='lrar';
+}
+function onFaitsLieuChange(){
+  const v=document.getElementById('ed_faits_restaurant').value;
+  const man=document.getElementById('ed_faits_lieu');
+  if(v==='__autre__'){ man.style.display=''; }
+  else { man.style.display='none'; man.value=''; }
+}
+// Adresse complète d'un restaurant : "Nom, adresse, CP Ville"
+function restoFullStr(rr){ return rr?[rr.nom, rr.adresse, [rr.code_postal,rr.ville].filter(Boolean).join(' ').trim()].filter(Boolean).join(', '):''; }
+// Lieu d'entretien : un resto sélectionné remplit le champ texte (persisté) avec l'adresse exacte ; « Autre » = saisie libre.
+function onEntretienLieuChange(){
+  const v=document.getElementById('ed_entretien_restaurant').value;
+  const man=document.getElementById('ed_entretien_lieu');
+  if(v==='__autre__'){ man.style.display=''; man.readOnly=false; man.value=''; man.focus(); }
+  else if(v){ const rr=S.restos.find(x=>x.id===v); man.value=restoFullStr(rr); man.style.display='none'; man.readOnly=true; }
+  else { man.style.display='none'; man.value=''; man.readOnly=false; }
+  if(typeof refreshPdfButtons==='function') refreshPdfButtons();
+}
+function fillFields(d){
+  const set=(id,v)=>{document.getElementById(id).value=v||'';};
+  set('ed_faits_date',d.faits_date); set('ed_faits_lieu',d.faits_lieu); set('ed_motif_court',d.motif_court); set('ed_motif_detail',d.motif_detail);
+  set('ed_faits_heure',(d.faits_heure||'').slice(0,5)); set('ed_faits_impact',d.faits_impact);
+  const _rsel=document.getElementById('ed_faits_restaurant'), _man=document.getElementById('ed_faits_lieu');
+  if(d.faits_restaurant_id){ _rsel.value=d.faits_restaurant_id; _man.style.display='none'; }
+  else if(d.faits_lieu){ _rsel.value='__autre__'; _man.style.display=''; }
+  else { _rsel.value=''; _man.style.display='none'; }
+  set('ed_convoc_date',d.convocation_date); set('ed_entretien_date',d.entretien_date); set('ed_entretien_heure',d.entretien_heure); set('ed_entretien_lieu',d.entretien_lieu);
+  // Lieu entretien : retrouve le resto si l'adresse stockée correspond, sinon « Autre » (saisie libre)
+  const _esel=document.getElementById('ed_entretien_restaurant'), _eman=document.getElementById('ed_entretien_lieu');
+  const _matchResto=(S.restos||[]).find(r=>restoFullStr(r)===(d.entretien_lieu||''));
+  if(_matchResto){ _esel.value=_matchResto.id; _eman.style.display='none'; _eman.readOnly=true; }
+  else if(d.entretien_lieu){ _esel.value='__autre__'; _eman.style.display=''; _eman.readOnly=false; }
+  else { _esel.value=''; _eman.style.display='none'; _eman.readOnly=false; }
+  set('ed_entretien_assistant',d.entretien_assistant); set('ed_entretien_pv',d.entretien_pv);
+  set('ed_notif_date',d.notification_date); set('ed_effet_date',d.date_effet);
+  set('ed_map_debut',d.mise_a_pied_debut); set('ed_map_fin',d.mise_a_pied_fin); set('ed_map_jours',d.mise_a_pied_jours);
+  set('ed_ind_lic',d.indemnite_licenciement); set('ed_ind_pre',d.indemnite_compensatrice_preavis); set('ed_ind_cp',d.indemnite_compensatrice_cp);
+  set('ed_preavis_jours',d.preavis_jours); set('ed_notes',d.notes); set('ed_mode_remise',d.mode_remise||'lrar');
+  document.getElementById('ed_preavis_eff').checked=!!d.preavis_effectue;
+  document.getElementById('ed_entretien_held').checked=!!d.entretien_held;
+}
+async function openModal(d, preset){
+  blankFields();
+  if (d){
+    document.getElementById('modalTitle').textContent = 'Dossier · ' + (d.salarie?`${d.salarie.nom} ${d.salarie.prenom||''}`:'—');
+    document.getElementById('ed_id').value=d.id;
+    document.getElementById('ed_salarie').value=d.salarie_id||'';
+    document.getElementById('ed_type').value=d.type;
+    document.getElementById('ed_status').value=d.status||'draft';
+    fillFields(d);
+    document.getElementById('btnDel').style.display='';
+    S.curStepIdx = stepIndexByStatus(d.type, d.status||'draft');
+  } else {
+    document.getElementById('modalTitle').textContent='Nouveau dossier disciplinaire';
+    document.getElementById('ed_id').value='';
+    document.getElementById('ed_salarie').value=preset?.salarie_id||'';
+    document.getElementById('ed_type').value=preset?.type||'avertissement';
+    document.getElementById('ed_status').value='draft';
+    document.getElementById('btnDel').style.display='none';
+    S.curStepIdx = 0;
   }
-  document.getElementById('modalTitle').textContent = 'Nouveau dossier disciplinaire';
-  document.getElementById('ed_id').value = '';
-  document.getElementById('ed_salarie').value = '';
-  document.getElementById('ed_type').value = 'avertissement';
-  document.getElementById('ed_faits_date').value = new Date().toISOString().slice(0,10);
-  document.getElementById('ed_faits_lieu').value = '';
-  document.getElementById('ed_motif_court').value = '';
-  document.getElementById('ed_motif_detail').value = '';
-  document.getElementById('ed_convoc_date').value = '';
-  document.getElementById('ed_entretien_date').value = '';
-  document.getElementById('ed_entretien_heure').value = '';
-  document.getElementById('ed_entretien_lieu').value = '';
-  document.getElementById('ed_entretien_assistant').value = '';
-  document.getElementById('ed_entretien_pv').value = '';
-  document.getElementById('ed_notif_date').value = '';
-  document.getElementById('ed_effet_date').value = '';
-  document.getElementById('ed_map_debut').value = '';
-  document.getElementById('ed_map_fin').value = '';
-  document.getElementById('ed_map_jours').value = '';
-  document.getElementById('ed_ind_lic').value = '';
-  document.getElementById('ed_ind_pre').value = '';
-  document.getElementById('ed_ind_cp').value = '';
-  document.getElementById('ed_preavis_jours').value = '';
-  document.getElementById('ed_preavis_eff').checked = false;
-  document.getElementById('ed_status').value = 'draft';
-  document.getElementById('ed_notes').value = '';
-  document.getElementById('btnDel').style.display = 'none';
   onTypeChange();
-  renderSteps('draft');
+  await loadAntecedents(document.getElementById('ed_salarie').value, document.getElementById('ed_id').value);
+  renderWorkflow();
   document.getElementById('modalEdit').classList.add('open');
 }
-
-function openEdit(id){
-  const d = S.dossiers.find(x=>x.id===id);
-  if (!d) return;
-  document.getElementById('modalTitle').textContent = 'Modifier dossier · ' + (d.salarie?`${d.salarie.nom} ${d.salarie.prenom||''}`:'—');
-  document.getElementById('ed_id').value = d.id;
-  document.getElementById('ed_salarie').value = d.salarie_id || '';
-  document.getElementById('ed_type').value = d.type;
-  document.getElementById('ed_faits_date').value = d.faits_date || '';
-  document.getElementById('ed_faits_lieu').value = d.faits_lieu || '';
-  document.getElementById('ed_motif_court').value = d.motif_court || '';
-  document.getElementById('ed_motif_detail').value = d.motif_detail || '';
-  document.getElementById('ed_convoc_date').value = d.convocation_date || '';
-  document.getElementById('ed_entretien_date').value = d.entretien_date || '';
-  document.getElementById('ed_entretien_heure').value = d.entretien_heure || '';
-  document.getElementById('ed_entretien_lieu').value = d.entretien_lieu || '';
-  document.getElementById('ed_entretien_assistant').value = d.entretien_assistant || '';
-  document.getElementById('ed_entretien_pv').value = d.entretien_pv || '';
-  document.getElementById('ed_notif_date').value = d.notification_date || '';
-  document.getElementById('ed_effet_date').value = d.date_effet || '';
-  document.getElementById('ed_map_debut').value = d.mise_a_pied_debut || '';
-  document.getElementById('ed_map_fin').value = d.mise_a_pied_fin || '';
-  document.getElementById('ed_map_jours').value = d.mise_a_pied_jours || '';
-  document.getElementById('ed_ind_lic').value = d.indemnite_licenciement || '';
-  document.getElementById('ed_ind_pre').value = d.indemnite_compensatrice_preavis || '';
-  document.getElementById('ed_ind_cp').value = d.indemnite_compensatrice_cp || '';
-  document.getElementById('ed_preavis_jours').value = d.preavis_jours || '';
-  document.getElementById('ed_preavis_eff').checked = !!d.preavis_effectue;
-  document.getElementById('ed_status').value = d.status || 'draft';
-  document.getElementById('ed_notes').value = d.notes || '';
-  document.getElementById('btnDel').style.display = '';
-  onTypeChange();
-  renderSteps(d.status);
-  document.getElementById('modalEdit').classList.add('open');
-}
+function openEdit(id){ const d=S.dossiers.find(x=>x.id===id); if(d) openModal(d); }
+function closeModal(){ document.getElementById('modalEdit').classList.remove('open'); }
 
 function onTypeChange(){
   const t = document.getElementById('ed_type').value;
   document.getElementById('legalInfo').innerHTML = LEGAL_INFOS[t] || '';
-  // Procédure obligatoire dès qu'on touche au licenciement ou mise à pied
-  const needsProc = ['mise_a_pied_disciplinaire','mise_a_pied_conservatoire','licenciement_simple','licenciement_grave','licenciement_lourde','rupture_conventionnelle'].includes(t);
-  document.getElementById('procedureSection').style.display = needsProc?'':'none';
-  document.getElementById('notifSection').style.display = ['mise_a_pied_disciplinaire','licenciement_simple','licenciement_grave','licenciement_lourde'].includes(t)?'':'none';
   document.getElementById('mapSection').style.display = t==='mise_a_pied_disciplinaire'?'':'none';
   document.getElementById('indemSection').style.display = t.startsWith('licenciement')?'':'none';
+  // si on change de type au moment de la création, l'index d'étape reste valide (0)
+  if (!document.getElementById('ed_id').value) S.curStepIdx = Math.min(S.curStepIdx, wfSteps(t).length-1);
+  renderWorkflow();
+}
+async function onSalarieChange(){
+  await loadAntecedents(document.getElementById('ed_salarie').value, document.getElementById('ed_id').value);
+  renderWorkflow();
 }
 
-function checkDelai(){
-  const c = document.getElementById('ed_convoc_date').value;
-  const e = document.getElementById('ed_entretien_date').value;
-  const w = document.getElementById('warnDelai');
-  if (c && e) {
-    const diff = (new Date(e) - new Date(c)) / 86400000;
-    if (diff < 5) {
-      w.style.display = '';
-      w.innerHTML = `⏱ <b>Délai NON respecté</b> : seulement ${Math.floor(diff)} jour(s) entre convocation et entretien. Minimum légal = <b>5 jours ouvrables</b>.`;
-    } else {
-      w.style.display = '';
-      w.style.background = 'rgba(16,185,129,.08)';
-      w.style.borderColor = '#10b98155';
-      w.style.color = '#10b981';
-      w.innerHTML = `✓ Délai respecté (${Math.floor(diff)} jours).`;
-    }
-  } else {
-    w.style.display = 'none';
+// ─────────── ANTÉCÉDENTS ───────────
+async function loadAntecedents(salId, excludeId){
+  S.antecedents=[]; S.antIncluded=new Set();
+  if (salId){
+    const { data } = await sb.from('disciplinary_actions')
+      .select('id,type,motif_court,notification_date,date_effet,faits_date,status')
+      .eq('salarie_id', salId).in('status',['sanction_notifiee','cloture'])
+      .order('notification_date',{ascending:false,nullsFirst:false});
+    S.antecedents = (data||[]).filter(a=>a.id!==excludeId);
+    S.antIncluded = new Set(S.antecedents.map(a=>a.id));
   }
+  renderAntecedents();
+}
+function renderAntecedents(){
+  const box = document.getElementById('antecedentsBox');
+  const type = document.getElementById('ed_type').value;
+  const isLic = type.startsWith('licenciement');
+  let warn='';
+  if (isLic && S.antecedents.length===0)
+    warn = `<div class="orange-box" style="margin-top:8px">⚠ Aucun avertissement préalable au dossier — un licenciement direct pour faute simple est juridiquement risqué, sauf faute grave ou lourde caractérisée.</div>`;
+  if (!S.antecedents.length){
+    box.innerHTML = `<div class="ant-box"><div class="ant-title">📚 Antécédents disciplinaires de ce salarié</div><div style="font-size:12.5px;color:var(--muted)">Aucun antécédent disciplinaire.</div></div>${warn}`;
+    return;
+  }
+  box.innerHTML = `<div class="ant-box">
+    <div class="ant-title">📚 Antécédents disciplinaires de ce salarié (${S.antecedents.length})</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Coche ceux à rappeler dans la lettre de sanction.</div>
+    ${S.antecedents.map(a=>`<label class="ant-item">
+      <input type="checkbox" ${S.antIncluded.has(a.id)?'checked':''} onchange="toggleAnt('${a.id}')">
+      <span><b>${fmtDate(a.notification_date||a.date_effet||a.faits_date)}</b> · ${esc(TYPE_LABELS[a.type]||a.type)} — ${esc(a.motif_court||'—')}
+      <a onclick="event.preventDefault();openEdit('${a.id}')" href="#" style="color:var(--accent);margin-left:6px">voir</a></span>
+    </label>`).join('')}
+  </div>${warn}`;
+}
+function toggleAnt(id){ if(S.antIncluded.has(id)) S.antIncluded.delete(id); else S.antIncluded.add(id); }
+function selectedAntecedents(){ return S.antecedents.filter(a=>S.antIncluded.has(a.id)); }
+
+// Récapitulatif lecture seule des données figées de l'étape Création (affiché aux étapes suivantes)
+function renderRecap(atCreation){
+  const el=document.getElementById('recapPanel'); if(!el) return;
+  if (atCreation){ el.innerHTML=''; return; }
+  const g=id=>(document.getElementById(id).value||'').trim();
+  const sal=S.salaries.find(x=>x.id===document.getElementById('ed_salarie').value);
+  const salN=sal?`${sal.nom} ${sal.prenom||''}`.trim():'—';
+  const typeN=TYPE_LABELS[document.getElementById('ed_type').value]||'—';
+  const fd=g('ed_faits_date'), fh=g('ed_faits_heure');
+  const quand= fd?(fmtDateLong(fd)+(fh?` à ${fh.slice(0,5).replace(':','h')}`:'')):'—';
+  const rid=document.getElementById('ed_faits_restaurant').value; let lieu='—';
+  if (rid && rid!=='__autre__'){ const rr=S.restos.find(x=>x.id===rid); lieu=rr?rr.nom:'—'; }
+  else if (g('ed_faits_lieu')) lieu=g('ed_faits_lieu');
+  const row=(lbl,val)=>`<div style="display:flex;gap:10px;padding:6px 0;border-top:1px solid var(--border);font-size:12.5px"><span style="color:var(--muted);min-width:120px;flex-shrink:0">${lbl}</span><span style="flex:1;white-space:pre-wrap">${esc(val||'—')}</span></div>`;
+  el.innerHTML=`<div class="ant-box" style="border-color:var(--accent)">
+    <div class="ant-title">📄 Récapitulatif du dossier <span style="font-weight:400;text-transform:none;color:var(--muted)">— lecture seule (reviens à « Création » pour modifier)</span></div>
+    ${row('Salarié', salN)}${row('Type de sanction', typeN)}${row('Faits', quand)}${row('Lieu', lieu)}${row('Motif', g('ed_motif_court'))}${row('Détail', g('ed_motif_detail'))}${g('ed_faits_impact')?row('Impact', g('ed_faits_impact')):''}
+  </div>`;
 }
 
-function renderSteps(currentStatus){
-  const box = document.getElementById('steps');
-  const idx = STEPS_ORDER.indexOf(currentStatus);
-  box.innerHTML = STEPS_ORDER.map((s,i)=>{
-    let cls = '';
-    if (i < idx) cls = 'done';
-    else if (i === idx) cls = 'current';
-    return `<div class="step ${cls}"><span class="num">${i<idx?'✓':i+1}</span>${STEP_LABELS[i]}</div>`;
+// ─────────── WORKFLOW UI ───────────
+function renderWorkflow(){
+  const type = document.getElementById('ed_type').value;
+  const steps = wfSteps(type);
+  const status = document.getElementById('ed_status').value;
+  const frontier = stepIndexByStatus(type, status);   // étape la plus avancée atteinte
+  if (S.curStepIdx > frontier) S.curStepIdx = frontier;
+  const cur = steps[S.curStepIdx];
+  const locked = cur.locked || status==='cloture';
+
+  // Steps pills
+  document.getElementById('steps').innerHTML = steps.map((s,i)=>{
+    let cls='future', click='';
+    if (i<frontier){ cls='done'; click=`onclick="gotoStep(${i})"`; }
+    else if (i===frontier){ cls='current'; click=`onclick="gotoStep(${i})"`; }
+    if (i===S.curStepIdx) cls += ' current';
+    return `<div class="step ${cls}" ${click}><span class="num">${i<frontier?'✓':i+1}</span>${s.label}</div>`;
   }).join('');
+
+  // Assistant
+  document.getElementById('assistantBanner').innerHTML = `📍 <b>Étape : ${cur.label}.</b> ${esc(cur.assistant)}`;
+
+  // Sections : on n'affiche que celle de l'étape courante (+ identification toujours visible en haut)
+  document.querySelectorAll('[data-step-section]').forEach(el=>{ el.style.display = (el.dataset.stepSection===cur.sec)?'':'none'; });
+
+  // Verrouillage des champs en lecture seule si clôturé
+  document.querySelectorAll('#modalEdit input, #modalEdit textarea, #modalEdit select').forEach(el=>{
+    if (el.id==='ed_id'||el.id==='ed_status') return;
+    el.disabled = locked && el.id!=='ed_mode_remise';
+  });
+  // Le type/salarié ne sont éditables qu'à la création
+  const atCreation = cur.key==='creation';
+  document.getElementById('ed_salarie').disabled = !atCreation || locked;
+  document.getElementById('ed_type').disabled = !atCreation || locked;
+  // Hors création : on fige l'identification + les faits en récapitulatif lecture seule
+  document.getElementById('identBlock').style.display = atCreation ? '' : 'none';
+  renderRecap(atCreation);
+
+  // Boutons PDF contextuels
+  renderPdfButtons(cur, type, locked);
+
+  // Bouton avancer (uniquement sur la frontière, si étape suivante existe)
+  const adv = document.getElementById('advanceBox');
+  if (!locked && S.curStepIdx===frontier && cur.next){
+    const advLabel = cur.key==='creation' ? '✓ Valider' : cur.next;
+    adv.innerHTML = `<button class="btn success" onclick="advanceStep()">${esc(advLabel)} →</button>`;
+  } else if (locked){
+    adv.innerHTML = `<div class="locked-note">Dossier clôturé — lecture seule. (Tu peux toujours régénérer les courriers.)</div>`;
+  } else { adv.innerHTML=''; }
+
+  // Panneau légal + mini-calendrier (uniquement à l'étape Notification)
+  renderNotifPanel(cur, type);
+
+  // Recalcule les alertes inline visibles
+  checkPrescription(); checkConvocDelai(); checkNotifDelai();
+}
+function renderPdfButtons(cur, type, locked){
+  const z=document.getElementById('pdfButtons'); const hint=document.getElementById('pdfHint'); const pdfZone=document.getElementById('pdfZone');
+  let btns=[]; let h='';
+  const isLic = type.startsWith('licenciement');
+  const isMap = type==='mise_a_pied_disciplinaire';
+  if (wfKey(type)==='simple' && cur.key==='notifie'){
+    btns.push({kind:'avertissement', cls:'warn', label:`📄 Générer la lettre ${type==='blame'?'de blâme':'d\'avertissement'}`});
+  } else if (cur.key==='convocation'){
+    btns.push({kind:'convocation', cls:'warn', label:'📄 Générer la convocation à entretien préalable'});
+  } else if (cur.key==='notifie' && wfKey(type)==='lourd'){
+    if (isLic) btns.push({kind:'licenciement', cls:'danger', label:'📄 Générer la lettre de licenciement'});
+    else btns.push({kind:'sanction', cls:'', label:isMap?'📄 Générer la notification de mise à pied':'📄 Générer la notification de sanction'});
+  } else if (wfKey(type)==='lourd' && cur.key==='cloture'){
+    // en clôture on autorise la régénération de la dernière lettre
+    if (isLic) btns.push({kind:'licenciement', cls:'danger', label:'📄 Régénérer la lettre de licenciement'});
+    else btns.push({kind:'sanction', cls:'', label:'📄 Régénérer la notification'});
+  } else if (wfKey(type)==='rupture' && (cur.key==='cerfa'||cur.key==='retractation'||cur.key==='cloture')){
+    btns.push({kind:'rupture', cls:'', label:'📄 Générer la convention de rupture conventionnelle'});
+  }
+  if (cur.key==='creation' && wfKey(type)==='lourd'){ h='ℹ️ La lettre de sanction/licenciement ne sera disponible qu\'après l\'entretien préalable (étape « Sanction notifiée »).'; }
+  pdfZone.style.display = btns.length ? '' : (h?'':'none');
+  if (!btns.length && h){ pdfZone.style.display=''; }
+  S._cur=cur; S._locked=locked;   // mémorisé pour le rafraîchissement live des boutons
+  z.innerHTML = btns.map(b=>{
+    const miss=missingFieldsFor(b.kind, type);
+    const dis=miss.length>0;
+    const tip=dis?`Champs à compléter : ${miss.join(', ')}`:'Courrier prêt à générer (LR/AR ou remise en main propre).';
+    return `<button class="btn ${b.cls}${dis?' isdis':''}" title="${esc(tip)}" onclick="onGenClick('${b.kind}')">${b.label}</button>`;
+  }).join('');
+  // Récap des champs manquants sous les boutons
+  const allMiss = btns.length ? missingFieldsFor(btns[0].kind, type) : [];
+  if (btns.length && allMiss.length) hint.innerHTML = `⚠ <b>Champs requis manquants :</b> ${esc(allMiss.join(', '))}.`;
+  else hint.textContent = btns.length ? 'Courrier à envoyer en LR/AR ou à remettre en main propre contre décharge.' : h;
+}
+// Champs strictement requis pour générer chaque type de courrier
+const PDF_FIELD_LABELS={ ed_motif_court:'Motif court', ed_motif_detail:'Détail des faits', ed_faits_date:'Date des faits',
+  ed_entretien_date:"Date d'entretien", ed_entretien_lieu:"Lieu d'entretien", ed_notif_date:'Date de notification',
+  ed_effet_date:"Date d'effet", ed_map_debut:'Date début mise à pied', ed_map_fin:'Date fin mise à pied', ed_map_jours:'Nombre de jours' };
+function requiredForPdf(kind,type){
+  if(kind==='convocation') return ['ed_motif_court','ed_entretien_date','ed_entretien_lieu'];
+  if(kind==='avertissement') return ['ed_motif_court','ed_motif_detail'];
+  if(kind==='sanction'){ const r=['ed_motif_court','ed_entretien_date','ed_notif_date']; if(type==='mise_a_pied_disciplinaire') r.push('ed_map_debut','ed_map_fin','ed_map_jours'); return r; }
+  if(kind==='licenciement') return ['ed_motif_court','ed_entretien_date','ed_notif_date','ed_effet_date'];
+  if(kind==='rupture') return ['ed_effet_date'];
+  return [];
+}
+function missingFieldsFor(kind,type){
+  return requiredForPdf(kind,type).filter(id=>{ const el=document.getElementById(id); return !el || !((el.value||'').trim()); }).map(id=>PDF_FIELD_LABELS[id]||id);
+}
+function onGenClick(kind){
+  const type=document.getElementById('ed_type').value;
+  const miss=missingFieldsFor(kind,type);
+  if(miss.length){ alert(`Impossible de générer ce document — champs à compléter :\n\n• ${miss.join('\n• ')}`); return; }
+  generatePDF(kind);
+}
+function refreshPdfButtons(){ if(S._cur) renderPdfButtons(S._cur, document.getElementById('ed_type').value, S._locked); }
+// Panneau (étape Notification) : rappel légal + mini-calendrier des échéances à respecter
+function renderNotifPanel(cur, type){
+  const el=document.getElementById('notifPanel'); if(!el) return;
+  if (cur.key!=='notifie'){ el.innerHTML=''; return; }
+  const fmt=d=>d?new Date(d).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short',year:'numeric'}):'—';
+  const g=id=>document.getElementById(id).value;
+  const entretien=g('ed_entretien_date'), faits=g('ed_faits_date'), notif=g('ed_notif_date'), effet=g('ed_effet_date');
+  const today=new Date(); today.setHours(0,0,0,0);
+  const ev=[];
+  if (entretien){ ev.push({d:entretien,lbl:'Entretien préalable'}); ev.push({d:addDays(entretien,2),lbl:'Notification possible dès (2 j ouvrables)'}); ev.push({d:addDays(entretien,31),lbl:'⛔ Limite de notification (1 mois)',limit:true}); }
+  if (faits) ev.push({d:addDays(faits,60),lbl:'Prescription des faits (2 mois)',limit:true});
+  if (notif) ev.push({d:notif,lbl:'Notification (saisie)'});
+  if (effet) ev.push({d:effet,lbl:"Date d'effet"});
+  ev.sort((a,b)=>new Date(a.d)-new Date(b.d));
+  const cal = ev.length ? ev.map(e=>{
+    const days=Math.round((new Date(e.d)-today)/86400000), past=days<0;
+    const col = e.limit ? (past?'var(--danger)':(days<=7?'var(--warn)':'var(--text)')) : 'var(--muted)';
+    const when = past?`il y a ${-days} j`:(days===0?"aujourd'hui":`dans ${days} j`);
+    return `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid var(--border);font-size:12px"><span style="color:${col}">${esc(e.lbl)}</span><span style="color:${col};font-weight:600;white-space:nowrap">${fmt(e.d)} <span style="opacity:.6">(${when})</span></span></div>`;
+  }).join('') : '<div style="color:var(--muted);font-size:12px">Renseigne les dates (entretien, faits) pour visualiser les échéances.</div>';
+  el.innerHTML = `<div class="info-box" style="margin-top:0">${LEGAL_INFOS[type]||''}</div>
+    <div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin:10px 0">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)">🗓 Échéances à respecter</div>${cal}
+    </div>`;
+}
+function gotoStep(i){
+  const type=document.getElementById('ed_type').value; const steps=wfSteps(type);
+  const frontier=stepIndexByStatus(type, document.getElementById('ed_status').value);
+  if (i>frontier) return;
+  if (i<frontier){
+    if (!confirm(`Revenir à l'étape « ${steps[i].label} » ? Les données saisies pour les étapes suivantes seront conservées, mais le statut du dossier reviendra à cette étape.`)) return;
+    document.getElementById('ed_status').value = steps[i].status;
+    S.curStepIdx = i;
+    persistDossier(false).then(()=>renderWorkflow());
+    return;
+  }
+  S.curStepIdx = i; renderWorkflow();
+}
+function validateCurrentStep(){
+  const type=document.getElementById('ed_type').value; const cur=wfSteps(type)[S.curStepIdx];
+  for (const f of (cur.requires||[])){
+    const el=document.getElementById(f);
+    const ok = el.type==='checkbox' ? el.checked : (el.value||'').trim()!=='';
+    if (!ok){ alert('Complète les champs requis de cette étape avant de continuer.'); el.focus&&el.focus(); return false; }
+  }
+  // Contrôles de délais bloquants
+  if (cur.key==='convocation'){ const j=joursOuvrables(document.getElementById('ed_convoc_date').value, document.getElementById('ed_entretien_date').value);
+    if (j!==null && j<5){ alert('⛔ Délai non respecté : il faut au moins 5 jours ouvrables entre l\'envoi de la convocation et l\'entretien.'); return false; } }
+  if (cur.key==='notifie' && wfKey(type)==='lourd'){
+    const j=joursOuvrables(document.getElementById('ed_entretien_date').value, document.getElementById('ed_notif_date').value);
+    if (j!==null && j<2){ alert('⛔ La notification doit intervenir au moins 2 jours ouvrables après l\'entretien.'); return false; }
+    const cal=(new Date(document.getElementById('ed_notif_date').value)-new Date(document.getElementById('ed_entretien_date').value))/86400000;
+    if (document.getElementById('ed_entretien_date').value && cal>31){ if(!confirm('⚠ Plus d\'un mois s\'est écoulé depuis l\'entretien : la sanction risque d\'être annulée. Continuer quand même ?')) return false; }
+  }
+  return true;
+}
+async function advanceStep(){
+  if (!validateCurrentStep()) return;
+  const type=document.getElementById('ed_type').value; const steps=wfSteps(type);
+  const curKey = steps[S.curStepIdx].key;
+  // ── Étape CRÉATION : enregistrer → reformulation IA du motif → puis avancer ──
+  if (curKey==='creation'){
+    const p0=collectPayload();
+    document.getElementById('ed_status').value = steps[S.curStepIdx].status; // reste 'draft'
+    const id0 = await persistDossier(false);
+    if (!id0) return;
+    await aiReformulateFlow(id0, p0);   // overlay comparatif ; applique si accepté ; sinon on garde
+  }
+  const nextIdx=Math.min(S.curStepIdx+1, steps.length-1);
+  // auto-date de notification si on passe à l'étape notifiée et vide (simple)
+  if (steps[nextIdx].status==='sanction_notifiee' && !document.getElementById('ed_notif_date').value && wfKey(type)==='simple'){
+    document.getElementById('ed_notif_date').value=new Date().toISOString().slice(0,10);
+  }
+  document.getElementById('ed_status').value = steps[nextIdx].status;
+  S.curStepIdx = nextIdx;
+  const okId = await persistDossier(false);
+  if (!okId) return;
+  renderWorkflow();
 }
 
-function closeModal(){
-  document.getElementById('modalEdit').classList.remove('open');
-}
-
-async function saveDossier(){
-  const id = document.getElementById('ed_id').value;
-  const salId = document.getElementById('ed_salarie').value;
-  if (!salId) return alert('Salarié requis');
-  const motif = document.getElementById('ed_motif_court').value.trim();
-  if (!motif) return alert('Motif court requis');
-
-  const payload = {
-    salarie_id: salId,
+// ─────────── PERSISTANCE ───────────
+function collectPayload(){
+  const v=id=>{const e=document.getElementById(id);return e.value||null;};
+  const p = {
+    salarie_id: document.getElementById('ed_salarie').value,
     type: document.getElementById('ed_type').value,
-    motif_court: motif,
-    motif_detail: document.getElementById('ed_motif_detail').value || null,
-    faits_date: document.getElementById('ed_faits_date').value || null,
-    faits_lieu: document.getElementById('ed_faits_lieu').value || null,
-    convocation_date: document.getElementById('ed_convoc_date').value || null,
-    entretien_date: document.getElementById('ed_entretien_date').value || null,
-    entretien_heure: document.getElementById('ed_entretien_heure').value || null,
-    entretien_lieu: document.getElementById('ed_entretien_lieu').value || null,
-    entretien_assistant: document.getElementById('ed_entretien_assistant').value || null,
-    entretien_pv: document.getElementById('ed_entretien_pv').value || null,
-    notification_date: document.getElementById('ed_notif_date').value || null,
-    date_effet: document.getElementById('ed_effet_date').value || null,
-    mise_a_pied_debut: document.getElementById('ed_map_debut').value || null,
-    mise_a_pied_fin: document.getElementById('ed_map_fin').value || null,
+    motif_court: (document.getElementById('ed_motif_court').value||'').trim(),
+    motif_detail: v('ed_motif_detail'),
+    faits_date: v('ed_faits_date'), faits_heure: v('ed_faits_heure'), faits_impact: v('ed_faits_impact'),
+    convocation_date: v('ed_convoc_date'), entretien_date: v('ed_entretien_date'),
+    entretien_heure: v('ed_entretien_heure'), entretien_lieu: v('ed_entretien_lieu'),
+    entretien_assistant: v('ed_entretien_assistant'), entretien_pv: v('ed_entretien_pv'),
+    entretien_held: document.getElementById('ed_entretien_held').checked,
+    notification_date: v('ed_notif_date'), date_effet: v('ed_effet_date'),
+    mise_a_pied_debut: v('ed_map_debut'), mise_a_pied_fin: v('ed_map_fin'),
     mise_a_pied_jours: parseInt(document.getElementById('ed_map_jours').value)||null,
     indemnite_licenciement: parseFloat(document.getElementById('ed_ind_lic').value)||null,
     indemnite_compensatrice_preavis: parseFloat(document.getElementById('ed_ind_pre').value)||null,
@@ -573,209 +941,394 @@ async function saveDossier(){
     preavis_jours: parseInt(document.getElementById('ed_preavis_jours').value)||null,
     preavis_effectue: document.getElementById('ed_preavis_eff').checked,
     status: document.getElementById('ed_status').value,
-    notes: document.getElementById('ed_notes').value || null
+    mode_remise: document.getElementById('ed_mode_remise').value,
+    notes: v('ed_notes'),
   };
-
-  let result, savedId;
-  if (id) {
-    result = await sb.from('disciplinary_actions').update(payload).eq('id', id).select().single();
-    savedId = id;
-  } else {
-    payload.organization_id = S.profile.organization_id;
-    payload.created_by = S.profile.id;
-    result = await sb.from('disciplinary_actions').insert(payload).select().single();
-    savedId = result.data?.id;
-  }
-  if (result.error) return alert(result.error.message);
-
-  // Auto-greffe calendar events
-  await syncCalendarEvents(savedId, payload);
-
-  closeModal();
-  await loadAll();
-  render();
+  if (HAS_ANTECEDENTS_COL) p.antecedents_included = [...S.antIncluded];
+  // Lieu : restaurant sélectionné OU saisie manuelle ("Autre…")
+  const _rid=document.getElementById('ed_faits_restaurant').value;
+  if (_rid && _rid!=='__autre__'){ p.faits_restaurant_id=_rid; p.faits_lieu=null; }
+  else { p.faits_restaurant_id=null; p.faits_lieu=(_rid==='__autre__')?v('ed_faits_lieu'):null; }
+  return p;
 }
-
+// Recharge UNIQUEMENT les dossiers (pas les salariés) : ne touche pas au <select> du modal ouvert.
+async function reloadDossiers(){
+  let d = await sb.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at',{ascending:false});
+  if (d.error){ d = await sb.from('disciplinary_actions').select('*').order('created_at',{ascending:false});
+    (d.data||[]).forEach(x=>{ const s=S.salaries.find(z=>z.id===x.salarie_id); x.salarie=s?{id:s.id,nom:s.nom,prenom:s.prenom}:null; }); }
+  S.dossiers = d.data || [];
+  populateFilters();
+}
+async function persistDossier(reload){
+  if (!S.profile) { alert('Profil non chargé.'); return null; }
+  const id = document.getElementById('ed_id').value;
+  const p = collectPayload();
+  if (!p.salarie_id){ alert('Salarié requis'); return null; }
+  if (!p.motif_court){ alert('Motif court requis'); return null; }
+  let result, savedId;
+  if (id){ result = await sb.from('disciplinary_actions').update(p).eq('id', id).select().single(); savedId=id; }
+  else { p.organization_id=S.profile.organization_id; p.created_by=S.profile.id; result = await sb.from('disciplinary_actions').insert(p).select().single(); savedId=result.data?.id; document.getElementById('ed_id').value=savedId||''; if(savedId) document.getElementById('btnDel').style.display=''; }
+  if (result.error){ alert(result.error.message); return null; }
+  await syncCalendarEvents(savedId, p);
+  await reloadDossiers();
+  render();
+  return savedId;
+}
 async function syncCalendarEvents(actionId, p){
-  // Supprime les events auto liés à ce dossier
-  await sb.from('calendar_events').delete().eq('source_table', 'disciplinary_actions').eq('source_id', actionId);
+  await sb.from('calendar_events').delete().eq('source_table','disciplinary_actions').eq('source_id', actionId);
   const sal = S.salaries.find(x=>x.id===p.salarie_id);
   const name = sal ? `${sal.nom} ${sal.prenom||''}` : '—';
   const events = [];
-  if (p.convocation_date) {
-    events.push({ type:'disciplinaire_convocation', titre:`Convocation envoyée · ${name}`,
-      date_debut: p.convocation_date, color:'#dc2626', description:p.motif_court });
+  // Rappel "convocation à envoyer" J-1 avant l'entretien si pas encore de date d'envoi
+  if (p.entretien_date && !p.convocation_date){
+    events.push({ type:'disciplinaire_convocation_a_envoyer', titre:`⏰ Convocation à envoyer · ${name}`,
+      date_debut: p.entretien_date, color:'#f59e0b', description:`Entretien prévu — convocation LRAR à expédier`, reminder_days:1 });
   }
-  if (p.entretien_date) {
-    events.push({ type:'disciplinaire_entretien', titre:`Entretien préalable · ${name}`,
-      date_debut: p.entretien_date, heure_debut: p.entretien_heure, color:'#dc2626', description:p.motif_court });
-  }
-  if (p.notification_date) {
-    events.push({ type:'disciplinaire_notification', titre:`Notification sanction · ${name}`,
-      date_debut: p.notification_date, color:'#dc2626', description:`${TYPE_LABELS[p.type]} — ${p.motif_court}` });
-  }
-  if (p.date_effet) {
-    events.push({ type:'disciplinaire_effet', titre:`Date d'effet · ${name}`,
-      date_debut: p.date_effet, color:'#7f1d1d', description:`${TYPE_LABELS[p.type]} — ${p.motif_court}` });
-  }
-  for (const e of events) {
-    await sb.from('calendar_events').insert({
-      ...e, salarie_id: p.salarie_id, organization_id: S.profile.organization_id,
-      auto_generated: true, source_table: 'disciplinary_actions', source_id: actionId,
-      reminder_days: 3, created_by: S.profile.id
-    });
+  if (p.convocation_date) events.push({ type:'disciplinaire_convocation', titre:`Convocation envoyée · ${name}`, date_debut:p.convocation_date, color:'#dc2626', description:p.motif_court, reminder_days:3 });
+  if (p.entretien_date) events.push({ type:'disciplinaire_entretien', titre:`Entretien préalable · ${name}`, date_debut:p.entretien_date, heure_debut:p.entretien_heure, color:'#dc2626', description:p.motif_court, reminder_days:3 });
+  if (p.notification_date) events.push({ type:'disciplinaire_notification', titre:`Notification sanction · ${name}`, date_debut:p.notification_date, color:'#dc2626', description:`${TYPE_LABELS[p.type]} — ${p.motif_court}`, reminder_days:3 });
+  if (p.date_effet) events.push({ type:'disciplinaire_effet', titre:`Date d'effet · ${name}`, date_debut:p.date_effet, color:'#7f1d1d', description:`${TYPE_LABELS[p.type]} — ${p.motif_court}`, reminder_days:3 });
+  for (const e of events){
+    await sb.from('calendar_events').insert({ ...e, salarie_id:p.salarie_id, organization_id:S.profile.organization_id, auto_generated:true, source_table:'disciplinary_actions', source_id:actionId, created_by:S.profile.id });
   }
 }
 
 async function delDossier(){
-  const id = document.getElementById('ed_id').value;
-  if (!id) return;
-  if (!confirm('Supprimer définitivement ce dossier disciplinaire et tous les événements calendrier associés ?')) return;
-  await sb.from('calendar_events').delete().eq('source_table', 'disciplinary_actions').eq('source_id', id);
+  const id = document.getElementById('ed_id').value; if (!id) return;
+  if (!confirm('Supprimer définitivement ce dossier et ses événements calendrier associés ?')) return;
+  await sb.from('calendar_events').delete().eq('source_table','disciplinary_actions').eq('source_id', id);
   const { error } = await sb.from('disciplinary_actions').delete().eq('id', id);
   if (error) return alert(error.message);
-  closeModal();
-  await loadAll(); render();
+  closeModal(); await loadAll(); render();
+}
+
+// ─────────── ALERTES LÉGALES INLINE ───────────
+function checkPrescription(){
+  const box=document.getElementById('warnPrescription'); if(!box) return;
+  const f=document.getElementById('ed_faits_date').value;
+  if (!f){ box.innerHTML=''; return; }
+  const days=(new Date()-new Date(f))/86400000;
+  box.innerHTML = days>60 ? `<div class="orange-box">⚠ Les faits datent de plus de 2 mois (${Math.floor(days)} jours) : risque de <b>prescription</b> (art. L. 1332-4). Engage la procédure rapidement.</div>` : '';
+}
+function checkConvocDelai(){
+  const box=document.getElementById('warnConvoc'); if(!box) return;
+  const c=document.getElementById('ed_convoc_date').value, e=document.getElementById('ed_entretien_date').value;
+  if (!c||!e){ box.innerHTML=''; return; }
+  const j=joursOuvrables(c,e);
+  box.innerHTML = j<5
+    ? `<div class="warn-box">⛔ <b>Délai non respecté</b> : ${j} jour(s) ouvrable(s) entre convocation et entretien. Minimum légal = <b>5 jours ouvrables</b>.</div>`
+    : `<div class="ok-box">✓ Délai respecté (${j} jours ouvrables entre convocation et entretien).</div>`;
+}
+function checkNotifDelai(){
+  const box=document.getElementById('warnNotif'); if(!box) return;
+  const e=document.getElementById('ed_entretien_date').value, n=document.getElementById('ed_notif_date').value;
+  if (!e||!n){ box.innerHTML=''; return; }
+  const j=joursOuvrables(e,n); const cal=(new Date(n)-new Date(e))/86400000;
+  if (j<2) box.innerHTML=`<div class="warn-box">⛔ Notification trop tôt : ${j} jour(s) ouvrable(s) après l'entretien. Minimum = <b>2 jours ouvrables</b>.</div>`;
+  else if (cal>31) box.innerHTML=`<div class="warn-box">⛔ <b>Délai expiré</b> : plus d'un mois depuis l'entretien. La sanction risque d'être annulée.</div>`;
+  else box.innerHTML=`<div class="ok-box">✓ Délai de notification respecté (${j} jours ouvrables après l'entretien).</div>`;
 }
 
 // ===================== GÉNÉRATION PDF =====================
+function buildObjet(kind, type, motifCourt){
+  const m=(motifCourt||'').trim(); const short=m.length>60?m.slice(0,60).trim()+'…':m;
+  let base; if(kind==='convocation') base='Convocation à un entretien préalable'; else base=TYPE_LABELS[type]||'Sanction disciplinaire';
+  return short ? `Objet : ${base} — ${short}` : `Objet : ${base}`;
+}
 function generatePDF(kind){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
-  const org = S.profile.organizations || {};
-  const salId = document.getElementById('ed_salarie').value;
-  const sal = S.salaries.find(x=>x.id===salId);
-  if (!sal) { alert('Sélectionner un salarié d\'abord'); return; }
-  const type = document.getElementById('ed_type').value;
-  const motifCourt = document.getElementById('ed_motif_court').value;
-  const motifDetail = document.getElementById('ed_motif_detail').value;
-  const faitsDate = document.getElementById('ed_faits_date').value;
+  const o = S.profile.organizations || {}, pp = S.params || {};
+  const org = { nom: pp.raison_sociale || o.nom, forme: pp.forme_juridique, capital: pp.capital_social,
+    adresse: pp.adresse, code_postal: pp.code_postal, ville: pp.ville, siret: pp.siret, rcs: pp.rcs,
+    tva: pp.num_tva, tel: pp.telephone, email: pp.email, rep: pp.representant_legal, rep_qualite: pp.representant_qualite, signature: pp.signature_data };
+  const sal = S.salaries.find(x=>x.id===document.getElementById('ed_salarie').value);
+  if (!sal){ alert('Sélectionne un salarié d\'abord'); return; }
+  const type=document.getElementById('ed_type').value;
+  const motifCourt=document.getElementById('ed_motif_court').value;
+  const motifDetail=document.getElementById('ed_motif_detail').value;
+  const faitsDate=document.getElementById('ed_faits_date').value;
+  const faitsHeure=document.getElementById('ed_faits_heure').value;
+  const faitsImpact=document.getElementById('ed_faits_impact').value;
+  // Lieu : restaurant (nom + adresse + ville) ou saisie manuelle
+  const _ridPdf=document.getElementById('ed_faits_restaurant').value;
+  let lieuStr='';
+  if (_ridPdf && _ridPdf!=='__autre__'){ const rr=S.restos.find(x=>x.id===_ridPdf); if(rr) lieuStr=restoFullStr(rr); }
+  else { lieuStr=(document.getElementById('ed_faits_lieu').value||'').trim(); }
+  const faitsQuand = faitsDate ? (fmtDateLong(faitsDate)+(faitsHeure?` à ${faitsHeure.slice(0,5).replace(':','h')}`:'')) : '__________';
+  const modeRemise=(document.getElementById('ed_mode_remise')||{}).value||'lrar';
+  const civ = sal.sexe==='M'?'Monsieur':(sal.sexe==='F'?'Madame':'Madame, Monsieur');
+  const nomMaj = (sal.nom||'').toUpperCase();
 
-  // Entête org (top droite)
-  doc.setFont('helvetica','bold').setFontSize(11);
-  doc.text(org.nom || 'Entreprise', 200, 20, { align:'right' });
+  // ── SOCIÉTÉ en haut à GAUCHE ──
+  let ly=20;
+  doc.setFont('helvetica','bold').setFontSize(12).setTextColor(0);
+  doc.text(org.nom||'Entreprise', 20, ly); ly+=6;
   doc.setFont('helvetica','normal').setFontSize(9);
-  if (org.adresse) doc.text(org.adresse, 200, 25, { align:'right' });
-  if (org.code_postal || org.ville) doc.text(`${org.code_postal||''} ${org.ville||''}`, 200, 29, { align:'right' });
-  if (org.siret) doc.text(`SIRET : ${org.siret}`, 200, 33, { align:'right' });
+  // jsPDF (helvetica/WinAnsi) ne gère pas les espaces fines insécables (U+202F/U+00A0) que
+  // toLocaleString('fr-FR') insère dans les milliers → ça bascule la ligne en encodage large
+  // et l'affiche caractère par caractère. On normalise donc tous ces espaces en espace simple.
+  const winAnsi = s => (s||"").toString().replace(/[\u202f\u00a0\u2009\u2007\u2008\u2002\u2003]/g," ");
+  const capFmt = c => winAnsi(Number(c).toLocaleString('fr-FR'));
+  const socLines=[];
+  if (org.forme||org.capital) socLines.push(`${org.forme||''}${org.capital?` au capital de ${capFmt(org.capital)} €`:''}`.trim());
+  if (org.adresse) socLines.push(org.adresse);
+  if (org.code_postal||org.ville) socLines.push(`${org.code_postal||''} ${org.ville||''}`.trim());
+  if (org.siret) socLines.push(`SIRET : ${org.siret}`);
+  if (org.tva) socLines.push(`TVA : ${org.tva}`);
+  if (org.email) socLines.push(org.email);
+  // Toutes les lignes société : même police/taille (helvetica normal 9). Seul le nom est en gras (au-dessus).
+  doc.setFont('helvetica','normal').setFontSize(9).setTextColor(0);
+  socLines.forEach(l=>{ if(l){ doc.text(winAnsi(l), 20, ly); ly+=4.5; } });
 
-  // Destinataire (top gauche, plus bas)
+  // ── SALARIÉ en haut à DROITE ──
+  let ry=Math.max(ly+6, 45);
   doc.setFont('helvetica','normal').setFontSize(10);
-  doc.text(`${sal.nom} ${sal.prenom||''}`, 20, 50);
-  if (sal.adresse) doc.text(sal.adresse, 20, 55);
-  if (sal.code_postal || sal.ville) doc.text(`${sal.code_postal||''} ${sal.ville||''}`, 20, 60);
-
-  // Date / lieu
-  const today = new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' });
-  doc.text(`Fait à ${org.ville || '____________'}, le ${today}`, 200, 75, { align:'right' });
-
-  // Mention RAR
+  doc.text(civ, 200, ry, {align:'right'}); ry+=5;
   doc.setFont('helvetica','bold').setFontSize(10);
-  doc.text('Lettre recommandée avec accusé de réception', 20, 85);
-  doc.text('OU remise en main propre contre décharge', 20, 90);
+  doc.text(`${nomMaj} ${sal.prenom||''}`.trim(), 200, ry, {align:'right'}); ry+=5;
+  doc.setFont('helvetica','normal');
+  if (sal.adresse){ doc.text(sal.adresse, 200, ry, {align:'right'}); ry+=5; }
+  if (sal.code_postal||sal.ville){ doc.text(`${sal.code_postal||''} ${sal.ville||''}`.trim(), 200, ry, {align:'right'}); ry+=5; }
 
-  // Objet selon type de lettre
+  let topY = Math.max(ly, ry) + 8;
+  // Date / lieu
+  const today = new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
+  doc.setFont('helvetica','normal').setFontSize(10);
+  doc.text(`Fait à ${org.ville||'____________'}, le ${today}`, 200, topY, {align:'right'}); topY+=10;
+  // Mode de remise
+  doc.setFont('helvetica','bold').setFontSize(10);
+  doc.text(modeRemise==='main_propre'?'Remise en main propre contre décharge':'Lettre recommandée avec accusé de réception', 20, topY); topY+=10;
+  // Objet
   doc.setFont('helvetica','bold').setFontSize(11);
-  let objet = '';
-  if (kind==='convocation') objet = 'Objet : Convocation à un entretien préalable';
-  else if (kind==='avertissement') objet = 'Objet : Avertissement';
-  else if (kind==='sanction' || kind==='mise_a_pied') objet = `Objet : Notification de ${TYPE_LABELS[type]}`;
-  else if (kind==='licenciement') objet = `Objet : Notification de ${TYPE_LABELS[type]}`;
-  doc.text(objet, 20, 105);
+  doc.splitTextToSize(buildObjet(kind,type,motifCourt),170).forEach(l=>{ doc.text(l,20,topY); topY+=6; });
+  topY+=4;
 
   // Corps
-  doc.setFont('helvetica','normal').setFontSize(10);
-  doc.text(`${sal.prenom?'Monsieur/Madame ':''}${sal.nom},`, 20, 120);
-  let y = 132;
-  const lineH = 5.5;
-
-  const para = (text) => {
-    const lines = doc.splitTextToSize(text, 170);
-    for (const ln of lines) { doc.text(ln, 20, y); y += lineH; }
-    y += 3;
+  let y=topY;
+  const lineH=5.5;
+  doc.setFont('helvetica','normal').setFontSize(10).setTextColor(0);
+  doc.text(`${civ},`, 20, y); y+=10;
+  const para=(text)=>{ doc.setFont('helvetica','normal'); doc.splitTextToSize(text,170).forEach(l=>{ if(y>275){doc.addPage();y=25;} doc.text(l,20,y); y+=lineH; }); y+=3; };
+  // paragraphe avec gras inline (array [{text,bold}])
+  const paraRich=(parts)=>{
+    const space=doc.getTextWidth(' '); let cx=20;
+    parts.forEach(p=>{
+      const words=(p.text||'').split(' ').filter(w=>w!=='');
+      words.forEach(w=>{
+        doc.setFont('helvetica', p.bold?'bold':'normal');
+        const ww=doc.getTextWidth(w);
+        if (cx+ww>20+170){ y+=lineH; cx=20; if(y>275){doc.addPage();y=25;} }
+        doc.text(w,cx,y); cx+=ww+space;
+      });
+    });
+    y+=lineH+3; doc.setFont('helvetica','normal');
+  };
+  const B=(t)=>({text:t,bold:true}); const N=(t)=>({text:t,bold:false});
+  // Bloc faits : date (+ heure) + lieu, puis paragraphe d'impact/préjudice
+  const faitsBlock=()=>{
+    if (faitsDate||lieuStr){ const parts=[N('Faits constatés le '),B(faitsQuand)]; if(lieuStr){ parts.push(N(', à : '),B(lieuStr)); } parts.push(N('.')); paraRich(parts); }
+    if (faitsImpact) para(`Ces faits ont directement porté préjudice à l'entreprise : ${faitsImpact}`);
   };
 
-  if (kind==='convocation') {
-    const entretienDate = document.getElementById('ed_entretien_date').value;
-    const entretienHeure = document.getElementById('ed_entretien_heure').value;
-    const entretienLieu = document.getElementById('ed_entretien_lieu').value;
-    const dateFr = entretienDate ? new Date(entretienDate).toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long', year:'numeric' }) : '__________';
-    para(`Nous envisageons de prendre à votre encontre une sanction disciplinaire pouvant aller jusqu'au licenciement.`);
-    para(`En application des dispositions des articles L. 1232-2 et suivants du Code du travail, nous vous convoquons à un entretien préalable qui aura lieu :`);
-    para(`Le ${dateFr}${entretienHeure?' à '+entretienHeure:''}`);
-    para(`Lieu : ${entretienLieu || '__________'}`);
+  if (kind==='convocation'){
+    const ed=document.getElementById('ed_entretien_date').value, eh=document.getElementById('ed_entretien_heure').value, el=document.getElementById('ed_entretien_lieu').value;
+    const dateFr = fmtDateLong(ed);
+    const isGrave = type==='licenciement_grave'||type==='licenciement_lourde';
+    // Rappel neutre du motif général (sans détailler — les faits seront discutés à l'entretien)
+    if (motifCourt) paraRich([N(`Nous sommes amenés à envisager une mesure disciplinaire à votre encontre en raison de faits relatifs à : `),B(motifCourt),N(`. Ces faits, qui seront exposés et discutés lors de l'entretien, sont susceptibles de constituer un manquement à vos obligations professionnelles.`)]);
+    // Sanction envisagée — renforcée pour faute grave/lourde
+    if (isGrave) paraRich([N(`Nous vous informons que la sanction envisagée est susceptible d'aller `),B(`jusqu'au licenciement pour faute grave`),N(`, lequel emporterait rupture immédiate du contrat `),B(`sans préavis ni indemnité de licenciement`),N(`.`)]);
+    else para(`Nous envisageons de prendre à votre encontre une sanction disciplinaire pouvant aller jusqu'au licenciement.`);
+    paraRich([N(`En application des articles `),B(`L. 1232-2`),N(` et suivants du Code du travail, nous vous convoquons à un `),B(`entretien préalable`),N(` qui se tiendra :`)]);
+    paraRich([N(`Le `),B(dateFr),N(eh?` à `:''),B(eh?eh:''),N(`, à : `),B(el||'__________')]);
     para(`Au cours de cet entretien, nous vous exposerons les motifs de la sanction envisagée et recueillerons vos explications.`);
-    para(`Nous vous informons que vous avez la possibilité de vous faire assister lors de cet entretien par une personne de votre choix appartenant au personnel de l'entreprise, ou — en l'absence de représentants du personnel — par un conseiller du salarié figurant sur la liste consultable à la mairie ou à l'inspection du travail.`);
-    para(`Nous vous prions d'agréer, ${sal.prenom?'Monsieur/Madame ':''}${sal.nom}, l'expression de nos salutations distinguées.`);
+    para(`Nous vous informons que vous avez la possibilité de vous faire assister par une personne de votre choix appartenant au personnel de l'entreprise ou, en l'absence de représentants du personnel, par un conseiller du salarié figurant sur la liste consultable en mairie ou à l'inspection du travail.`);
+    paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
-  else if (kind==='avertissement') {
-    para(`Nous sommes au regret de devoir vous adresser un avertissement pour le motif suivant :`);
-    para(`${motifCourt}`);
+  else if (kind==='avertissement'){
+    const label = TYPE_LABELS[type]||'avertissement';
+    paraRich([N(`Nous sommes au regret de devoir vous notifier un `),B(label.toLowerCase()),N(` pour le motif suivant :`)]);
+    paraRich([B(motifCourt||'—')]);
     if (motifDetail) para(`Détail des faits : ${motifDetail}`);
-    if (faitsDate) para(`Date des faits : ${new Date(faitsDate).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' })}`);
+    faitsBlock();
     para(`Ces faits constituent un manquement à vos obligations professionnelles. Nous vous demandons de prendre les mesures nécessaires pour qu'une telle situation ne se reproduise plus.`);
     para(`À défaut, nous serions contraints d'envisager une sanction plus lourde pouvant aller jusqu'au licenciement.`);
-    para(`Le présent avertissement sera versé à votre dossier disciplinaire.`);
-    para(`Conformément à l'article L. 1332-4 du Code du travail, vous disposez d'un délai de deux mois pour contester cette sanction.`);
-    para(`Nous vous prions d'agréer, ${sal.prenom?'Monsieur/Madame ':''}${sal.nom}, l'expression de nos salutations distinguées.`);
+    paraRich([N(`Le présent `),B(label.toLowerCase()),N(` sera versé à votre dossier disciplinaire. Conformément à l'`),B(`article L. 1332-4`),N(` du Code du travail, vous disposez d'un délai de `),B(`deux mois`),N(` pour le contester.`)]);
+    paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
-  else if (kind==='sanction' || kind==='mise_a_pied') {
-    const entretienDate = document.getElementById('ed_entretien_date').value;
-    para(`Suite à l'entretien préalable qui s'est tenu le ${entretienDate?new Date(entretienDate).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }):'__________'}, et après avoir recueilli vos explications, nous avons décidé de vous notifier la sanction suivante :`);
-    doc.setFont('helvetica','bold');
-    para(`${TYPE_LABELS[type]}`);
-    doc.setFont('helvetica','normal');
-    para(`Motif : ${motifCourt}`);
+  else if (kind==='sanction'){
+    const ed=document.getElementById('ed_entretien_date').value;
+    paraRich([N(`Faisant suite à l'entretien préalable qui s'est tenu le `),B(fmtDateLong(ed)),N(`, et après avoir recueilli vos explications, nous avons décidé de vous notifier la sanction suivante :`)]);
+    paraRich([B((TYPE_LABELS[type]||'Sanction').toUpperCase())]);
+    paraRich([N(`Motif : `),B(motifCourt||'—')]);
     if (motifDetail) para(`Détail : ${motifDetail}`);
-    if (kind==='mise_a_pied') {
-      const mapDeb = document.getElementById('ed_map_debut').value;
-      const mapFin = document.getElementById('ed_map_fin').value;
-      const mapJ = document.getElementById('ed_map_jours').value;
-      para(`Cette mise à pied s'exécutera du ${mapDeb?new Date(mapDeb).toLocaleDateString('fr-FR'):'__________'} au ${mapFin?new Date(mapFin).toLocaleDateString('fr-FR'):'__________'} (${mapJ||'__'} jour(s) ouvrables), sans rémunération.`);
+    faitsBlock();
+    if (type==='mise_a_pied_disciplinaire'){
+      const a=document.getElementById('ed_map_debut').value,b=document.getElementById('ed_map_fin').value,jj=document.getElementById('ed_map_jours').value;
+      paraRich([N(`Cette mise à pied s'exécutera du `),B(fmtDateLong(a)),N(` au `),B(fmtDateLong(b)),N(` inclus (`),B(`${jj||'__'} jour(s) ouvrables`),N(`), période pendant laquelle votre contrat de travail est suspendu et `),B(`votre salaire ne vous sera pas versé`),N(`.`)]);
+      paraRich([N(`La durée de cette mise à pied disciplinaire est conforme au maximum prévu par la `),B(`convention collective applicable`),N(` (à défaut de stipulation plus favorable, trois jours ouvrables).`)]);
     }
-    para(`Cette sanction est versée à votre dossier disciplinaire.`);
-    para(`Conformément à l'article L. 1332-4 du Code du travail, vous disposez d'un délai de deux mois à compter de la notification pour contester cette sanction.`);
-    para(`Nous vous prions d'agréer, ${sal.prenom?'Monsieur/Madame ':''}${sal.nom}, l'expression de nos salutations distinguées.`);
+    appendAntecedents(paraRich,B,N,para);
+    paraRich([N(`Conformément à l'`),B(`article L. 1332-4`),N(` du Code du travail, vous disposez d'un délai de `),B(`deux mois`),N(` à compter de la notification pour contester cette sanction.`)]);
+    paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
-  else if (kind==='licenciement') {
-    const entretienDate = document.getElementById('ed_entretien_date').value;
-    const effetDate = document.getElementById('ed_effet_date').value;
-    const preavisJ = document.getElementById('ed_preavis_jours').value;
-    const indLic = document.getElementById('ed_ind_lic').value;
-    const indPre = document.getElementById('ed_ind_pre').value;
-    const indCp = document.getElementById('ed_ind_cp').value;
-    para(`Suite à l'entretien préalable qui s'est tenu le ${entretienDate?new Date(entretienDate).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }):'__________'}, et après avoir recueilli vos explications, nous avons décidé de procéder à votre licenciement pour le motif suivant :`);
-    doc.setFont('helvetica','bold'); para(`${TYPE_LABELS[type].toUpperCase()}`); doc.setFont('helvetica','normal');
-    para(`Motifs détaillés : ${motifCourt}`);
+  else if (kind==='licenciement'){
+    const ed=document.getElementById('ed_entretien_date').value, effet=document.getElementById('ed_effet_date').value, pj=document.getElementById('ed_preavis_jours').value;
+    const il=document.getElementById('ed_ind_lic').value, ip=document.getElementById('ed_ind_pre').value, ic=document.getElementById('ed_ind_cp').value;
+    paraRich([N(`Faisant suite à l'entretien préalable qui s'est tenu le `),B(fmtDateLong(ed)),N(`, et après avoir recueilli vos explications, nous avons décidé de procéder à votre licenciement pour le motif suivant :`)]);
+    paraRich([B((TYPE_LABELS[type]||'Licenciement').toUpperCase())]);
+    paraRich([N(`Motif : `),B(motifCourt||'—')]);
     if (motifDetail) para(motifDetail);
-    if (type === 'licenciement_simple') {
-      para(`Vous bénéficiez d'un préavis de ${preavisJ||'__'} jour(s) qui débutera à la date de première présentation de la présente lettre.`);
-    } else {
-      para(`En raison de la gravité des faits, votre licenciement prend effet immédiatement, sans préavis ni indemnité de licenciement.`);
-    }
-    if (effetDate) para(`Date d'effet du licenciement : ${new Date(effetDate).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' })}`);
-    if (indLic) para(`Indemnité de licenciement : ${parseFloat(indLic).toFixed(2)} €`);
-    if (indPre) para(`Indemnité compensatrice de préavis : ${parseFloat(indPre).toFixed(2)} €`);
-    if (indCp) para(`Indemnité compensatrice de congés payés : ${parseFloat(indCp).toFixed(2)} €`);
-    para(`Votre solde de tout compte, votre certificat de travail et votre attestation Pôle Emploi vous seront remis à la fin de votre contrat.`);
-    para(`Nous vous prions d'agréer, ${sal.prenom?'Monsieur/Madame ':''}${sal.nom}, l'expression de nos salutations distinguées.`);
+    faitsBlock();
+    appendAntecedents(paraRich,B,N,para);
+    if (type==='licenciement_simple') paraRich([N(`Vous bénéficiez d'un préavis de `),B(`${pj||'__'} jour(s)`),N(` qui débutera à la date de première présentation de la présente lettre.`)]);
+    else paraRich([N(`En raison de la `),B(`gravité des faits`),N(`, votre licenciement prend effet immédiatement, sans préavis ni indemnité de licenciement.`)]);
+    if (effet) paraRich([N(`Date d'effet du licenciement : `),B(fmtDateLong(effet)),N(`.`)]);
+    if (il) paraRich([N(`Indemnité de licenciement : `),B(`${parseFloat(il).toFixed(2)} €`)]);
+    if (ip) paraRich([N(`Indemnité compensatrice de préavis : `),B(`${parseFloat(ip).toFixed(2)} €`)]);
+    if (ic) paraRich([N(`Indemnité compensatrice de congés payés : `),B(`${parseFloat(ic).toFixed(2)} €`)]);
+    para(`Conformément aux articles L. 1234-19 et L. 1234-20 du Code du travail, votre solde de tout compte, votre certificat de travail et votre attestation France Travail vous seront remis à la date de votre départ effectif de l'entreprise.`);
+    paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
+  }
+  else if (kind==='rupture'){
+    const effet=document.getElementById('ed_effet_date').value, il=document.getElementById('ed_ind_lic').value;
+    para(`Faisant suite à nos entretiens, nous convenons d'un commun accord de rompre votre contrat de travail à durée indéterminée par voie de rupture conventionnelle, dans les conditions prévues aux articles L. 1237-11 et suivants du Code du travail.`);
+    paraRich([N(`Vous bénéficiez d'une `),B(`indemnité spécifique de rupture conventionnelle`),N(il?` d'un montant de `:` dont le montant `),B(il?`${parseFloat(il).toFixed(2)} €`:`ne peut être inférieur à l'indemnité légale de licenciement`),N(il?`, dont le montant ne peut être inférieur à l'indemnité légale de licenciement.`:`.`)]);
+    paraRich([N(`Conformément à l'`),B(`article L. 1237-13`),N(` du Code du travail, vous disposez d'un `),B(`délai de rétractation de quinze (15) jours calendaires`),N(` à compter de la date de signature de la présente convention, que vous pouvez exercer par lettre recommandée avec accusé de réception ou par remise en main propre contre décharge.`)]);
+    paraRich([N(`À l'expiration de ce délai, la convention sera adressée pour `),B(`homologation à la DREETS`),N(`, qui dispose d'un délai d'instruction de quinze (15) jours ouvrables. La rupture du contrat ne pourra prendre effet qu'après cette homologation.`)]);
+    if (effet) paraRich([N(`Date de rupture envisagée : `),B(fmtDateLong(effet)),N(` (sous réserve de l'homologation).`)]);
+    para(`Votre solde de tout compte, votre certificat de travail et votre attestation France Travail vous seront remis à la date de rupture effective du contrat.`);
+    paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
 
-  // Signature
-  if (y > 240) { doc.addPage(); y = 30; }
-  y += 10;
-  doc.text(`Pour ${org.nom||'la Direction'}`, 130, y);
-  y += 6;
-  doc.text('Signature :', 130, y);
+  // ── Signature employeur ──
+  if (y>235){ doc.addPage(); y=30; }
+  y+=8;
+  doc.setFont('helvetica','normal').setFontSize(10).setTextColor(0);
+  doc.text(`Pour ${org.nom||'la Direction'}`, 130, y); y+=5;
+  if (org.rep){ doc.setFont('helvetica','bold'); doc.text(`${org.rep}${org.rep_qualite?', '+org.rep_qualite:''}`,130,y); doc.setFont('helvetica','normal'); y+=5; }
+  else { doc.text('Signature :',130,y); y+=5; }
+  if (org.signature){ try{ doc.addImage(org.signature,'PNG',130,y,45,18); y+=20; }catch(_){} }
 
-  // Pied de page léger
+  // ── Décharge si main propre ──
+  if (modeRemise==='main_propre'){
+    if (y>250){ doc.addPage(); y=30; }
+    y+=8; doc.setDrawColor(180); doc.line(20,y,105,y); y+=6;
+    doc.setFont('helvetica','bold').setFontSize(9); doc.text('Remise en main propre contre décharge',20,y); y+=6;
+    doc.setFont('helvetica','normal').setFontSize(9);
+    doc.text('Reçu en main propre le ……… / ……… / ……………',20,y); y+=6;
+    doc.text('Signature du salarié (précédée de la mention « Reçu le … » manuscrite) :',20,y);
+  }
+
   doc.setFont('helvetica','italic').setFontSize(8).setTextColor(120);
-  doc.text(`${org.nom||''} — Document généré le ${today} via Eatime360`, 105, 287, { align:'center' });
-
-  const filename = `${kind}_${sal.nom}_${new Date().toISOString().slice(0,10)}.pdf`;
-  doc.save(filename);
+  doc.text(`${org.nom||''} — Document généré le ${today} via Eatime360`,105,289,{align:'center'});
+  doc.save(`${kind}_${sal.nom}_${new Date().toISOString().slice(0,10)}.pdf`);
+  // Archivage du courrier dans le bucket disciplinary-docs (1 fichier par type, ré-génération = écrasement)
+  const dossierId=document.getElementById('ed_id').value;
+  if (dossierId){
+    try{
+      const blob=doc.output('blob');
+      sb.storage.from('disciplinary-docs').upload(`${dossierId}/${kind}.pdf`, blob, {contentType:'application/pdf', upsert:true})
+        .then(({error})=>{ if(error) console.warn('[avert] archivage PDF:', error.message); });
+    }catch(e){ console.warn('[avert] archivage PDF:', e.message||e); }
+  }
+}
+// ── Accès rapide aux courriers générés (bucket disciplinary-docs) ──
+const KIND_LABELS={ convocation:'Convocation à entretien', avertissement:'Avertissement / Blâme', sanction:'Notification de sanction', licenciement:'Lettre de licenciement', rupture:'Convention de rupture' };
+async function openDocsMenu(id, ev){
+  if (ev) ev.stopPropagation();
+  const { data, error } = await sb.storage.from('disciplinary-docs').list(String(id), { limit:100, sortBy:{column:'name',order:'asc'} });
+  const files=(data||[]).filter(f=>f.name.toLowerCase().endsWith('.pdf'));
+  let inner;
+  if (error) inner=`<div style="color:var(--danger);font-size:13px">Erreur : ${esc(error.message)}</div>`;
+  else if (!files.length) inner=`<div style="color:var(--muted);font-size:13px">Aucun courrier généré pour ce dossier.<br>Ouvre le dossier et génère un PDF d'abord.</div>`;
+  else inner=files.map(f=>{ const kind=f.name.replace(/\.pdf$/i,''); const lbl=KIND_LABELS[kind]||kind;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--border)"><span style="flex:1;font-size:13px">📄 ${esc(lbl)}</span>
+      <button class="btn" style="padding:5px 10px;font-size:12px" onclick="viewDocFile('${esc(id)}/${esc(f.name)}')">👁 Voir</button>
+      <button class="btn" style="padding:5px 10px;font-size:12px" onclick="dlDocFile('${esc(id)}/${esc(f.name)}','${esc(lbl)}.pdf')">⬇</button></div>`;
+  }).join('');
+  const ov=document.createElement('div'); ov.className='modal-bg'; ov.style.display='flex';
+  ov.innerHTML=`<div class="modal" style="max-width:440px"><h2 style="margin-top:0">📄 Courriers du dossier</h2>${inner}<div class="modal-foot"><div></div><div class="right"><button class="btn ghost" onclick="this.closest('.modal-bg').remove()">Fermer</button></div></div></div>`;
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+async function viewDocFile(path){ const{data,error}=await sb.storage.from('disciplinary-docs').createSignedUrl(path,300); if(error){alert(error.message);return;} window.open(data.signedUrl,'_blank'); }
+async function dlDocFile(path,fn){ const{data,error}=await sb.storage.from('disciplinary-docs').createSignedUrl(path,300,{download:fn||true}); if(error){alert(error.message);return;} const a=document.createElement('a');a.href=data.signedUrl;a.download=fn||'';document.body.appendChild(a);a.click();a.remove(); }
+// Paragraphe automatique des antécédents (lettres de sanction/licenciement)
+function appendAntecedents(paraRich,B,N,para){
+  const ants=selectedAntecedents();
+  if (!ants.length) return;
+  para(`Nous vous rappelons que vous avez fait l'objet des sanctions disciplinaires suivantes au sein de notre entreprise :`);
+  ants.forEach(a=>{ paraRich([N('•  '),B(fmtDateLong(a.notification_date||a.date_effet||a.faits_date)),N(' : '),B(TYPE_LABELS[a.type]||a.type),N(' pour '),N(a.motif_court||'—')]); });
+  para(`Malgré ces rappels à l'ordre, vous n'avez pas modifié votre comportement, ce qui démontre une réitération des manquements professionnels et justifie la sanction prononcée aujourd'hui.`);
 }
 
+// ===================== IA JURIDIQUE =====================
+let _aiOriginal=null, _aiTargetId=null, _aiPending=null, _aiResolve=null;
+// Lancé par le bouton « Valider » de l'étape Création : reformule le motif, attend le choix
+// de l'utilisateur (Remplacer / Garder), puis rend la main pour avancer dans le workflow.
+// N'échoue jamais le workflow : si l'IA est indisponible, on rend la main aussi.
+async function aiReformulateFlow(id, src){
+  const detail=(src.motif_detail||'').trim(), impact=(src.faits_impact||'').trim();
+  if (detail.length<20 && impact.length<20) return;   // rien d'assez consistant à reformuler
+  _aiTargetId=id; _aiOriginal={motif_court:src.motif_court||'',motif_detail:src.motif_detail||'',faits_impact:src.faits_impact||''};
+  await new Promise(resolve=>{ _aiResolve=resolve; runAIEnhance(src); });
+}
+function _aiSettle(){ const r=_aiResolve; _aiResolve=null; if(r) r(); }
+function aiDone(){ closeAIOverlay(); _aiSettle(); }
+async function runAIEnhance(src){
+  const sName=(()=>{const s=S.salaries.find(x=>x.id===src.salarie_id);return s?`${s.nom} ${s.prenom||''}`.trim():null;})();
+  const payload={ type:src.type, motif_court:(src.motif_court||'').trim(), motif_detail:(src.motif_detail||'').trim(), faits_impact:(src.faits_impact||'').trim(), faits_date:src.faits_date||null, faits_lieu:src.faits_lieu||null, salarie_name:sName };
+  showAIOverlay('loading');
+  try{
+    const { data:{ session } } = await sb.auth.getSession();
+    const r=await fetch(`${SUPA_URL}/functions/v1/legal-enhance`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`,apikey:SUPA_KEY},body:JSON.stringify(payload)});
+    const j=await r.json();
+    if (!r.ok){ showAIOverlay('error', j.error||'Erreur inconnue'); return; }
+    showAIOverlay('result', null, j);
+  } catch(e){ showAIOverlay('error', e.message||String(e)); }
+}
+function closeAIOverlay(){ const m=document.getElementById('aiOverlay'); if(m) m.remove(); }
+function showAIOverlay(state,msg,data){
+  closeAIOverlay();
+  const ov=document.createElement('div'); ov.id='aiOverlay'; ov.className='modal-bg open'; ov.style.zIndex='60';
+  let inner='';
+  if (state==='loading') inner=`<div class="modal" style="max-width:420px;text-align:center"><h2>✨ Reformulation juridique…</h2><p style="color:var(--muted);font-size:13px;margin-top:8px">Quelques secondes…</p></div>`;
+  else if (state==='error') inner=`<div class="modal" style="max-width:440px"><h2>⚠ Reformulation indisponible</h2><p style="color:var(--danger);font-size:13px;margin-top:8px">${esc(msg||'')}</p><p style="color:var(--muted);font-size:12px">Pas de souci — on continue avec ton texte.</p><div class="modal-foot"><div></div><div class="right"><button class="btn primary" onclick="aiDone()">Continuer</button></div></div></div>`;
+  else {
+    _aiPending=data; const orig=_aiOriginal||{motif_court:'',motif_detail:'',faits_impact:''};
+    inner=`<div class="modal" style="max-width:840px"><h2>✨ Proposition juridique de l'IA</h2>
+      <div class="info-box">Le dossier garde ta version tant que tu ne cliques pas « Remplacer ». L'IA n'invente aucun fait.</div>
+      <h3>Motif court</h3><div class="row">
+        <div class="field"><label>Ta version</label><textarea readonly style="min-height:54px">${esc(orig.motif_court)}</textarea></div>
+        <div class="field"><label>✨ Version IA</label><textarea readonly style="min-height:54px">${esc(data.motif_court||'')}</textarea></div></div>
+      <h3>Détail des faits</h3><div class="row">
+        <div class="field"><label>Ta version</label><textarea readonly style="min-height:170px">${esc(orig.motif_detail)}</textarea></div>
+        <div class="field"><label>✨ Version IA</label><textarea readonly style="min-height:170px">${esc(data.motif_detail||'')}</textarea></div></div>
+      ${(orig.faits_impact||data.faits_impact)?`<h3>Impact / préjudice</h3><div class="row">
+        <div class="field"><label>Ta version</label><textarea readonly style="min-height:90px">${esc(orig.faits_impact||'')}</textarea></div>
+        <div class="field"><label>✨ Version IA</label><textarea readonly style="min-height:90px">${esc(data.faits_impact||'')}</textarea></div></div>`:''}
+      <div class="modal-foot"><div></div><div class="right">
+        <button class="btn ghost" onclick="aiDone()">Garder ma version</button>
+        <button class="btn primary" onclick="applyAIEnhance()">Remplacer par la version IA</button></div></div>`;
+  }
+  ov.innerHTML=inner; ov.addEventListener('click',e=>{if(e.target===ov)aiDone();}); document.body.appendChild(ov);
+}
+async function applyAIEnhance(){
+  if (_aiPending && _aiTargetId){
+    const patch={}; if(_aiPending.motif_court)patch.motif_court=_aiPending.motif_court; if(_aiPending.motif_detail)patch.motif_detail=_aiPending.motif_detail; if(_aiPending.faits_impact)patch.faits_impact=_aiPending.faits_impact;
+    const { error } = await sb.from('disciplinary_actions').update(patch).eq('id',_aiTargetId);
+    if (error){ alert('Erreur mise à jour : '+error.message); return; }
+    // reflète dans le formulaire ouvert
+    if (document.getElementById('ed_id').value===_aiTargetId){ if(patch.motif_court)document.getElementById('ed_motif_court').value=patch.motif_court; if(patch.motif_detail)document.getElementById('ed_motif_detail').value=patch.motif_detail; if(patch.faits_impact)document.getElementById('ed_faits_impact').value=patch.faits_impact; }
+    await reloadDossiers(); render();
+  }
+  aiDone();
+}
+
+// Rafraîchit l'état (grisé/tooltip) des boutons de génération à chaque saisie dans le modal
+(function(){ const m=document.getElementById('modalEdit'); if(m) m.addEventListener('input', refreshPdfButtons); })();
 init();
 </script>
 </body>

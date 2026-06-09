@@ -272,6 +272,7 @@ function openReleve(){
     <div class="fld"><label>Notes</label><input id="r_notes"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveReleve()">Enregistrer</button></div>
   </div></div>`;
+  EatimeAutocomplete.enhance(document.getElementById('r_sal'), { placeholder:'Salarié (optionnel)…' });
 }
 async function saveReleve(){
   const eqId=val('r_eq'),v=parseFloat(val('r_val'));
@@ -622,6 +623,7 @@ async function exportPDF(){
 
 function closeModal(){document.getElementById('modalHost').innerHTML='';}
 </script>
-<script defer src="../assistant-widget.js?v=4.0"></script>
+<script defer src="../assistant-widget.js?v=4.8"></script>
+<script src="../autocomplete.js?v=1.0"></script>
 </body>
 </html>

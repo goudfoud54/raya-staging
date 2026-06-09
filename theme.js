@@ -31,7 +31,7 @@ window.setEatimeTheme = function(theme){
     var depth = (base.match(/\//g) || []).length - 1;
     var prefix = '';
     for (var i = 0; i < depth; i++) prefix += '../';
-    s.src = prefix + 'assistant-widget.js';
+    s.src = prefix + 'assistant-widget.js?v=4.8';
     s.defer = true;
     document.body.appendChild(s);
   }

@@ -192,7 +192,8 @@ textarea{resize:vertical;min-height:80px}
   </div>
 </div>
 
-<script src="../assistant-widget.js?v=4.3"></script>
+<script src="../assistant-widget.js?v=4.8"></script>
+<script src="../autocomplete.js?v=1.0"></script>
 
 <script>
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
@@ -230,6 +231,8 @@ async function loadAll(){
   fS.innerHTML = '<option value="">Tous les salariés</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
   const tS = document.getElementById('t_sal');
   tS.innerHTML = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
+  EatimeAutocomplete.enhance(fS, { placeholder:'Tous les salariés — tape un nom…' });
+  EatimeAutocomplete.enhance(tS, { placeholder:'Tape un nom de salarié…' });
 }
 
 function esc(s){return (s||'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))}
