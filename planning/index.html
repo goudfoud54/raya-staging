@@ -91,6 +91,7 @@ table.plan td.midi{background:var(--midi)}
 table.plan td.soir{background:var(--soir)}
 table.plan td input{width:calc(56px * var(--zoom));min-width:42px;padding:2px 2px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:max(calc(11px * var(--zoom)),9px);font-family:monospace;text-align:center;outline:none;letter-spacing:-.3px}
 table.plan td.selected{box-shadow:inset 0 0 0 2px var(--gold);background-color:rgba(200,160,53,.18)!important}
+table.plan td.alt-block{background:repeating-linear-gradient(45deg,rgba(91,156,255,.10),rgba(91,156,255,.10) 6px,rgba(91,156,255,.18) 6px,rgba(91,156,255,.18) 12px);color:#5b9cff;font-weight:700;font-size:max(calc(10px * var(--zoom)),8px);cursor:not-allowed;user-select:none;letter-spacing:.02em}
 table.plan td.salname{background:color-mix(in srgb, var(--scol,#15151f) 14%, var(--card));border-left:4px solid var(--scol,#444)}
 table.plan td.midi{background:color-mix(in srgb, var(--scol,transparent) 10%, var(--midi))}
 table.plan td.soir{background:color-mix(in srgb, var(--scol,transparent) 10%, var(--soir))}
@@ -216,7 +217,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.22 · auto-fill solveur conforme aux règles + coûts réactifs';
+const VERSION='v0.23 · alternance/CFA : jours école bloquants + règle veille d\'école';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -379,7 +380,8 @@ async function init(){
 
 async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
-  const[s,ro,d,cr,crAll,eff,reg,orr]=await Promise.all([
+  const toIncl=fmtDate(new Date(MONDAY.getTime()+7*86400000)); // lundi suivant (pour la règle « veille » du dimanche)
+  const[s,ro,d,cr,crAll,eff,reg,orr,alt]=await Promise.all([
     sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
     sb.from('salarie_dispos').select('*'),
@@ -387,11 +389,16 @@ async function loadWeek(){
     sb.from('planning_creneaux').select('*').gte('date',from).lt('date',to),
     sb.from('planning_effectifs').select('*'),
     sb.from('planning_regles').select('*'),
-    sb.from('org_roles').select('*').eq('actif',true).order('ordre')
+    sb.from('org_roles').select('*').eq('actif',true).order('ordre'),
+    sb.from('alternance_jours').select('salarie_id,date,type').gte('date',from).lte('date',toIncl)
   ]);
   S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];
+  S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
   render();
 }
+// Type de jour CFA d'un salarié à une date ('ecole'|'examen'|'entreprise'|'vacances'|'ferie'|'repos') ou null
+function altDayType(sid,date){ return (S.altJours||{})[`${sid}|${date}`]||null; }
+function isAltBlocked(sid,date){ const t=altDayType(sid,date); return t==='ecole'||t==='examen'; }
 function dayJourType(i){if(i<=2)return 'Lu-Me';if(i===3)return 'Je';if(i===4)return 'Ve';if(i===5)return 'Sa';return 'Di';}
 
 const salById=id=>S.salaries.find(s=>s.id===id);
@@ -487,6 +494,13 @@ function renderTable(){
     let colIdx=0;
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
+      // Jour d'école / examen CFA → cellule grisée non-cliquable (alternant indisponible)
+      const adt=altDayType(s.id,date);
+      if(adt==='ecole'||adt==='examen'){
+        const ic=adt==='examen'?'📝':'🎓', lbl=adt==='examen'?'Examen':'École';
+        tbody+=`<td colspan="4" class="alt-block" title="${lbl} CFA — alternant indisponible">${ic} ${lbl}</td>`;
+        colIdx+=4; return;
+      }
       ['midi','soir'].forEach(svc=>{
         const cr=getCreneau(s.id,date,svc)||{};
         const cls=svc;
@@ -768,6 +782,24 @@ function renderChecks(){
     CHECKS.push({lbl:`Repos quotidien ≥ ${reposMin/60}h`,ok:reposBad.length===0,details:reposBad});
   }
 
+  // 9. Alternance / CFA — aucun service sur jour école/examen + veille protégée
+  if(S.altJours && Object.keys(S.altJours).length){
+    const cfaViol=[];
+    S.creneaux.forEach(c=>{
+      if(!c.heure_debut) return;
+      const ad=altDayType(c.salarie_id,c.date);
+      if(ad==='ecole'||ad==='examen'){ cfaViol.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} : placé un jour ${ad==='examen'?'d\'EXAMEN':'d\'ÉCOLE'} CFA`); return; }
+      const nd=fmtDate(new Date(new Date(c.date).getTime()+86400000)); const nextAd=altDayType(c.salarie_id,nd);
+      if(nextAd==='ecole'||nextAd==='examen'){
+        const r=_rcReg.raw(nextAd==='examen'?'fin_veille_examen':'fin_veille_ecole');
+        const seuil=(r&&r.active===false)?null:((r&&r.valeur)||(nextAd==='examen'?'19:00':'22:00'));
+        if(seuil){ const fm=toMin(c.heure_fin),dm=toMin(c.heure_debut); const late=(fm!=null&&dm!=null&&fm<=dm)||(fm!=null&&fm>toMin(seuil));
+          if(late) cfaViol.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} : fin ${(c.heure_fin||'').slice(0,5)} la veille d'un ${nextAd==='examen'?'examen':'jour d\'école'} (seuil ${seuil})`); }
+      }
+    });
+    CHECKS.push({lbl:'Alternance (école / veille)',ok:cfaViol.length===0,details:cfaViol});
+  }
+
   document.getElementById('checks').innerHTML=CHECKS.map((c,i)=>{
     const n=c.details.length;const hasD=n>0;
     return `<button class="chk ${c.ok?'ok':'ko'}" ${hasD?`onclick="showCheckDetails(${i})"`:''} style="${hasD?'cursor:pointer':'cursor:default'}">${c.ok?'✓':'⚠'} ${c.lbl}${n?` (${n})`:''}</button>`;
@@ -905,6 +937,8 @@ const RULE_META={
   fin_2h_pas_matin:{lbl:'Interdire le service du matin après une fin à 2 h',type:'bool'},
   repos_quotidien:{lbl:'Repos quotidien minimum (fin soir → matin J+1)',type:'bool'},
   repos_quotidien_h:{lbl:'Durée du repos quotidien',type:'number',unit:'h',min:0,max:24,help:'Heures minimales entre la fin d\'un service du soir et le début du service du lendemain'},
+  fin_veille_ecole:{lbl:'Heure max de fin de shift la veille d\'un jour d\'école (alternants)',type:'time',help:'Au-delà, l\'auto-fill refuse et une alerte rouge apparaît. Défaut 22:00.'},
+  fin_veille_examen:{lbl:'Heure max de fin de shift la veille d\'un examen (alternants)',type:'time',help:'Seuil plus strict pour les examens. Défaut 19:00.'},
   jour_off_min:{lbl:'Nombre minimum de jours de repos par semaine',type:'number',unit:'j',min:0,max:7},
   plafond_hebdo:{lbl:'Plafond d\'heures par semaine',type:'number',unit:'h',min:0,max:80},
   temps_partiel_max:{lbl:'Heures complémentaires max (temps partiel)',type:'number',unit:'%',min:100,max:200},
@@ -1363,11 +1397,12 @@ function _ruleCtx(){
   return {
     num:(c,d)=>{const r=RG[c];const v=r!=null?parseFloat(r.valeur):NaN;return isFinite(v)&&v>0?v:d;},
     on :(c,d)=>{const r=RG[c];return r?(r.active!==false):d;},
+    raw:(c)=>RG[c],
   };
 }
 const _pmin=t=>{if(!t)return null;const[h,mi]=t.slice(0,5).split(':').map(Number);return h*60+mi;};
 const _pdur=(d,f)=>{let a=_pmin(d),b=_pmin(f);if(a==null||b==null)return 0;if(b<=a)b+=1440;return b-a;};
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien insuffisant', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé' };
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien insuffisant', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé' };
 // sid: salarié testé · shift={deb,fin,role,exp} · date 'YYYY-MM-DD' · svc · di=0..6 · opt.{rg,excludeSelf}
 function checkPlacement(sid, shift, date, svc, di, opt){
   opt=opt||{}; const R=opt.rg||_ruleCtx(); const sal=salById(sid);
@@ -1382,6 +1417,19 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   const ind=S.dispos.find(d=>d.salarie_id===sid && d.statut==='indispo' && (d.statut_demande||'validee')==='validee'
         && ((d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date)));
   if(ind)                                   return {cle:'indispo', label:PLACE_RULES.indispo};
+  // jour d'école / examen CFA → strictement bloquant (alternant indispo)
+  const _ad=altDayType(sid,date);
+  if(_ad==='ecole')                         return {cle:'cfa', label:'jour d\'école CFA'};
+  if(_ad==='examen')                        return {cle:'cfa', label:'jour d\'examen CFA'};
+  // veille d'école/examen : fin de shift trop tardive (seuil paramétrable, défaut 22:00 / 19:00)
+  const _nd=fmtDate(new Date(new Date(date).getTime()+86400000));
+  const _nextAd=altDayType(sid,_nd);
+  if(_nextAd==='ecole'||_nextAd==='examen'){
+    const _cle=_nextAd==='examen'?'fin_veille_examen':'fin_veille_ecole';
+    const _row=R.raw(_cle); const _seuil=(_row&&_row.active===false)?null:((_row&&_row.valeur)||(_nextAd==='examen'?'19:00':'22:00'));
+    if(_seuil){ const _late=_pmin(shift.fin)<=_pmin(shift.deb) || _pmin(shift.fin)>_pmin(_seuil);
+      if(_late) return {cle:_cle, label:_nextAd==='examen'?PLACE_RULES.fin_veille_examen:PLACE_RULES.fin_veille_ecole}; }
+  }
   // doublon inter-snack : chevauchement HORAIRE réel (pas seulement même jour/service)
   const cand={heure_debut:shift.deb,heure_fin:shift.fin};
   if(S.allCreneauxWeek.some(c=>c.salarie_id===sid && c.date===date && c.restaurant_id!==SNACK.id && c.heure_debut && _overlap(cand,c)))
@@ -1407,10 +1455,16 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   const offMin=R.num('jour_off_min',1);
   const worked=new Set(mine.map(c=>c.date));
   if(!worked.has(date) && (worked.size+1)>(7-offMin)) return {cle:'jour_off_min',label:PLACE_RULES.jour_off_min};
-  // fin tardive (≤2h) la veille → pas de service du matin
-  if(R.on('fin_2h_pas_matin',true) && svc==='midi' && _pmin(shift.deb)<15*60){
-    const prev=fmtDate(new Date(new Date(date).getTime()-86400000)); const ps=mine.find(c=>c.date===prev&&c.service==='soir'&&c.heure_fin);
-    if(ps){ const fm=_pmin(ps.heure_fin); if(fm!=null&&fm<=180) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin}; }
+  // fin tardive (≤2h) la veille → pas de service du matin (SYMÉTRIQUE : indépendant de l'ordre de placement)
+  if(R.on('fin_2h_pas_matin',true)){
+    if(svc==='midi' && _pmin(shift.deb)<15*60){ // ce matin : la veille s'est-elle terminée tard ?
+      const prev=fmtDate(new Date(new Date(date).getTime()-86400000)); const ps=mine.find(c=>c.date===prev&&c.service==='soir'&&c.heure_fin);
+      if(ps){ const fm=_pmin(ps.heure_fin); if(fm!=null&&fm<=180) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin}; }
+    }
+    if(svc==='soir' && _pmin(shift.fin)!=null && _pmin(shift.fin)<=180){ // ce soir finit tard : y a-t-il un matin le lendemain ?
+      const next=fmtDate(new Date(new Date(date).getTime()+86400000)); const nm=mine.find(c=>c.date===next&&c.service==='midi'&&c.heure_debut);
+      if(nm && _pmin(nm.heure_debut)<15*60) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin};
+    }
   }
   // plafond hebdo : propriété salarié SINON règle globale plafond_hebdo (défaut 48h)
   const plaf=(sal.plafond_heures || R.num('plafond_hebdo',48))*60;

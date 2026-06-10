@@ -138,6 +138,20 @@ button{cursor:pointer;border:none;background:none}
   .tab-body{padding:18px 16px}
   .tbl td:nth-child(4),.tbl th:nth-child(4){display:none}
 }
+/* ── ALTERNANCE / CFA ── */
+.alt-brush{padding:5px 10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);border-radius:8px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none}
+.alt-brush.on{border-color:var(--bc);color:var(--bc);font-weight:700;box-shadow:inset 0 0 0 1px var(--bc)}
+.alt-months{display:grid;grid-template-columns:repeat(auto-fill,minmax(188px,1fr));gap:14px}
+.alt-month{border:1px solid var(--line-2);border-radius:10px;padding:8px;background:var(--surface)}
+.alt-mh{font-size:12px;font-weight:700;text-transform:capitalize;margin-bottom:6px;text-align:center}
+.alt-wd{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:3px}
+.alt-wd span{font-size:9px;color:var(--muted);text-align:center}
+.alt-days{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.alt-d{height:22px;display:flex;align-items:center;justify-content:center;font-size:10.5px;border:1px solid transparent;border-radius:5px;cursor:pointer;user-select:none;background:var(--bg);color:var(--text)}
+.alt-d.empty{visibility:hidden;cursor:default}
+.alt-d.we{color:var(--muted)}
+.alt-d:not(.empty):hover{outline:1px solid var(--accent)}
+.alt-d.has{font-weight:600}
 </style>
 </head>
 <body>
@@ -668,6 +682,7 @@ function renderFiche(){
     <button class="tab ${currentTab==='infos'?'active':''}" onclick="setTab('infos')">Informations</button>
     <button class="tab ${currentTab==='planning'?'active':''}" onclick="setTab('planning')">Planning</button>
     <button class="tab ${currentTab==='badgeuse'?'active':''}" onclick="setTab('badgeuse')">Badgeuse</button>
+    <button class="tab ${currentTab==='alternance'?'active':''}" onclick="setTab('alternance')">🎓 Alternance</button>
     <button class="tab ${currentTab==='docs'?'active':''}" onclick="setTab('docs')">Documents</button>
   </div>`;
 
@@ -886,6 +901,39 @@ function renderFiche(){
       </div>`;
     }
   }
+  else if(currentTab==='alternance'){
+    if(!s.id){
+      body=`<div class="tab-body"><div class="section" style="text-align:center;color:var(--muted)">Enregistre d'abord la fiche pour gérer le calendrier d'alternance.</div></div>`;
+    } else {
+      const isAlt=/altern|apprenti/i.test(s.type_contrat||'');
+      body=`<div class="tab-body">
+        <div class="section">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <h3 style="margin:0">🎓 Planning d'alternance / CFA</h3>
+            <button class="btn ghost sm" onclick="toast('Import OCR du planning CFA : phase 2 (Mistral vision). Pour l\\'instant, saisie manuelle ci-dessous — précise au jour près.')">📄 Importer un planning CFA (OCR — bientôt)</button>
+          </div>
+          ${!isAlt?`<div class="orange-box" style="margin-bottom:10px;font-size:12.5px">ℹ️ Le type de contrat n'indique pas « alternant » — le calendrier CFA reste utilisable ici si besoin.</div>`:''}
+          <div class="grid3">
+            <div class="fld"><label>Nom du CFA</label><input id="alt_cfa" placeholder="Nom du centre de formation"></div>
+            <div class="fld"><label>Année scolaire</label><select id="alt_annee" onchange="onAltYearChange()"></select></div>
+            <div class="fld" style="display:flex;align-items:flex-end"><button class="btn ghost sm" onclick="saveAltConfig()">💾 Enregistrer le CFA</button></div>
+          </div>
+        </div>
+        <div class="section">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+            <div><h3 style="margin:0">Calendrier annuel</h3><div style="color:var(--muted);font-size:12px">Choisis un type, puis clique (ou glisse) sur les jours.</div></div>
+            <div id="altBrushBar" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+          </div>
+          <div id="altSummary" style="margin-bottom:10px;font-size:12.5px;color:var(--muted)"></div>
+          <div id="altCalGrid">Chargement…</div>
+        </div>
+        <div class="section" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="color:var(--muted);font-size:12px;line-height:1.5;flex:1;min-width:220px">« Valider » applique les jours <b>école</b> et <b>examen</b> comme <b>indispos bloquantes</b> sur le planning entreprise, et crée les events <b>🎓 Examen</b> (rappel J-7) au Calendrier RH.</div>
+          <button class="btn" onclick="validateAltCal()">✅ Valider &amp; appliquer au planning</button>
+        </div>
+      </div>`;
+    }
+  }
   document.getElementById('ficheView').innerHTML=head+body;
 
   if(currentTab==='planning' && s.id){
@@ -893,6 +941,7 @@ function renderFiche(){
     const ndt=document.getElementById('nd_type');
     if(ndt)ndt.onchange=()=>{const p=ndt.value==='ponctuelle';document.getElementById('nd_date').classList.toggle('hidden',!p);document.getElementById('nd_jour').classList.toggle('hidden',p);};
   }
+  if(currentTab==='alternance' && s.id){ initAltTab(s.id); }
 }
 
 // triggerUpload sur clic d'une carte "doc requis" → auto-upload après sélection
@@ -1157,6 +1206,98 @@ async function delDoc(did,path){
   await sb.from('salarie_documents').delete().eq('id',did);
   const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
   renderFiche();render();toast('Supprimé');
+}
+
+// ===== ALTERNANCE / CFA =====
+const ALT_TYPES=[
+  {k:'ecole',lbl:'École',ic:'🎓',col:'#5b9cff'},
+  {k:'examen',lbl:'Examen',ic:'📝',col:'#c45a5a'},
+  {k:'entreprise',lbl:'Entreprise',ic:'🏢',col:'#3fb87f'},
+  {k:'vacances',lbl:'Vacances',ic:'🏖️',col:'#e0a93f'},
+  {k:'repos',lbl:'Repos',ic:'😴',col:'#8b94a3'},
+];
+const ALT_TMAP=Object.fromEntries(ALT_TYPES.map(t=>[t.k,t]));
+let ALT={jours:{},cal:null,annee:null,brush:'ecole',painting:false};
+function schoolYears(){ const n=new Date(); let y=n.getFullYear(); if(n.getMonth()<7)y--; const a=[]; for(let d=-1;d<=2;d++){const yy=y+d;a.push(`${yy}-${yy+1}`);} return a; }
+function altPeriod(annee){ const y=parseInt(annee.split('-')[0]); return {debut:`${y}-09-01`,fin:`${y+1}-08-31`}; }
+function initAltTab(salId){
+  const sel=document.getElementById('alt_annee'); if(!sel)return;
+  if(!ALT.annee) ALT.annee=schoolYears()[1];
+  sel.innerHTML=schoolYears().map(a=>`<option value="${a}" ${a===ALT.annee?'selected':''}>${a}</option>`).join('');
+  document.getElementById('altBrushBar').innerHTML=[...ALT_TYPES,{k:'effacer',lbl:'Effacer',ic:'⌫',col:'#888'}].map(t=>`<button class="alt-brush ${t.k===ALT.brush?'on':''}" data-b="${t.k}" onclick="setAltBrush('${t.k}')" style="--bc:${t.col}">${t.ic} ${t.lbl}</button>`).join('');
+  loadAltCal(salId);
+}
+function setAltBrush(b){ ALT.brush=b; document.querySelectorAll('.alt-brush').forEach(x=>x.classList.toggle('on',x.dataset.b===b)); }
+function onAltYearChange(){ ALT.annee=document.getElementById('alt_annee').value; loadAltCal(currentFiche.id); }
+async function loadAltCal(salId){
+  const annee=ALT.annee, p=altPeriod(annee);
+  const {data:cal}=await sb.from('alternance_calendrier').select('*').eq('salarie_id',salId).eq('annee_scolaire',annee).maybeSingle();
+  ALT.cal=cal||null; const cfa=document.getElementById('alt_cfa'); if(cfa)cfa.value=cal?.cfa_nom||'';
+  const {data:jours}=await sb.from('alternance_jours').select('*').eq('salarie_id',salId).gte('date',p.debut).lte('date',p.fin);
+  ALT.jours={}; (jours||[]).forEach(j=>ALT.jours[j.date]={id:j.id,type:j.type,source:j.source});
+  renderAltCalendar();
+}
+function renderAltCalendar(){
+  const box=document.getElementById('altCalGrid'); if(!box)return;
+  const p=altPeriod(ALT.annee), start=new Date(p.debut), JS=['L','M','M','J','V','S','D'];
+  let html='<div class="alt-months">';
+  for(let m=0;m<12;m++){
+    const md=new Date(start.getFullYear(),start.getMonth()+m,1);
+    const mLbl=md.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+    const first=(md.getDay()+6)%7, ndays=new Date(md.getFullYear(),md.getMonth()+1,0).getDate();
+    html+=`<div class="alt-month"><div class="alt-mh">${mLbl}</div><div class="alt-wd">${JS.map(d=>`<span>${d}</span>`).join('')}</div><div class="alt-days">`;
+    for(let i=0;i<first;i++)html+='<span class="alt-d empty"></span>';
+    for(let d=1;d<=ndays;d++){
+      const date=`${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const j=ALT.jours[date], t=j?ALT_TMAP[j.type]:null, wend=(new Date(date).getDay()+6)%7>=5;
+      html+=`<span class="alt-d${t?' has':''}${wend?' we':''}" data-date="${date}" title="${date}" style="${t?`background:${t.col}33;border-color:${t.col};color:${t.col}`:''}">${t?t.ic:d}</span>`;
+    }
+    html+='</div></div>';
+  }
+  box.innerHTML=html+'</div>'; renderAltSummary();
+}
+function renderAltSummary(){
+  const box=document.getElementById('altSummary'); if(!box)return;
+  const cnt={}; Object.values(ALT.jours).forEach(j=>cnt[j.type]=(cnt[j.type]||0)+1);
+  box.innerHTML=ALT_TYPES.map(t=>`<span style="margin-right:14px"><b style="color:${t.col}">${t.ic} ${cnt[t.k]||0}</b> ${t.lbl}</span>`).join('');
+}
+async function paintAltDay(cell){
+  const date=cell.dataset.date; if(!date)return; const sal=currentFiche.id, wend=(new Date(date).getDay()+6)%7>=5;
+  if(ALT.brush==='effacer'){
+    const j=ALT.jours[date]; if(j&&j.id) await sb.from('alternance_jours').delete().eq('id',j.id);
+    delete ALT.jours[date]; cell.className='alt-d'+(wend?' we':''); cell.style.cssText=''; cell.textContent=parseInt(date.slice(8));
+  } else {
+    const payload={salarie_id:sal,organization_id:ME.organization_id,date,type:ALT.brush,source:'manuel'};
+    const {data,error}=await sb.from('alternance_jours').upsert(payload,{onConflict:'salarie_id,date'}).select().single();
+    if(error){toast('Erreur: '+error.message);return;}
+    ALT.jours[date]={id:data.id,type:data.type,source:data.source};
+    const t=ALT_TMAP[ALT.brush]; cell.className='alt-d has'+(wend?' we':''); cell.style.cssText=`background:${t.col}33;border-color:${t.col};color:${t.col}`; cell.textContent=t.ic;
+  }
+  renderAltSummary();
+}
+document.addEventListener('mousedown',e=>{ const c=e.target.closest&&e.target.closest('.alt-d:not(.empty)'); if(c){ ALT.painting=true; paintAltDay(c); e.preventDefault(); } });
+document.addEventListener('mouseover',e=>{ if(!ALT.painting)return; const c=e.target.closest&&e.target.closest('.alt-d:not(.empty)'); if(c)paintAltDay(c); });
+document.addEventListener('mouseup',()=>{ ALT.painting=false; });
+async function saveAltConfig(){
+  const sal=currentFiche.id, annee=ALT.annee, p=altPeriod(annee);
+  const payload={salarie_id:sal,organization_id:ME.organization_id,annee_scolaire:annee,cfa_nom:val('alt_cfa'),date_debut:p.debut,date_fin:p.fin};
+  const {error}=await sb.from('alternance_calendrier').upsert(payload,{onConflict:'salarie_id,annee_scolaire'}).select().single();
+  if(error){toast('Erreur: '+error.message);return false;}
+  toast('CFA enregistré ✓'); return true;
+}
+async function validateAltCal(){
+  const sal=currentFiche.id, annee=ALT.annee, p=altPeriod(annee);
+  if(!await saveAltConfig())return;
+  await sb.from('alternance_calendrier').update({statut:'valide',validated_at:new Date().toISOString()}).eq('salarie_id',sal).eq('annee_scolaire',annee);
+  const nm=[currentFiche.prenom,currentFiche.nom].filter(Boolean).join(' ').trim()||currentFiche.nom||'Alternant';
+  // purge les events auto CFA de l'année puis recrée (examens rappel J-7 + rentrée)
+  await sb.from('calendar_events').delete().eq('salarie_id',sal).gte('date_debut',p.debut).lte('date_debut',p.fin).like('description','%[alternance-auto]%');
+  const exas=Object.entries(ALT.jours).filter(([,j])=>j.type==='examen').map(([d])=>d).sort();
+  const evs=exas.map(d=>({titre:`🎓 Examen — ${nm}`,type:'formation',salarie_id:sal,date_debut:d,all_day:true,description:'[alternance-auto] Jour d\'examen CFA',color:'#c45a5a',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id}));
+  const ecoles=Object.entries(ALT.jours).filter(([,j])=>j.type==='ecole').map(([d])=>d).sort();
+  if(ecoles.length) evs.push({titre:`📚 Rentrée CFA — ${nm}`,type:'formation',salarie_id:sal,date_debut:ecoles[0],all_day:true,description:'[alternance-auto] Début de formation',color:'#5b9cff',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id});
+  if(evs.length){ const {error}=await sb.from('calendar_events').insert(evs); if(error)toast('Events: '+error.message); }
+  toast(`Validé ✓ — ${exas.length} examen(s) au Calendrier RH · jours école/examen bloquants au planning`);
 }
 
 // ===== OCR / Pré-remplissage =====
