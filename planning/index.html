@@ -29,6 +29,11 @@ button{cursor:pointer;border:none;background:none}
 .ic.accent{background:var(--gold);border-color:var(--gold);color:#1a1a1a}
 .ic.accent:hover{filter:brightness(1.06)}
 .ic[disabled]{opacity:.4;cursor:default}
+/* Tooltip instantané au survol (le title natif est trop lent / parfois invisible) */
+.ic[data-tip]::after{content:attr(data-tip);position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);background:#1f1f2b;color:#fff;font-size:11px;font-weight:500;line-height:1.3;padding:5px 9px;border-radius:7px;white-space:nowrap;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s;z-index:60;box-shadow:0 6px 18px rgba(0,0,0,.45);border:1px solid var(--line-2)}
+.ic[data-tip]:hover::after{opacity:1;visibility:visible}
+.ic[data-tip]::before{content:'';position:absolute;top:calc(100% + 1px);left:50%;transform:translateX(-50%);border:6px solid transparent;border-bottom-color:#1f1f2b;opacity:0;visibility:hidden;transition:opacity .12s;z-index:60}
+.ic[data-tip]:hover::before{opacity:1;visibility:visible}
 .ic .ic-badge{position:absolute;top:-5px;right:-5px;background:var(--bad);color:#fff;font-size:10px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
 .af-spin{width:44px;height:44px;border:4px solid var(--line-2);border-top-color:var(--gold);border-radius:50%;margin:0 auto;animation:afspin .8s linear infinite}
 @keyframes afspin{to{transform:rotate(360deg)}}
@@ -148,16 +153,16 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button id="vSal" onclick="setView('sal')" style="padding:5px 10px;font-size:11px">👥 Salarié</button>
         <button id="vPoste" onclick="setView('poste')" style="padding:5px 10px;font-size:11px">🪑 Poste</button>
       </div>
-      <button class="ic" id="btnUndo" onclick="undo()" title="Annuler (Ctrl+Z)" disabled>↶</button>
-      <button class="ic" id="btnRedo" onclick="redo()" title="Rétablir (Ctrl+Y)" disabled>↷</button>
-      <button class="ic" onclick="openDemandes()" title="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
-      <button class="ic accent" onclick="autoFillWeek()" title="Auto-fill : remplir la semaine selon les dispos & règles" aria-label="Auto-fill">🎲</button>
-      <button class="ic" onclick="openReglages()" title="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
-      <button class="ic" onclick="document.getElementById('xlsxFile').click()" title="Importer un planning Excel" aria-label="Import Excel">📥</button>
+      <button class="ic" id="btnUndo" onclick="undo()" data-tip="Annuler (Ctrl+Z)" aria-label="Annuler" disabled>↶</button>
+      <button class="ic" id="btnRedo" onclick="redo()" data-tip="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled>↷</button>
+      <button class="ic" onclick="openDemandes()" data-tip="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
+      <button class="ic accent" onclick="autoFillWeek()" data-tip="Auto-fill : remplir la semaine selon les dispos & règles" aria-label="Auto-fill">🎲</button>
+      <button class="ic" onclick="openReglages()" data-tip="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
+      <button class="ic" onclick="document.getElementById('xlsxFile').click()" data-tip="Importer un planning Excel" aria-label="Import Excel">📥</button>
       <input type="file" id="xlsxFile" accept=".xlsx,.xlsm" style="display:none" onchange="handleImport(event)">
-      <button class="ic" onclick="openPdfModal()" title="Exporter le planning en PDF" aria-label="Export PDF">📄</button>
-      <a href="../" class="ic" title="Retour au portail" aria-label="Portail">🏠</a>
-      <button class="ic" onclick="logout()" title="Déconnexion" aria-label="Déconnexion">↩</button>
+      <button class="ic" onclick="openPdfModal()" data-tip="Exporter le planning en PDF" aria-label="Export PDF">📄</button>
+      <a href="../" class="ic" data-tip="Retour au portail" aria-label="Portail">🏠</a>
+      <button class="ic" onclick="logout()" data-tip="Déconnexion" aria-label="Déconnexion">↩</button>
     </div>
   </div>
 
@@ -439,10 +444,11 @@ function renderEffectifs(){
         const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
         const n=assigned.length;
         const ini=escP((r.nom||'?').trim().charAt(0).toUpperCase());
-        // Expérimentés : nombre de créneaux marqués "exp requis" non tenus par un expérimenté
-        const shifts=getShifts(dayJourType(i),svc,r.cle).filter(v=>v.exp);
+        // Expérimentés : groupé par horaire (exp présents vs requis), pour gérer plusieurs postes à la même heure
+        const expByDeb={};
+        getShifts(dayJourType(i),svc,r.cle).forEach(v=>{ if(v.exp) expByDeb[v.deb]=(expByDeb[v.deb]||0)+1; });
         let expMiss=0;
-        shifts.forEach(v=>{const c=assigned.find(x=>(x.heure_debut||'').slice(0,5)===v.deb); if(!c||!isExp(c.salarie_id,r.cle))expMiss++;});
+        Object.entries(expByDeb).forEach(([deb,req])=>{ const present=assigned.filter(x=>(x.heure_debut||'').slice(0,5)===deb&&isExp(x.salarie_id,r.cle)).length; expMiss+=Math.max(0,req-present); });
         const expBad=expMiss>0?` <span class="cnt-under" title="${expMiss} créneau(x) « expérimenté requis » non couvert(s)">★!${expMiss}</span>`:'';
         return `<span class="${cls(n,tgt.cible)}" title="${escP(r.nom)}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${roleCol(r.cle)};margin-right:3px;vertical-align:middle"></span>${n}/${tgt.cible}${ini}</span>${expBad}`;
       }).filter(Boolean).join(' ');
@@ -499,7 +505,7 @@ function renderTable(){
     else if(minH && totH<minH){recapCls='under';recapColor='var(--warn)';}
     else if(totH>0){recapCls='ok';recapColor='var(--ok)';}
     const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
-    tbody+=`<td style="background:rgba(200,160,53,.04);font-weight:700;color:${recapColor};text-align:center">${totH.toFixed(1)}h${range}</td>`;
+    tbody+=`<td class="rowHours" data-sid="${s.id}" style="background:rgba(200,160,53,.04);font-weight:700;color:${recapColor};text-align:center">${totH.toFixed(1)}h${range}</td>`;
     // colonne coût hebdo salarié (brut + chargé avec coef perso ou org)
     const taux=Number(s.taux_horaire_brut)||0;
     const coefOrg=Number(ORG.coef_charges)||1.420;
@@ -509,7 +515,7 @@ function renderTable(){
     const costChg=costBrut*coefEff;
     const costStr=taux>0?costBrut.toFixed(0)+' € <small style="color:var(--muted);font-weight:400">brut</small>':'<span style="color:var(--muted);font-weight:400">—</span>';
     const chgStr=taux>0?`<small style="color:var(--ok);font-weight:600;display:block;font-size:10.5px;margin-top:1px">${costChg.toFixed(0)} € chargé <span style="color:var(--muted);font-weight:400">×${coefEff.toFixed(3)}${coefPerso>0?'*':''}</span></small>`:'<small style="color:var(--warn);font-weight:400;display:block;font-size:9.5px;margin-top:1px">taux ?</small>';
-    tbody+=`<td style="background:rgba(63,184,127,.04);font-weight:700;text-align:center;color:${costBrut>0?'var(--text)':'var(--muted)'}">${costStr}${chgStr}</td>`;
+    tbody+=`<td class="rowCost" data-sid="${s.id}" style="background:rgba(63,184,127,.04);font-weight:700;text-align:center;color:${costBrut>0?'var(--text)':'var(--muted)'}">${costStr}${chgStr}</td>`;
     tbody+='</tr>';
   });
   if(!list.length) tbody+='<tr><td colspan="32" style="text-align:center;padding:30px;color:var(--muted)">Aucun salarié pour ce snack</td></tr>';
@@ -535,16 +541,55 @@ function renderTable(){
       const date=fmtDate(dateOfDay(i));
       let dayCost=0;
       S.creneaux.filter(c=>c.date===date&&onRoster(salById(c.salarie_id))).forEach(c=>{ dayCost += (_dur3(c.heure_debut,c.heure_fin)/60) * tauxOf(c.salarie_id); });
-      footHTML+=`<td colspan="4" style="text-align:center;font-weight:700;color:${dayCost>0?'var(--ok)':'var(--muted)'};font-size:12px">${dayCost>0?dayCost.toFixed(0)+' €':'—'}</td>`;
+      footHTML+=`<td class="footDay" data-i="${i}" colspan="4" style="text-align:center;font-weight:700;color:${dayCost>0?'var(--ok)':'var(--muted)'};font-size:12px">${dayCost>0?dayCost.toFixed(0)+' €':'—'}</td>`;
     });
-    footHTML+=`<td style="text-align:center;font-weight:700;color:var(--ok);background:rgba(63,184,127,.1);font-size:13px">${totalBrutSem.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">brut hebdo</small></td>`;
-    footHTML+=`<td style="text-align:center;font-weight:700;color:var(--ok);background:rgba(63,184,127,.15);font-size:13px">${totalChgSem.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">chargé (∑ indiv.)</small></td>`;
+    footHTML+=`<td class="footBrut" style="text-align:center;font-weight:700;color:var(--ok);background:rgba(63,184,127,.1);font-size:13px">${totalBrutSem.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">brut hebdo</small></td>`;
+    footHTML+=`<td class="footChg" style="text-align:center;font-weight:700;color:var(--ok);background:rgba(63,184,127,.15);font-size:13px">${totalChgSem.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">chargé (∑ indiv.)</small></td>`;
     footHTML+='</tr>';
     tbody+=footHTML;
   }
 
   tbody+='</tbody>';
   document.getElementById('planTbl').innerHTML=thead+tbody;
+}
+
+// Recalcule en place les coûts (lignes + footer/jour + totaux hebdo) SANS reconstruire les cellules éditables
+// → réactivité temps réel à chaque ajout/modif/suppression de créneau, sans voler le focus du clavier.
+function recomputeAggregates(){
+  const tbl=document.getElementById('planTbl'); if(!tbl) return;
+  const _toMin=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
+  const _dur=(d,f)=>{let a=_toMin(d),b=_toMin(f);if(a==null||b==null)return 0;if(b<=a)b+=1440;return b-a;};
+  const coefOrg=Number(ORG.coef_charges)||1.420;
+  const tauxOf=sid=>{const ss=salById(sid);return Number(ss?.taux_horaire_brut)||0;};
+  const coefOf=sid=>{const ss=salById(sid);const cp=Number(ss?.coef_charges_perso);return isFinite(cp)&&cp>0?cp:coefOrg;};
+  const minOf=sid=>S.creneaux.filter(c=>c.salarie_id===sid).reduce((a,c)=>a+_dur(c.heure_debut,c.heure_fin),0);
+  // Lignes : heures + coût par salarié
+  tbl.querySelectorAll('td.rowHours').forEach(td=>{
+    const sid=td.dataset.sid, s=salById(sid); if(!s) return;
+    const totH=minOf(sid)/60, minH=s.heures_min||0, maxH=s.heures_max||s.plafond_heures||48;
+    let color='var(--text)'; if(maxH&&totH>maxH)color='var(--bad)'; else if(minH&&totH<minH)color='var(--warn)'; else if(totH>0)color='var(--ok)';
+    const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
+    td.style.color=color; td.innerHTML=`${totH.toFixed(1)}h${range}`;
+  });
+  tbl.querySelectorAll('td.rowCost').forEach(td=>{
+    const sid=td.dataset.sid, s=salById(sid); if(!s) return;
+    const totH=minOf(sid)/60, taux=Number(s.taux_horaire_brut)||0, coefEff=coefOf(sid), cp=Number(s.coef_charges_perso);
+    const costBrut=totH*taux, costChg=costBrut*coefEff;
+    const costStr=taux>0?costBrut.toFixed(0)+' € <small style="color:var(--muted);font-weight:400">brut</small>':'<span style="color:var(--muted);font-weight:400">—</span>';
+    const chgStr=taux>0?`<small style="color:var(--ok);font-weight:600;display:block;font-size:10.5px;margin-top:1px">${costChg.toFixed(0)} € chargé <span style="color:var(--muted);font-weight:400">×${coefEff.toFixed(3)}${cp>0?'*':''}</span></small>`:'<small style="color:var(--warn);font-weight:400;display:block;font-size:9.5px;margin-top:1px">taux ?</small>';
+    td.style.color=costBrut>0?'var(--text)':'var(--muted)'; td.innerHTML=`${costStr}${chgStr}`;
+  });
+  // Footer : coût par jour + totaux hebdo
+  const sids=[...tbl.querySelectorAll('td.rowHours')].map(td=>td.dataset.sid);
+  let totalBrut=0,totalChg=0;
+  sids.forEach(sid=>{ const h=minOf(sid)/60; totalBrut+=h*tauxOf(sid); totalChg+=h*tauxOf(sid)*coefOf(sid); });
+  tbl.querySelectorAll('td.footDay').forEach(td=>{
+    const date=fmtDate(dateOfDay(+td.dataset.i)); let dc=0;
+    S.creneaux.filter(c=>c.date===date&&onRoster(salById(c.salarie_id))).forEach(c=>{ dc+=(_dur(c.heure_debut,c.heure_fin)/60)*tauxOf(c.salarie_id); });
+    td.style.color=dc>0?'var(--ok)':'var(--muted)'; td.innerHTML=dc>0?dc.toFixed(0)+' €':'—';
+  });
+  const fb=tbl.querySelector('td.footBrut'); if(fb) fb.innerHTML=`${totalBrut.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">brut hebdo</small>`;
+  const fc=tbl.querySelector('td.footChg'); if(fc) fc.innerHTML=`${totalChg.toFixed(0)} €<br><small style="font-weight:400;color:var(--muted);font-size:9.5px">chargé (∑ indiv.)</small>`;
 }
 
 function setSS(state,msg){const el=document.getElementById('ss');el.className='save-state '+state;el.textContent=msg;}
@@ -583,7 +628,7 @@ async function saveCell(sid,date,svc,which,el){
     S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));
     S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));
     recordAction(before,null);
-    setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();return;
+    setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();recomputeAggregates();return;
   }
   // upsert
   const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin};
@@ -592,7 +637,7 @@ async function saveCell(sid,date,svc,which,el){
   S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));S.creneaux.push(data);
   S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
   recordAction(before,data);
-  setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();
+  setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();recomputeAggregates();
   // Alerte si conflit avec un autre snack (sauf si popups désactivés)
   if(POPUP_ALERTS && CONFLICTS.has(`${sid}|${date}|${svc}`)){
     const sal=S.salaries.find(x=>x.id===sid);
@@ -618,10 +663,15 @@ function renderChecks(){
       const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
       const n=assigned.length;
       if(n!==tgt.cible) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${n}/${tgt.cible}`);
-      // Expérimenté requis : contrôlé créneau par créneau (vagues marquées exp)
-      getShifts(dayJourType(i),svc,r.cle).filter(v=>v.exp).forEach(v=>{
-        const c=assigned.find(x=>(x.heure_debut||'').slice(0,5)===v.deb);
-        if(!c||!isExp(c.salarie_id,r.cle)) expMiss.push(`${JOURS[i]} ${svc} · ${r.nom} · poste ${v.deb}→${v.fin} : expérimenté requis${c?' (tenu par un non-expérimenté)':' (non couvert)'}`);
+      // Expérimenté requis : groupé PAR HORAIRE de début (plusieurs postes peuvent commencer à la même heure,
+      // certains exp d'autres non → on compare le nombre d'expérimentés PRÉSENTS au nombre REQUIS à cet horaire).
+      const expByDeb={};
+      getShifts(dayJourType(i),svc,r.cle).forEach(v=>{ if(v.exp){ expByDeb[v.deb]=expByDeb[v.deb]||{n:0,fin:v.fin}; expByDeb[v.deb].n++; } });
+      Object.entries(expByDeb).forEach(([deb,info])=>{
+        const atDeb=assigned.filter(x=>(x.heure_debut||'').slice(0,5)===deb);
+        const expPresent=atDeb.filter(x=>isExp(x.salarie_id,r.cle)).length;
+        const missing=info.n-expPresent;
+        if(missing>0) expMiss.push(`${JOURS[i]} ${svc} · ${r.nom} · poste ${deb}→${info.fin} : ${missing} expérimenté(s) requis non couvert(s)${atDeb.length>=info.n?' (postes tenus par des non-expérimentés)':''}`);
       });
     });
   }
@@ -845,6 +895,14 @@ const RULE_META={
   effectifs_exacts:{lbl:'Compteurs = objectif exact',type:'bool'}
 };
 
+// Ouvre/replie un accordéon de rôle et mémorise l'état (ne se referme que sur clic explicite de l'en-tête)
+function toggleRoleAcc(cle, headerEl){
+  const body=headerEl.nextElementSibling; const willOpen=body.style.display==='none';
+  body.style.display=willOpen?'':'none';
+  const chev=headerEl.querySelector('.chev'); if(chev) chev.style.transform=willOpen?'rotate(90deg)':'';
+  if(!S.openRoles) S.openRoles=new Set();
+  if(willOpen) S.openRoles.add(cle); else S.openRoles.delete(cle);
+}
 function openReglages(){
   let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:10px;flex-wrap:wrap">
     <div><h3 style="margin:0;font-size:18px">Réglages</h3><div style="color:var(--muted);font-size:12px;margin-top:4px">Snack : <b style="color:var(--gold)">${SNACK.nom}</b></div></div>
@@ -859,10 +917,12 @@ function openReglages(){
     html+=`<div style="background:var(--surface);border:1px dashed var(--line-2);border-radius:12px;padding:20px;color:var(--muted);font-size:12.5px;text-align:center">Aucun rôle. Crée d'abord tes rôles dans <b>Gestion Salariés › ⚙ Rôles</b>, puis reviens ici.</div>`;
   } else {
     const svcMeta={midi:{lbl:'Midi',col:'#e8a06a'},soir:{lbl:'Soir',col:'#7aa2ff'}};
+    // État d'ouverture des accordéons mémorisé (par défaut : 1er rôle ouvert) → survit aux re-rendus du modal
+    if(!S.openRoles) S.openRoles=new Set(S.orgRoles.length?[S.orgRoles[0].cle]:[]);
     S.orgRoles.forEach((r,ri)=>{
-      const open=ri===0;
+      const open=S.openRoles.has(r.cle);
       html+=`<div style="border:1px solid var(--line-2);border-radius:14px;margin-bottom:12px;overflow:hidden;background:var(--card)">
-        <div onclick="const b=this.nextElementSibling;const o=b.style.display==='none';b.style.display=o?'':'none';this.querySelector('.chev').style.transform=o?'rotate(90deg)':'';" style="display:flex;align-items:center;gap:10px;padding:13px 16px;cursor:pointer;background:var(--surface);font-weight:600;font-size:13.5px;user-select:none">
+        <div onclick="toggleRoleAcc('${escJS(r.cle)}',this)" style="display:flex;align-items:center;gap:10px;padding:13px 16px;cursor:pointer;background:var(--surface);font-weight:600;font-size:13.5px;user-select:none">
           <span class="chev" style="display:inline-block;transition:transform .15s;color:var(--muted);font-size:11px;${open?'transform:rotate(90deg)':''}">▶</span>
           <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${roleCol(r.cle)}"></span>${escP(r.nom)}
         </div>
