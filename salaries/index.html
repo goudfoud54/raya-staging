@@ -653,6 +653,7 @@ function setTab(t){currentTab=t;renderFiche();}
 function renderFiche(){
   const s=currentFiche;
   const isNew=!s.id;
+  if(currentTab==='alternance' && !s.est_alternant) currentTab='infos'; // onglet réservé aux alternants
   const snackOpts='<option value="">— Aucun / MULTI —</option>'+S.restos.map(r=>`<option value="${r.id}" ${s.snack_origine_id===r.id?'selected':''}>${r.nom}</option>`).join('');
   const rls=s.id?rolesOf(s.id):[];
   const docTypes=s.id?docsOf(s.id).map(d=>d.type):[];
@@ -682,7 +683,7 @@ function renderFiche(){
     <button class="tab ${currentTab==='infos'?'active':''}" onclick="setTab('infos')">Informations</button>
     <button class="tab ${currentTab==='planning'?'active':''}" onclick="setTab('planning')">Planning</button>
     <button class="tab ${currentTab==='badgeuse'?'active':''}" onclick="setTab('badgeuse')">Badgeuse</button>
-    <button class="tab ${currentTab==='alternance'?'active':''}" onclick="setTab('alternance')">🎓 Alternance</button>
+    ${s.est_alternant?`<button class="tab ${currentTab==='alternance'?'active':''}" onclick="setTab('alternance')">🎓 Alternance</button>`:''}
     <button class="tab ${currentTab==='docs'?'active':''}" onclick="setTab('docs')">Documents</button>
   </div>`;
 
@@ -738,8 +739,9 @@ function renderFiche(){
         </div>
         <div class="chkrow">
           <label class="chk"><input type="checkbox" id="f_actif" ${(s.actif??true)?'checked':''}> Salarié actif</label>
+          <label class="chk"><input type="checkbox" id="f_alternant" ${s.est_alternant?'checked':''}> 🎓 Alternant / apprenti</label>
         </div>
-        <div style="color:var(--muted);font-size:11.5px;margin-top:8px">🏪 L'affectation aux restaurants (principal + secondaires) se règle dans l'onglet <b>Planning</b>.</div>
+        <div style="color:var(--muted);font-size:11.5px;margin-top:8px">🏪 L'affectation aux restaurants se règle dans l'onglet <b>Planning</b>. · 🎓 Coche « Alternant » puis <b>Enregistre</b> pour débloquer l'onglet <b>Alternance / CFA</b>.</div>
       </div>
       <div class="section">
         <h3>Notes</h3>
@@ -910,7 +912,11 @@ function renderFiche(){
         <div class="section">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
             <h3 style="margin:0">🎓 Planning d'alternance / CFA</h3>
-            <button class="btn ghost sm" onclick="toast('Import OCR du planning CFA : phase 2 (Mistral vision). Pour l\\'instant, saisie manuelle ci-dessous — précise au jour près.')">📄 Importer un planning CFA (OCR — bientôt)</button>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span id="cfaOcrStatus" style="font-size:12px;color:var(--muted)"></span>
+              <button class="btn ghost sm" id="cfaOcrBtn" onclick="document.getElementById('cfa_file').click()">📄 Importer un planning CFA (OCR)</button>
+            </div>
+            <input type="file" id="cfa_file" accept=".pdf,.png,.jpg,.jpeg,.webp" class="hidden" onchange="onCfaFile(event)">
           </div>
           ${!isAlt?`<div class="orange-box" style="margin-bottom:10px;font-size:12.5px">ℹ️ Le type de contrat n'indique pas « alternant » — le calendrier CFA reste utilisable ici si besoin.</div>`:''}
           <div class="grid3">
@@ -987,7 +993,7 @@ async function saveSalarie(){
     pin_badgeuse:'f_pin'};
   const DATE={date_naissance:'f_naiss',date_entree:'f_entree',date_sortie:'f_sortie'};
   const NUM={plafond_heures:'f_plafond',heures_min:'f_hmin',heures_max:'f_hmax',taux_horaire_brut:'f_taux',coef_charges_perso:'f_coefperso'};
-  const CHK={est_mineur:'f_mineur',actif:'f_actif'};
+  const CHK={est_mineur:'f_mineur',actif:'f_actif',est_alternant:'f_alternant'};
   const SEL={sexe:'f_sexe'};
   const COL={couleur:'f_couleur'};
   const payload={};
@@ -1298,6 +1304,63 @@ async function validateAltCal(){
   if(ecoles.length) evs.push({titre:`📚 Rentrée CFA — ${nm}`,type:'formation',salarie_id:sal,date_debut:ecoles[0],all_day:true,description:'[alternance-auto] Début de formation',color:'#5b9cff',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id});
   if(evs.length){ const {error}=await sb.from('calendar_events').insert(evs); if(error)toast('Events: '+error.message); }
   toast(`Validé ✓ — ${exas.length} examen(s) au Calendrier RH · jours école/examen bloquants au planning`);
+}
+
+// ── OCR du planning CFA (Mistral vision via edge function cfa-ocr) ──
+const ALT_MONTHS={janvier:0,'février':1,fevrier:1,mars:2,avril:3,mai:4,juin:5,juillet:6,'août':7,aout:7,septembre:8,octobre:9,novembre:10,'décembre':11,decembre:11};
+const ALT_COLOR_DEF={cyan:'ecole',rouge:'examen',vert:'entreprise',violet:'ignore',blanc:'ignore',ferie:'ferie'};
+function altMonthYear(nom){ const y=parseInt(ALT.annee.split('-')[0]); const mi=ALT_MONTHS[(nom||'').toLowerCase().trim()]; if(mi==null)return null; return {mi, year: mi>=8?y:y+1}; }
+async function onCfaFile(ev){
+  const file=ev.target.files[0]; if(!file)return; ev.target.value='';
+  const st=document.getElementById('cfaOcrStatus'), btn=document.getElementById('cfaOcrBtn'); const set=t=>{if(st)st.textContent=t;};
+  if(btn)btn.disabled=true;
+  try{
+    set('Préparation de l\'image…'); const dataUrl=await cfaFileToImage(file);
+    set('🔎 Analyse du calendrier (≈30 s)…');
+    const {data,error}=await sb.functions.invoke('cfa-ocr',{body:{image:dataUrl}});
+    if(error||!data||!data.ok) throw new Error((error&&error.message)||(data&&data.error)||'OCR échoué');
+    set(''); showCfaLegend(data.mois||[]);
+  }catch(e){ set(''); toast('OCR : '+(e.message||e)); }
+  finally{ if(btn)btn.disabled=false; }
+}
+async function cfaFileToImage(file){
+  if(file.type==='application/pdf'){
+    const buf=await file.arrayBuffer(); const pdf=await pdfjsLib.getDocument({data:buf}).promise; const page=await pdf.getPage(1);
+    const vp=page.getViewport({scale:2}); const cv=document.createElement('canvas'); cv.width=vp.width; cv.height=vp.height;
+    await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise; return cv.toDataURL('image/png');
+  }
+  return await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
+}
+function showCfaLegend(mois){
+  const cnt={}; mois.forEach(m=>(m.jours||[]).forEach(j=>{ const c=j.c||'blanc'; cnt[c]=(cnt[c]||0)+1; }));
+  window._cfaMois=mois;
+  const TYPES=[['ecole','🎓 École'],['examen','📝 Examen'],['entreprise','🏢 Entreprise'],['vacances','🏖️ Vacances'],['ferie','🎌 Férié'],['repos','😴 Repos'],['ignore','— Ignorer —']];
+  const sw={cyan:'#5bd1ff',vert:'#b6f36a',violet:'#d9c7f0',rouge:'#ff5a5a',blanc:'#ffffff',ferie:'#d9c7f0'};
+  const rows=Object.keys(cnt).map(c=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)">
+    <span style="width:22px;height:22px;border-radius:5px;border:1px solid var(--line-2);background:${sw[c]||'#ccc'}"></span>
+    <span style="flex:1;font-size:13px">${escH(c)} <span style="color:var(--muted)">(${cnt[c]} j)</span></span>
+    <select class="cfa-map" data-c="${escH(c)}" style="background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:7px;padding:6px 8px">${TYPES.map(t=>`<option value="${t[0]}" ${ALT_COLOR_DEF[c]===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select>
+  </div>`).join('');
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:470px">
+    <h2 style="margin-top:0">🎓 Couleurs détectées (année ${ALT.annee})</h2>
+    <div style="color:var(--muted);font-size:12.5px;margin:-8px 0 14px">Associe chaque couleur du planning à un type. Tu pourras corriger les jours un par un dans le calendrier ensuite.</div>
+    ${rows||'<div style="color:var(--muted)">Aucune couleur détectée.</div>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyCfaOcr()">Importer dans le calendrier</button></div>
+  </div></div>`;
+}
+async function applyCfaOcr(){
+  const map={}; document.querySelectorAll('.cfa-map').forEach(s=>map[s.dataset.c]=s.value);
+  const mois=window._cfaMois||[]; closeModal(); const rows=[];
+  mois.forEach(m=>{ const my=altMonthYear(m.nom); if(!my)return;
+    (m.jours||[]).forEach(j=>{ const type=map[j.c||'blanc']; if(!type||type==='ignore')return;
+      const last=new Date(my.year,my.mi+1,0).getDate(); if(j.d<1||j.d>last)return;
+      rows.push({salarie_id:currentFiche.id,organization_id:ME.organization_id,date:`${my.year}-${String(my.mi+1).padStart(2,'0')}-${String(j.d).padStart(2,'0')}`,type,source:'ocr'});
+    });
+  });
+  if(!rows.length){ toast('Aucun jour à importer (tout ignoré ?)'); return; }
+  for(let i=0;i<rows.length;i+=200){ const {error}=await sb.from('alternance_jours').upsert(rows.slice(i,i+200),{onConflict:'salarie_id,date'}); if(error){toast('Erreur: '+error.message);return;} }
+  await loadAltCal(currentFiche.id);
+  toast(`✓ ${rows.length} jours importés — vérifie/corrige puis « Valider »`);
 }
 
 // ===== OCR / Pré-remplissage =====
