@@ -1,6 +1,5 @@
-// cfa-ocr : lit un calendrier annuel d'alternance (image) via Mistral vision (pixtral)
-// et renvoie, par mois, la couleur dominante de chaque jour. Le mapping couleur->type
-// et la correction se font côté client (étape de validation). Réservé admin/super_admin.
+// cfa-ocr v3 : classification SEMANTIQUE contrainte (4 categories) + regles anti-hallucination.
+// Le mapping final + correction + override week-ends + filtre examen se font cote client. Reserve admin.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const SUPA_URL = Deno.env.get('SUPABASE_URL')!;
@@ -25,20 +24,18 @@ async function mistral(payload: any, max = 4): Promise<any> {
   throw new Error(`Mistral surcharge (${last}).`);
 }
 
-const SYS = `Tu analyses l'image d'un CALENDRIER ANNUEL d'alternance (apprenti). Il est organise en COLONNES par mois (ex: FEVRIER, MARS, AVRIL, MAI, JUIN, JUILLET). Chaque ligne = un jour : numero, jour de semaine (Lu/Ma/Me/Je/Ve/Sa/Di), puis une ou deux cellules COLOREES.
+const SYS = `Tu analyses l'image d'un CALENDRIER ANNUEL d'alternance, organise en BLOCS MENSUELS (ex "decembre-25", "janvier-26"...). Chaque bloc a un BANDEAU-TITRE bleu fonce (IGNORE) et une ligne d'en-tete "L M M J V S D" sur fond gris (IGNORE). Puis une grille de cases NUMEROTEES.
 
-Ta tache : pour CHAQUE mois visible et CHAQUE jour (1 jusqu'au dernier du mois), identifie la couleur DOMINANTE de la/les cellule(s) du jour, STRICTEMENT parmi :
-- "cyan"   = bleu clair / turquoise
-- "vert"   = vert clair (lime)
-- "violet" = mauve / lavande clair / rose pale
-- "rouge"  = rouge / rose vif
-- "blanc"  = cellule vide (blanche)
-- "ferie"  = la cellule contient le texte "FERIE"
+Pour CHAQUE case contenant un NUMERO, classe son FOND STRICTEMENT parmi ces 4 categories (n'invente AUCUNE autre couleur) :
+- "ecole"      = fond BLEU CLAIR. C'est la TRES grande majorite des cases colorees en bleu.
+- "examen"     = fond BLEU FONCE / SOMBRE marque. TRES RARE : seulement 1 ou 2 BLOCS d'une semaine entiere dans toute l'annee. Si une case est bleue mais que tu HESITES entre clair et fonce, choisis "ecole". Un simple lisere/bordure autour d'une case bleue CLAIRE ne suffit PAS : il faut un fond nettement plus FONCE que les autres cases bleues.
+- "weekend"    = fond GRIS (samedis, dimanches, jours feries). Une case GRISE n'est JAMAIS un examen.
+- "entreprise" = fond BLANC / sans remplissage.
 
-REGLES : n'invente aucun mois absent de l'image. Liste TOUS les jours de chaque mois present. Si deux demi-cellules ont 2 couleurs differentes, choisis la plus saturee (rouge > cyan > vert > violet > blanc).
+N'utilise QUE ces 4 valeurs. Ignore les cases vides et les en-tetes. Lis le numero exact.
 
-Reponds STRICTEMENT en JSON, sans aucun texte autour :
-{"mois":[{"nom":"FEVRIER","jours":[{"d":1,"c":"violet"},{"d":2,"c":"cyan"}]}]}`;
+Reponds STRICTEMENT en JSON, sans texte autour :
+{"mois":[{"nom":"decembre-25","jours":[{"d":1,"t":"entreprise"},{"d":19,"t":"ecole"}]}]}`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -63,11 +60,11 @@ Deno.serve(async (req) => {
   let result: any;
   try {
     const j = await mistral({
-      model: MODEL, temperature: 0, max_tokens: 6000,
+      model: MODEL, temperature: 0, max_tokens: 8000,
       messages: [
         { role: 'system', content: SYS },
         { role: 'user', content: [
-          { type: 'text', text: 'Voici le calendrier. Renvoie le JSON des couleurs par jour.' },
+          { type: 'text', text: 'Voici le calendrier. Classe chaque jour numerote en ecole/examen/weekend/entreprise. Rappel : examen = uniquement bleu nettement FONCE, tres rare. Renvoie le JSON.' },
           { type: 'image_url', image_url: img },
         ] },
       ],
