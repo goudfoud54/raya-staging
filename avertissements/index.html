@@ -1211,15 +1211,58 @@ function generatePDF(kind){
   else { doc.text('Signature :',130,y); y+=5; }
   if (org.signature){ try{ doc.addImage(org.signature,'PNG',130,y,45,18); y+=20; }catch(_){} }
 
-  // ── Décharge si main propre ──
+  // ── Décharge renforcée si remise en main propre (valeur probatoire prud'homale) ──
   if (modeRemise==='main_propre'){
-    if (y>250){ doc.addPage(); y=30; }
-    y+=8; doc.setDrawColor(180); doc.line(20,y,105,y); y+=6;
-    doc.setFont('helvetica','bold').setFontSize(9); doc.text('Remise en main propre contre décharge',20,y); y+=6;
-    doc.setFont('helvetica','normal').setFontSize(9);
-    doc.text('Reçu en main propre le ……… / ……… / ……………',20,y); y+=6;
-    doc.text('Signature du salarié (précédée de la mention « Reçu le … » manuscrite) :',20,y);
+    const objetTxt = buildObjet(kind,type,motifCourt).replace(/^Objet\s*:\s*/i,'').trim();
+    const fx0=18, fx1=192, tx=24, tw=160;            // cadre + zone de texte interne
+    const colL=tx, colR=tx+86, colW=78;
+    const dline='........ / ........ / ............';
+    const mention=`Je soussigné(e), ${civ} ${nomMaj} ${(sal.prenom||'')}`.trim()
+      +`, reconnais avoir reçu en main propre, ce jour, la lettre dont l'objet figure ci-dessus, à savoir : « ${objetTxt} ».`;
+    doc.setFontSize(9);
+    const mLines=doc.splitTextToSize(winAnsi(mention),tw);
+    // hauteur estimée du bloc (mention + note 2 exemplaires) → saut de page plutôt que troncature
+    const estH = 56 + mLines.length*4.6;
+    if (y+estH>276){ doc.addPage(); y=24; } else { y+=10; }
+    const pageCount=doc.getNumberOfPages();          // total FINAL : la décharge est le dernier contenu
+    const boxTop=y;
+    // titre
+    doc.setFont('helvetica','bold').setFontSize(11).setTextColor(0);
+    doc.text('Décharge — Remise en main propre contre récépissé', tx, boxTop+8);
+    let dy=boxTop+16;
+    // mention nominative + objet repris
+    doc.setFont('helvetica','normal').setFontSize(9).setTextColor(0);
+    mLines.forEach(l=>{ doc.text(l,tx,dy); dy+=4.6; });
+    dy+=1.5;
+    doc.text(winAnsi(`Document remis sur ${pageCount} page${pageCount>1?'s':''}.`),tx,dy); dy+=5;
+    doc.setFont('helvetica','bold'); doc.text('Je reconnais avoir pris connaissance de son contenu.',tx,dy); doc.setFont('helvetica','normal'); dy+=8;
+    // lieu (pré-rempli ville entreprise) + date manuscrite jour/mois/année
+    doc.text(winAnsi(`Lieu de remise : ${org.ville||'.............................'}`),tx,dy);
+    doc.text(`Date : ${dline}`,tx+90,dy); dy+=9;
+    // deux signatures côte à côte
+    doc.setFont('helvetica','bold').setFontSize(9).setTextColor(0);
+    doc.text('Le salarié', colL, dy);
+    doc.text("Témoin / représentant de l'employeur", colR, dy);
+    const subY=dy+5;
+    doc.setFont('helvetica','normal').setFontSize(8).setTextColor(60);
+    let lY=subY; doc.splitTextToSize(winAnsi(`Signature précédée de la mention manuscrite « Lu et reçu en main propre le ${dline} » :`),colW).forEach(l=>{ doc.text(l,colL,lY); lY+=3.6; });
+    let rY=subY; const witTxt='Nom et qualité : '+(org.rep?`${org.rep}${org.rep_qualite?', '+org.rep_qualite:''}`:'.............................');
+    doc.splitTextToSize(winAnsi(witTxt),colW).forEach(l=>{ doc.text(l,colR,rY); rY+=3.6; });
+    dy=Math.max(lY,rY)+20;                            // espace pour les signatures manuscrites
+    // case « refus de signer » (carré dessiné, ☐ non garanti en WinAnsi)
+    doc.setDrawColor(70); doc.setLineWidth(0.3); doc.rect(colL,dy-3.3,3.6,3.6);
+    doc.setFont('helvetica','normal').setFontSize(9).setTextColor(0);
+    doc.text('Le salarié a refusé de signer (à cocher le cas échéant)',colL+6,dy); dy+=3;
+    // cadre net autour du bloc
+    doc.setDrawColor(140); doc.setLineWidth(0.4); doc.rect(fx0,boxTop+2,fx1-fx0,dy-(boxTop+2)+3);
+    doc.setLineWidth(0.200025);
+    y=dy+9;
   }
+
+  // ── Note pratique : double original (standard prud'homal) ──
+  if (y>284){ doc.addPage(); y=24; }
+  doc.setFont('helvetica','italic').setFontSize(8).setTextColor(90);
+  doc.text("Document à établir en deux exemplaires originaux — un pour l'employeur, un pour le salarié.",105,(y<284?284:y),{align:'center'});
 
   doc.setFont('helvetica','italic').setFontSize(8).setTextColor(120);
   doc.text(`${org.nom||''} — Document généré le ${today} via Eatime360`,105,289,{align:'center'});
