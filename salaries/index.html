@@ -937,8 +937,11 @@ function renderFiche(){
           <div id="altCalGrid">Chargement…</div>
         </div>
         <div class="section" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-          <div style="color:var(--muted);font-size:12px;line-height:1.5;flex:1;min-width:220px">« Valider » applique les jours <b>école</b> et <b>examen</b> comme <b>indispos bloquantes</b> sur le planning entreprise, et crée les events <b>🎓 Examen</b> (rappel J-7) au Calendrier RH.</div>
-          <button class="btn" onclick="validateAltCal()">✅ Valider &amp; appliquer au planning</button>
+          <div style="color:var(--muted);font-size:12px;line-height:1.5;flex:1;min-width:220px">Les modifications restent en <b style="color:var(--text)">aperçu</b> <span id="altDirty" style="display:none;color:var(--warn);font-weight:600">● non appliqué</span> — <b style="color:var(--text)">rien n'est écrit en base</b> avant de cliquer « Valider & appliquer ». Les jours <b>école/examen</b> deviennent alors bloquants pour l'auto-fill + events 🎓 Examen (rappel J-7) au Calendrier RH.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn ghost" onclick="clearAltCal()">🗑 Tout vider</button>
+            <button class="btn" onclick="applyAltCal()">✅ Valider &amp; appliquer au planning</button>
+          </div>
         </div>
       </div>`;
     }
@@ -1220,13 +1223,14 @@ async function delDoc(did,path){
 // ===== ALTERNANCE / CFA =====
 const ALT_TYPES=[
   {k:'ecole',lbl:'École',ic:'🎓',col:'#5b9cff'},
-  {k:'examen',lbl:'Examen',ic:'📝',col:'#c45a5a'},
+  {k:'examen',lbl:'Examen',ic:'📝',col:'#2e5496'},
   {k:'entreprise',lbl:'Entreprise',ic:'🏢',col:'#3fb87f'},
   {k:'vacances',lbl:'Vacances',ic:'🏖️',col:'#e0a93f'},
   {k:'repos',lbl:'Repos',ic:'😴',col:'#8b94a3'},
 ];
 const ALT_TMAP=Object.fromEntries(ALT_TYPES.map(t=>[t.k,t]));
-let ALT={jours:{},cal:null,annee:null,brush:'ecole',painting:false};
+// ALT.jours = aperçu EN MÉMOIRE (rien en base avant validation). ALT.period = plage de mois affichée. ALT.dirty = modifs non appliquées.
+let ALT={jours:{},cal:null,annee:null,period:null,brush:'ecole',painting:false,dirty:false};
 function schoolYears(){ const n=new Date(); let y=n.getFullYear(); if(n.getMonth()<7)y--; const a=[]; for(let d=-1;d<=2;d++){const yy=y+d;a.push(`${yy}-${yy+1}`);} return a; }
 function altPeriod(annee){ const y=parseInt(annee.split('-')[0]); return {debut:`${y}-09-01`,fin:`${y+1}-08-31`}; }
 function initAltTab(salId){
@@ -1237,21 +1241,28 @@ function initAltTab(salId){
   loadAltCal(salId);
 }
 function setAltBrush(b){ ALT.brush=b; document.querySelectorAll('.alt-brush').forEach(x=>x.classList.toggle('on',x.dataset.b===b)); }
-function onAltYearChange(){ ALT.annee=document.getElementById('alt_annee').value; loadAltCal(currentFiche.id); }
+function onAltYearChange(){ ALT.annee=document.getElementById('alt_annee').value; ALT.period=null; loadAltCal(currentFiche.id); }
+function markAltDirty(){ const b=document.getElementById('altDirty'); if(b)b.style.display=ALT.dirty?'inline-flex':'none'; }
 async function loadAltCal(salId){
-  const annee=ALT.annee, p=altPeriod(annee);
+  const annee=ALT.annee;
   const {data:cal}=await sb.from('alternance_calendrier').select('*').eq('salarie_id',salId).eq('annee_scolaire',annee).maybeSingle();
   ALT.cal=cal||null; const cfa=document.getElementById('alt_cfa'); if(cfa)cfa.value=cal?.cfa_nom||'';
-  const {data:jours}=await sb.from('alternance_jours').select('*').eq('salarie_id',salId).gte('date',p.debut).lte('date',p.fin);
+  ALT.period=(cal&&cal.date_debut&&cal.date_fin)?{debut:cal.date_debut,fin:cal.date_fin}:altPeriod(annee);
+  const {data:jours}=await sb.from('alternance_jours').select('*').eq('salarie_id',salId).gte('date',ALT.period.debut).lte('date',ALT.period.fin);
   ALT.jours={}; (jours||[]).forEach(j=>ALT.jours[j.date]={id:j.id,type:j.type,source:j.source});
-  renderAltCalendar();
+  ALT.dirty=false; markAltDirty(); renderAltCalendar();
+}
+function altMonthsRange(){
+  const p=ALT.period||altPeriod(ALT.annee);
+  const s=new Date(p.debut+'T00:00:00'), e=new Date(p.fin+'T00:00:00'); const arr=[];
+  let cur=new Date(s.getFullYear(),s.getMonth(),1); const end=new Date(e.getFullYear(),e.getMonth(),1);
+  while(cur<=end && arr.length<18){ arr.push(new Date(cur)); cur.setMonth(cur.getMonth()+1); }
+  return arr;
 }
 function renderAltCalendar(){
   const box=document.getElementById('altCalGrid'); if(!box)return;
-  const p=altPeriod(ALT.annee), start=new Date(p.debut), JS=['L','M','M','J','V','S','D'];
-  let html='<div class="alt-months">';
-  for(let m=0;m<12;m++){
-    const md=new Date(start.getFullYear(),start.getMonth()+m,1);
+  const JS=['L','M','M','J','V','S','D']; let html='<div class="alt-months">';
+  for(const md of altMonthsRange()){
     const mLbl=md.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
     const first=(md.getDay()+6)%7, ndays=new Date(md.getFullYear(),md.getMonth()+1,0).getDate();
     html+=`<div class="alt-month"><div class="alt-mh">${mLbl}</div><div class="alt-wd">${JS.map(d=>`<span>${d}</span>`).join('')}</div><div class="alt-days">`;
@@ -1270,59 +1281,86 @@ function renderAltSummary(){
   const cnt={}; Object.values(ALT.jours).forEach(j=>cnt[j.type]=(cnt[j.type]||0)+1);
   box.innerHTML=ALT_TYPES.map(t=>`<span style="margin-right:14px"><b style="color:${t.col}">${t.ic} ${cnt[t.k]||0}</b> ${t.lbl}</span>`).join('');
 }
-async function paintAltDay(cell){
-  const date=cell.dataset.date; if(!date)return; const sal=currentFiche.id, wend=(new Date(date).getDay()+6)%7>=5;
-  if(ALT.brush==='effacer'){
-    const j=ALT.jours[date]; if(j&&j.id) await sb.from('alternance_jours').delete().eq('id',j.id);
-    delete ALT.jours[date]; cell.className='alt-d'+(wend?' we':''); cell.style.cssText=''; cell.textContent=parseInt(date.slice(8));
-  } else {
-    const payload={salarie_id:sal,organization_id:ME.organization_id,date,type:ALT.brush,source:'manuel'};
-    const {data,error}=await sb.from('alternance_jours').upsert(payload,{onConflict:'salarie_id,date'}).select().single();
-    if(error){toast('Erreur: '+error.message);return;}
-    ALT.jours[date]={id:data.id,type:data.type,source:data.source};
-    const t=ALT_TMAP[ALT.brush]; cell.className='alt-d has'+(wend?' we':''); cell.style.cssText=`background:${t.col}33;border-color:${t.col};color:${t.col}`; cell.textContent=t.ic;
-  }
-  renderAltSummary();
+function paintAltDay(cell){   // EN MÉMOIRE uniquement — rien n'est écrit en base avant « Valider & appliquer »
+  const date=cell.dataset.date; if(!date)return; const wend=(new Date(date).getDay()+6)%7>=5;
+  if(ALT.brush==='effacer'){ delete ALT.jours[date]; cell.className='alt-d'+(wend?' we':''); cell.style.cssText=''; cell.textContent=parseInt(date.slice(8)); }
+  else { ALT.jours[date]={type:ALT.brush,source:'manuel'}; const t=ALT_TMAP[ALT.brush]; cell.className='alt-d has'+(wend?' we':''); cell.style.cssText=`background:${t.col}33;border-color:${t.col};color:${t.col}`; cell.textContent=t.ic; }
+  ALT.dirty=true; markAltDirty(); renderAltSummary();
 }
 document.addEventListener('mousedown',e=>{ const c=e.target.closest&&e.target.closest('.alt-d:not(.empty)'); if(c){ ALT.painting=true; paintAltDay(c); e.preventDefault(); } });
 document.addEventListener('mouseover',e=>{ if(!ALT.painting)return; const c=e.target.closest&&e.target.closest('.alt-d:not(.empty)'); if(c)paintAltDay(c); });
 document.addEventListener('mouseup',()=>{ ALT.painting=false; });
+function clearAltCal(){ if(!confirm('Vider tout le calendrier affiché ?\n\n(Rien n\'est supprimé en base tant que tu ne cliques pas « Valider & appliquer ».)'))return; ALT.jours={}; ALT.dirty=true; markAltDirty(); renderAltCalendar(); }
 async function saveAltConfig(){
-  const sal=currentFiche.id, annee=ALT.annee, p=altPeriod(annee);
+  const sal=currentFiche.id, annee=ALT.annee, p=ALT.period||altPeriod(annee);
   const payload={salarie_id:sal,organization_id:ME.organization_id,annee_scolaire:annee,cfa_nom:val('alt_cfa'),date_debut:p.debut,date_fin:p.fin};
   const {error}=await sb.from('alternance_calendrier').upsert(payload,{onConflict:'salarie_id,annee_scolaire'}).select().single();
   if(error){toast('Erreur: '+error.message);return false;}
-  toast('CFA enregistré ✓'); return true;
+  return true;
 }
-async function validateAltCal(){
-  const sal=currentFiche.id, annee=ALT.annee, p=altPeriod(annee);
+// SEUL point d'écriture en base : remplace les jours de la période par l'aperçu + crée les events.
+async function applyAltCal(){
+  const sal=currentFiche.id, annee=ALT.annee, p=ALT.period||altPeriod(annee);
   if(!await saveAltConfig())return;
+  await sb.from('alternance_jours').delete().eq('salarie_id',sal).gte('date',p.debut).lte('date',p.fin);
+  const rows=Object.entries(ALT.jours).filter(([d])=>d>=p.debut&&d<=p.fin).map(([date,j])=>({salarie_id:sal,organization_id:ME.organization_id,date,type:j.type,source:j.source||'manuel'}));
+  for(let i=0;i<rows.length;i+=200){ const {error}=await sb.from('alternance_jours').insert(rows.slice(i,i+200)); if(error){toast('Erreur: '+error.message);return;} }
   await sb.from('alternance_calendrier').update({statut:'valide',validated_at:new Date().toISOString()}).eq('salarie_id',sal).eq('annee_scolaire',annee);
+  // events examens (rappel J-7) + rentrée — purge/recrée les events auto CFA de la période
   const nm=[currentFiche.prenom,currentFiche.nom].filter(Boolean).join(' ').trim()||currentFiche.nom||'Alternant';
-  // purge les events auto CFA de l'année puis recrée (examens rappel J-7 + rentrée)
   await sb.from('calendar_events').delete().eq('salarie_id',sal).gte('date_debut',p.debut).lte('date_debut',p.fin).like('description','%[alternance-auto]%');
-  const exas=Object.entries(ALT.jours).filter(([,j])=>j.type==='examen').map(([d])=>d).sort();
-  const evs=exas.map(d=>({titre:`🎓 Examen — ${nm}`,type:'formation',salarie_id:sal,date_debut:d,all_day:true,description:'[alternance-auto] Jour d\'examen CFA',color:'#c45a5a',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id}));
-  const ecoles=Object.entries(ALT.jours).filter(([,j])=>j.type==='ecole').map(([d])=>d).sort();
+  const exas=rows.filter(r=>r.type==='examen').map(r=>r.date).sort();
+  const evs=exas.map(d=>({titre:`🎓 Examen — ${nm}`,type:'formation',salarie_id:sal,date_debut:d,all_day:true,description:'[alternance-auto] Jour d\'examen CFA',color:'#2e5496',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id}));
+  const ecoles=rows.filter(r=>r.type==='ecole').map(r=>r.date).sort();
   if(ecoles.length) evs.push({titre:`📚 Rentrée CFA — ${nm}`,type:'formation',salarie_id:sal,date_debut:ecoles[0],all_day:true,description:'[alternance-auto] Début de formation',color:'#5b9cff',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id});
   if(evs.length){ const {error}=await sb.from('calendar_events').insert(evs); if(error)toast('Events: '+error.message); }
-  toast(`Validé ✓ — ${exas.length} examen(s) au Calendrier RH · jours école/examen bloquants au planning`);
+  const bloc=rows.filter(r=>['ecole','examen'].includes(r.type)).length;
+  await loadAltCal(sal);
+  toast(`✅ Appliqué — ${bloc} jour(s) bloquant(s) au planning · ${exas.length} examen(s) au Calendrier RH`);
 }
 
-// ── OCR du planning CFA (Mistral vision via edge function cfa-ocr) ──
+// ── OCR du planning CFA (Mistral vision via edge function cfa-ocr) — IMPORT EN MÉMOIRE (aperçu) ──
 const ALT_MONTHS={janvier:0,'février':1,fevrier:1,mars:2,avril:3,mai:4,juin:5,juillet:6,'août':7,aout:7,septembre:8,octobre:9,novembre:10,'décembre':11,decembre:11};
-const ALT_COLOR_DEF={cyan:'ecole',rouge:'examen',vert:'entreprise',violet:'ignore',blanc:'ignore',ferie:'ferie'};
-function altMonthYear(nom){ const y=parseInt(ALT.annee.split('-')[0]); const mi=ALT_MONTHS[(nom||'').toLowerCase().trim()]; if(mi==null)return null; return {mi, year: mi>=8?y:y+1}; }
+// "decembre-25" / "octobre-26" → {mi, year} en lisant le suffixe d'année du nom
+function cfaMonthYear(nom){
+  const mm=(nom||'').toLowerCase().match(/[a-zàâäéèêëîïôöûüç]+/); if(!mm) return null;
+  const mi=ALT_MONTHS[mm[0]]; if(mi==null) return null;
+  const yy=(nom||'').match(/(\d{2,4})\s*$/); let y=yy?parseInt(yy[1]):null;
+  if(y!=null && y<100) y=2000+y;
+  if(y==null){ const base=parseInt((ALT.annee||schoolYears()[1]).split('-')[0]); y=mi>=8?base:base+1; }
+  return {mi,year:y};
+}
+const ALT_CAT_DEF={ecole:'ecole',examen:'examen',weekend:'ignore',entreprise:'ignore'};
+const ALT_CAT_META={ecole:{lbl:'Bleu clair → École',ic:'🎓',col:'#5b9cff'},examen:{lbl:'Bleu foncé encadré → Examen',ic:'📝',col:'#2e5496'},weekend:{lbl:'Gris → Week-end / férié',ic:'😴',col:'#9aa0aa'},entreprise:{lbl:'Blanc → Entreprise',ic:'🏢',col:'#cfd4da'}};
+// Transforme la sortie OCR en {date: categorie} avec garde-fous DÉTERMINISTES.
+function processCfaMois(mois){
+  const byDate={};
+  (mois||[]).forEach(m=>{ const my=cfaMonthYear(m.nom); if(!my)return;
+    (m.jours||[]).forEach(j=>{ const d=parseInt(j.d); if(!d)return; const last=new Date(my.year,my.mi+1,0).getDate(); if(d<1||d>last)return;
+      const date=`${my.year}-${String(my.mi+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      let t=(j.t||j.c||'entreprise').toString().toLowerCase();
+      if(!['ecole','examen','weekend','entreprise'].includes(t)) t='entreprise';
+      if((new Date(date).getDay()+6)%7>=5) t='weekend';   // override : un samedi/dimanche est toujours week-end
+      byDate[date]=t;
+    });
+  });
+  // filtre examen : ne garder « examen » que sur des BLOCS de ≥ 3 jours consécutifs (vraies semaines d'exam) ; sinon → école
+  const ex=Object.keys(byDate).filter(d=>byDate[d]==='examen').sort(); let run=[];
+  const flush=()=>{ if(run.length<3) run.forEach(d=>{ byDate[d]='ecole'; }); run=[]; };
+  for(let i=0;i<ex.length;i++){ if(i>0 && (new Date(ex[i])-new Date(ex[i-1]))===86400000) run.push(ex[i]); else { flush(); run=[ex[i]]; } }
+  flush();
+  return byDate;
+}
 async function onCfaFile(ev){
   const file=ev.target.files[0]; if(!file)return; ev.target.value='';
   const st=document.getElementById('cfaOcrStatus'), btn=document.getElementById('cfaOcrBtn'); const set=t=>{if(st)st.textContent=t;};
   if(btn)btn.disabled=true;
   try{
     set('Préparation de l\'image…'); const dataUrl=await cfaFileToImage(file);
-    set('🔎 Analyse du calendrier (≈30 s)…');
+    set('🔎 Analyse du calendrier (≈30–60 s)…');
     const {data,error}=await sb.functions.invoke('cfa-ocr',{body:{image:dataUrl}});
     if(error||!data||!data.ok) throw new Error((error&&error.message)||(data&&data.error)||'OCR échoué');
-    set(''); showCfaLegend(data.mois||[]);
+    set(''); showCfaLegend(processCfaMois(data.mois||[]));
   }catch(e){ set(''); toast('OCR : '+(e.message||e)); }
   finally{ if(btn)btn.disabled=false; }
 }
@@ -1334,36 +1372,35 @@ async function cfaFileToImage(file){
   }
   return await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
 }
-function showCfaLegend(mois){
-  const cnt={}; mois.forEach(m=>(m.jours||[]).forEach(j=>{ const c=j.c||'blanc'; cnt[c]=(cnt[c]||0)+1; }));
-  window._cfaMois=mois;
+function showCfaLegend(byDate){
+  window._cfaByDate=byDate;
+  const cnt={}; Object.values(byDate).forEach(t=>cnt[t]=(cnt[t]||0)+1);
   const TYPES=[['ecole','🎓 École'],['examen','📝 Examen'],['entreprise','🏢 Entreprise'],['vacances','🏖️ Vacances'],['ferie','🎌 Férié'],['repos','😴 Repos'],['ignore','— Ignorer —']];
-  const sw={cyan:'#5bd1ff',vert:'#b6f36a',violet:'#d9c7f0',rouge:'#ff5a5a',blanc:'#ffffff',ferie:'#d9c7f0'};
-  const rows=Object.keys(cnt).map(c=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)">
-    <span style="width:22px;height:22px;border-radius:5px;border:1px solid var(--line-2);background:${sw[c]||'#ccc'}"></span>
-    <span style="flex:1;font-size:13px">${escH(c)} <span style="color:var(--muted)">(${cnt[c]} j)</span></span>
-    <select class="cfa-map" data-c="${escH(c)}" style="background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:7px;padding:6px 8px">${TYPES.map(t=>`<option value="${t[0]}" ${ALT_COLOR_DEF[c]===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select>
-  </div>`).join('');
-  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:470px">
-    <h2 style="margin-top:0">🎓 Couleurs détectées (année ${ALT.annee})</h2>
-    <div style="color:var(--muted);font-size:12.5px;margin:-8px 0 14px">Associe chaque couleur du planning à un type. Tu pourras corriger les jours un par un dans le calendrier ensuite.</div>
-    ${rows||'<div style="color:var(--muted)">Aucune couleur détectée.</div>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyCfaOcr()">Importer dans le calendrier</button></div>
+  // n'afficher que les catégories réellement présentes (filtre min : ≥1 jour)
+  const cats=['ecole','examen','weekend','entreprise'].filter(c=>(cnt[c]||0)>=1);
+  const rows=cats.map(c=>{ const meta=ALT_CAT_META[c]; return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)">
+    <span style="width:22px;height:22px;border-radius:5px;border:1px solid var(--line-2);background:${meta.col}"></span>
+    <span style="flex:1;font-size:13px">${meta.ic} ${meta.lbl} <span style="color:var(--muted)">(${cnt[c]} j)</span></span>
+    <select class="cfa-map" data-c="${c}" style="background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:7px;padding:6px 8px">${TYPES.map(t=>`<option value="${t[0]}" ${ALT_CAT_DEF[c]===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select>
+  </div>`;}).join('');
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:500px">
+    <h2 style="margin-top:0">🎓 Détection du planning CFA</h2>
+    <div style="color:var(--muted);font-size:12.5px;margin:-8px 0 14px;line-height:1.5">Voici les catégories détectées. Associe chacune à un type. <b style="color:var(--text)">Rien n'est appliqué au planning</b> à cette étape — tu pourras tout corriger au pinceau dans le calendrier, puis valider.</div>
+    ${rows||'<div style="color:var(--muted)">Aucune catégorie détectée.</div>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyCfaOcr()">Pré-remplir le calendrier (aperçu)</button></div>
   </div></div>`;
 }
-async function applyCfaOcr(){
+function applyCfaOcr(){
   const map={}; document.querySelectorAll('.cfa-map').forEach(s=>map[s.dataset.c]=s.value);
-  const mois=window._cfaMois||[]; closeModal(); const rows=[];
-  mois.forEach(m=>{ const my=altMonthYear(m.nom); if(!my)return;
-    (m.jours||[]).forEach(j=>{ const type=map[j.c||'blanc']; if(!type||type==='ignore')return;
-      const last=new Date(my.year,my.mi+1,0).getDate(); if(j.d<1||j.d>last)return;
-      rows.push({salarie_id:currentFiche.id,organization_id:ME.organization_id,date:`${my.year}-${String(my.mi+1).padStart(2,'0')}-${String(j.d).padStart(2,'0')}`,type,source:'ocr'});
-    });
-  });
-  if(!rows.length){ toast('Aucun jour à importer (tout ignoré ?)'); return; }
-  for(let i=0;i<rows.length;i+=200){ const {error}=await sb.from('alternance_jours').upsert(rows.slice(i,i+200),{onConflict:'salarie_id,date'}); if(error){toast('Erreur: '+error.message);return;} }
-  await loadAltCal(currentFiche.id);
-  toast(`✓ ${rows.length} jours importés — vérifie/corrige puis « Valider »`);
+  const byDate=window._cfaByDate||{}; closeModal();
+  const dates=Object.keys(byDate); if(!dates.length){ toast('Aucun jour détecté.'); return; }
+  // cadre la vue sur la plage réellement détectée (le calendrier CFA peut déborder de l'année scolaire)
+  const sorted=dates.sort(); const dMin=new Date(sorted[0]), dMax=new Date(sorted[sorted.length-1]);
+  ALT.period={debut:`${dMin.getFullYear()}-${String(dMin.getMonth()+1).padStart(2,'0')}-01`, fin:`${dMax.getFullYear()}-${String(dMax.getMonth()+1).padStart(2,'0')}-${String(new Date(dMax.getFullYear(),dMax.getMonth()+1,0).getDate()).padStart(2,'0')}`};
+  ALT.jours={}; let n=0;
+  Object.entries(byDate).forEach(([date,cat])=>{ const type=map[cat]; if(!type||type==='ignore')return; ALT.jours[date]={type,source:'ocr'}; n++; });
+  ALT.dirty=true; markAltDirty(); renderAltCalendar();
+  toast(`✓ ${n} jours pré-remplis (aperçu) — corrige au pinceau, puis « Valider & appliquer »`);
 }
 
 // ===== OCR / Pré-remplissage =====
