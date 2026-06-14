@@ -1680,13 +1680,64 @@ async function cfaFromPdfText(file,onStep){
   if(!samples.length) return {error:'Aucune case-jour localisée'};
   return cfaFinalize(samples,cfaCluster(samples),'pdf');
 }
+// EMPLOI DU TEMPS TEXTUEL (ex. CFA Restauration 54) : PDF à couche texte listant, par « Semaine
+// calendaire : N », des lignes « Lun 22/09/2025 08:30 - 10:30 Technologie (B5) ». RÈGLE MÉTIER (Rayan) :
+// on ne marque QUE les JOURS D'ÉCOLE (≥1 créneau de cours au CFA) → catégorie `ecole` ; tout le reste
+// (Entreprise, jours non listés, week-ends) = RIEN. Parseur TEXTE = le plus fiable (dates + libellés).
+async function cfaFromTimetable(file,onStep){
+  onStep&&onStep('Lecture de l\'emploi du temps (texte)…',30,true);
+  let pdf; try{ pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise; }catch(_){ return {error:'__notimetable__'}; }
+  const lines=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p); const tc=await page.getTextContent();
+    if(!tc||!tc.items||!tc.items.length) continue;
+    const its=tc.items.map(it=>({str:(it.str||''),x:it.transform[4],y:it.transform[5]})).filter(it=>it.str&&it.str.trim()!=='');
+    its.sort((a,b)=>b.y-a.y||a.x-b.x);                        // haut→bas, puis gauche→droite
+    let cur=[],cy=null;
+    const flush=()=>{ if(cur.length){ cur.sort((a,b)=>a.x-b.x); lines.push(cur.map(i=>i.str).join(' ').replace(/\s+/g,' ').trim()); cur=[]; } };
+    for(const it of its){ if(cy===null||Math.abs(it.y-cy)<=4){ cur.push(it); if(cy===null)cy=it.y; } else { flush(); cur=[it]; cy=it.y; } }
+    flush();
+  }
+  if(!lines.length) return {error:'__notimetable__'};
+  const full=lines.join('\n');
+  // signature « emploi du temps » : dates jj/mm/aaaa + plages horaires + « Semaine calendaire »
+  const nDates=(full.match(/\b\d{2}\/\d{2}\/\d{4}\b/g)||[]).length;
+  const nTimes=(full.match(/\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2}/g)||[]).length;
+  if(nDates<3 || nTimes<3 || !/semaine\s+calendaire/i.test(full)) return {error:'__notimetable__'};
+  onStep&&onStep('Analyse des jours d\'école…',70,true);
+  const timeRe=/\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2}/;
+  const dayHasCourse={}, allDates=[]; let cur=null;
+  for(const ln of lines){
+    if(/semaine\s+calendaire/i.test(ln)){ cur=null; continue; }   // frontière de semaine
+    const dm=ln.match(/^(?:lun|mar|mer|jeu|ven|sam|dim)\.?\s+(\d{2})\/(\d{2})\/(\d{4})/i);
+    let rest=ln;
+    if(dm){ cur=`${dm[3]}-${dm[2]}-${dm[1]}`; if(!(cur in dayHasCourse)){ dayHasCourse[cur]=false; allDates.push(cur); } rest=ln.slice(dm[0].length); }
+    if(!cur) continue;
+    if(timeRe.test(rest)){                                       // un créneau (plage horaire) sur ce jour
+      const desc=rest.replace(/.*\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2}/,'').trim();
+      const isEnt=/entreprise/i.test(desc)||/entreprise/i.test(rest);   // jour « Entreprise » = pas l'école
+      if(!isEnt) dayHasCourse[cur]=true;                         // ≥1 cours CFA → jour d'école
+    }
+  }
+  const ecoleDates=Object.keys(dayHasCourse).filter(d=>dayHasCourse[d]).sort();
+  const entrepriseDates=Object.keys(dayHasCourse).filter(d=>!dayHasCourse[d]).sort();
+  if(!ecoleDates.length) return {error:'Emploi du temps lu, mais aucun jour d\'école détecté. Tu peux remplir au pinceau.'};
+  allDates.sort();
+  if(CFA_DEBUG){ console.log('%c[CFA debug] emploi du temps — jours listés:'+allDates.length+' · ÉCOLE:'+ecoleDates.length+' · exclus(entreprise/vide):'+entrepriseDates.length,'color:#b8860b;font-weight:bold');
+    console.log('[CFA debug] école:',ecoleDates); console.log('[CFA debug] exclus:',entrepriseDates);
+    window._cfaDebug={fmt:'timetable',ecoleDates,entrepriseDates,allDates}; }
+  return {timetable:true, fmt:'PDF texte — emploi du temps', ecoleDates, entrepriseDates, allDates};
+}
 async function cfaDetect(file,onStep){
   const ext=(file.name||'').split('.').pop().toLowerCase();
   // V1 : Excel non parsé ici (intercepté en amont par onCfaFile → consigne « exporte en PDF »).
   // cfaFromExcel + helpers thème/tint restent dans le fichier mais ne sont plus appelés pour la détection.
   if(['xlsx','xls','xlsm','xlsb','xltx','xltm'].includes(ext)) return {error:'__excel__'};
   if(ext==='pdf' || file.type==='application/pdf'){
-    const r=await cfaFromPdfText(file,onStep);          // 1) couche texte (vectoriel) — sans OCR
+    const tt=await cfaFromTimetable(file,onStep);        // 0) emploi du temps TEXTUEL (jours d'école)
+    if(tt && tt.timetable) return tt;
+    if(tt && tt.error && tt.error!=='__notimetable__') return tt;   // emploi du temps lu mais vide → erreur claire
+    const r=await cfaFromPdfText(file,onStep);          // 1) calendrier couleur, couche texte (vectoriel) — sans OCR
     if(!(r&&r.error==='__notext__')) return r;
     onStep&&onStep('PDF scanné — OCR…',20,true);         // 2) fallback : PDF image → Tesseract
     const id=await cfaPdfToImageData(file); return await cfaFromImage(id,onStep);
@@ -1796,6 +1847,9 @@ async function onCfaFile(ev){
     try{ det=await cfaDetect(file,(l,p,i)=>setCfaStep(l,p,i)); }
     catch(e){ det={error:(e&&e.message)||String(e)}; }
     if(_cfaAbort.signal.aborted) throw new DOMException('aborted','AbortError');
+    // Emploi du temps TEXTUEL : catégories déjà connues (jours d'école) → application DIRECTE,
+    // sans modale de mapping couleur (il n'y a pas de couleur à mapper).
+    if(det && det.timetable){ hideCfaProgress(); applyTimetable(det); return; }
     // 2) Secours vision (uniquement si activé ET si la détection déterministe n'a rien donné).
     const empty=det.error || !det.byDate || !Object.keys(det.byDate).length;
     if(empty && CFA_USE_VISION_FALLBACK){
@@ -1828,6 +1882,18 @@ async function onCfaFile(ev){
   }finally{
     _cfaBusy=false; _cfaAbort=null; if(btn)btn.disabled=false;
   }
+}
+// Application DIRECTE d'un emploi du temps textuel → aperçu EN MÉMOIRE (validation-first inchangée).
+// On ne marque QUE les jours d'école ; tout le reste reste libre (ALT.jours est remis à zéro d'abord).
+function applyTimetable(det){
+  const dates=(det.ecoleDates||[]).slice(); if(!dates.length){ toast('Aucun jour d\'école détecté.'); return; }
+  const span=(det.allDates&&det.allDates.length?det.allDates:dates).slice().sort();
+  const dMin=new Date(span[0]+'T00:00:00'), dMax=new Date(span[span.length-1]+'T00:00:00');
+  ALT.period={debut:`${dMin.getFullYear()}-${String(dMin.getMonth()+1).padStart(2,'0')}-01`,
+    fin:`${dMax.getFullYear()}-${String(dMax.getMonth()+1).padStart(2,'0')}-${String(new Date(dMax.getFullYear(),dMax.getMonth()+1,0).getDate()).padStart(2,'0')}`};
+  ALT.jours={}; dates.forEach(d=>{ ALT.jours[d]={type:'ecole',source:'pdf-texte'}; });   // RIEN d'autre
+  ALT.dirty=true; markAltDirty(); renderAltCalendar();
+  toast(`✓ ${dates.length} jour(s) d'école détecté(s) (aperçu) — le reste reste libre. Vérifie puis « Valider & appliquer ».`);
 }
 async function cfaFileToImage(file){
   if(file.type==='application/pdf'){
