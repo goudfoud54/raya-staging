@@ -1554,25 +1554,76 @@ function cfaDominantColor(img,x0,x1,y0,y1){
   }
   return best?[Math.round(best.r/best.n),Math.round(best.g/best.n),Math.round(best.b/best.n)]:[255,255,255];
 }
+// Lecture SÛRE du texte d'une cellule exceljs : le getter .text lève « null is not an object
+// (this.value.toString) » sur certaines cellules (valeur null mais style présent, formules…). On garde.
+function cfaCellText(cell){
+  try{ const t=cell.text; return t==null?'':String(t).trim(); }
+  catch(_){ try{ let v=cell&&cell.value; if(v&&typeof v==='object'){ v=('result'in v)?v.result:(('text'in v)?v.text:(Array.isArray(v.richText)?v.richText.map(r=>r.text).join(''):'')); } return v==null?'':String(v).trim(); }catch(__){ return ''; } }
+}
+const cfaHex2rgb=h=>{ if(!h)return null; h=String(h); h=h.length===8?h.slice(2):h; if(h.length<6)return null; const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16); return [r,g,b].some(n=>isNaN(n))?null:[r,g,b]; };
+// Teinte OOXML appliquée à la LUMINANCE (espace HSL) : tint<0 assombrit, tint>0 éclaircit (formule MS-OI29500).
+function cfaApplyTint(rgb,tint){
+  if(!tint) return rgb;
+  let [r,g,b]=rgb.map(v=>v/255);
+  const max=Math.max(r,g,b),min=Math.min(r,g,b); let h,s,l=(max+min)/2;
+  if(max===min){h=s=0;} else { const d=max-min; s=l>0.5?d/(2-max-min):d/(max+min);
+    switch(max){case r:h=(g-b)/d+(g<b?6:0);break;case g:h=(b-r)/d+2;break;default:h=(r-g)/d+4;} h/=6; }
+  l = tint<0 ? l*(1+tint) : l*(1-tint)+tint;
+  const hue2rgb=(p,q,t)=>{ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
+  let R,G,B; if(s===0){R=G=B=l;} else { const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q; R=hue2rgb(p,q,h+1/3);G=hue2rgb(p,q,h);B=hue2rgb(p,q,h-1/3); }
+  return [Math.round(R*255),Math.round(G*255),Math.round(B*255)];
+}
+// Index de couleur de thème (attribut `theme` des fills) → ordre du clrScheme : les 2 premières paires
+// sont INVERSÉES (theme0=lt1/fond, theme1=dk1/texte, theme2=lt2, theme3=dk2), puis accents/liens à l'identité.
+const CFA_THEME_MAP=[1,0,3,2,4,5,6,7,8,9,10,11];
+// Palette de thème (xl/theme1.xml, exposée par exceljs en wb.model.themes.theme1) → 12 couleurs hex dans
+// l'ordre du clrScheme (dk1,lt1,dk2,lt2,accent1..6,hlink,folHlink). sysClr → lastClr (sinon window=blanc).
+function cfaThemePalette(wb){
+  try{ const xml=(wb&&wb.model&&wb.model.themes&&wb.model.themes.theme1)||''; if(!xml)return null;
+    const m=xml.match(/<a:clrScheme[\s\S]*?<\/a:clrScheme>/); if(!m)return null; const seq=m[0];
+    const slots=['dk1','lt1','dk2','lt2','accent1','accent2','accent3','accent4','accent5','accent6','hlink','folHlink'];
+    return slots.map(slot=>{ const sm=seq.match(new RegExp('<a:'+slot+'>([\\s\\S]*?)</a:'+slot+'>')); if(!sm)return null; const inner=sm[1];
+      let c=inner.match(/<a:srgbClr[^>]*val="([0-9A-Fa-f]{6})"/); if(c)return c[1];
+      let s=inner.match(/<a:sysClr[^>]*lastClr="([0-9A-Fa-f]{6})"/); if(s)return s[1];
+      let v=inner.match(/<a:sysClr[^>]*val="(\w+)"/); return v?(v[1].toLowerCase()==='window'?'FFFFFF':'000000'):null; });
+  }catch(_){ return null; }
+}
+// Résout une couleur de fond exceljs → [r,g,b] ou null si non exploitable (jamais d'exception) :
+// 1) argb direct ; 2) theme (+tint) résolu via la palette ; 3) indexed/legacy → ignoré proprement.
+function cfaResolveColor(color,pal){ if(!color||typeof color!=='object')return null;
+  try{ if(color.argb) return cfaHex2rgb(color.argb);
+    if(typeof color.theme==='number'&&pal){ const idx=CFA_THEME_MAP[color.theme]!=null?CFA_THEME_MAP[color.theme]:color.theme; const baseHex=pal[idx]; const base=cfaHex2rgb(baseHex); if(!base)return null; return cfaApplyTint(base,typeof color.tint==='number'?color.tint:0); }
+  }catch(_){}
+  return null;
+}
 async function cfaFromExcel(file,onStep){
   if(typeof ExcelJS==='undefined') return {error:'Librairie Excel non chargée'};
   onStep&&onStep('Lecture du classeur…',40,true);
   const wb=new ExcelJS.Workbook(); await wb.xlsx.load(await file.arrayBuffer());
   const ws=wb.worksheets[0]; if(!ws) return {error:'Classeur vide'};
+  const pal=cfaThemePalette(wb);
+  const fillRgb=cell=>{ const f=cell&&cell.fill; if(!f||f.type!=='pattern'||!f.fgColor)return null; return cfaResolveColor(f.fgColor,pal); };
+  const dbgCells=[];
   const monthsAt={};
   ws.eachRow((row)=>{ row.eachCell((cell,c)=>{
-    const pm=cfaParseMonth(cell.text); if(!pm||pm.y==null)return; monthsAt[c]={mi:pm.mi,y:pm.y};
+    const pm=cfaParseMonth(cfaCellText(cell)); if(!pm||pm.y==null)return; monthsAt[c]={mi:pm.mi,y:pm.y};
   });});
+  if(CFA_DEBUG){
+    // log des couleurs résolues (vérifie que le thème → RGB non-null), même si la grille ne se forme pas
+    const seen={}; ws.eachRow((row)=>{ row.eachCell((cell)=>{ const rgb=fillRgb(cell); if(rgb){ const k=rgb.join(','); seen[k]=(seen[k]||0)+1; } }); });
+    const top=Object.entries(seen).sort((a,b)=>b[1]-a[1]).slice(0,15);
+    console.log('%c[CFA debug] Excel — palette thème:'+JSON.stringify(pal),'color:#b8860b;font-weight:bold');
+    console.log('[CFA debug] Excel — couleurs de fond RÉSOLUES (RGB×n):',top);
+    window._cfaDebug={fmt:'excel',themePalette:pal,resolvedFills:top,monthCols:Object.keys(monthsAt)};
+  }
   const monthCols=Object.keys(monthsAt).map(Number).sort((a,b)=>a-b);
-  if(!monthCols.length) return {error:'Aucun en-tête de mois (ex. « janv-26 ») trouvé dans le classeur'};
-  const argb2rgb=a=>{ if(!a)return null; a=a.length===8?a.slice(2):a; if(a.length<6)return null; return [parseInt(a.slice(0,2),16),parseInt(a.slice(2,4),16),parseInt(a.slice(4,6),16)]; };
-  const fillRgb=cell=>{ const f=cell&&cell.fill; if(!f||f.type!=='pattern'||!f.fgColor)return null; return argb2rgb(f.fgColor.argb); };
+  if(!monthCols.length) return {error:'Aucun en-tête de mois (ex. « janv-26 ») trouvé dans le classeur'+(CFA_DEBUG?' (couleurs thème résolues — voir console)':'')};
   const samples=[];
   for(let k=0;k<monthCols.length;k++){
     const c0=monthCols[k], c1=k+1<monthCols.length?monthCols[k+1]:c0+5; const {mi,y}=monthsAt[c0];
     ws.eachRow((row)=>{
       let dayN=null, numCol=null;
-      for(let c=c0;c<c1;c++){ const tv=(row.getCell(c).text||'').toString().trim(); if(/^\d{1,2}$/.test(tv)){const n=parseInt(tv); if(n>=1&&n<=31){dayN=n;numCol=c;break;}} }
+      for(let c=c0;c<c1;c++){ const tv=cfaCellText(row.getCell(c)); if(/^\d{1,2}$/.test(tv)){const n=parseInt(tv); if(n>=1&&n<=31){dayN=n;numCol=c;break;}} }
       if(dayN==null)return; const last=new Date(y,mi+1,0).getDate(); if(dayN>last)return;
       let rgb=null; for(let c=numCol;c<c1;c++){ const f=fillRgb(row.getCell(c)); if(f && !cfaIsWhite(...f)) rgb=f; }
       if(!rgb) rgb=[255,255,255];
