@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root, [data-theme="dark"]{--gold:#c8a035;--gold-dim:#8a7028;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.12);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -371,8 +372,9 @@ const contrOf=sid=>S.contraintes.filter(x=>x.salarie_id===sid);
 const docsOf=sid=>S.docs.filter(x=>x.salarie_id===sid);
 const ptsOf=sid=>S.pts.filter(x=>x.salarie_id===sid);
 function generatePin(){
+  // S11 : nouveaux codes à 6 chiffres (plus sûrs). Les anciens codes 4 chiffres restent valides.
   const used=new Set(S.salaries.map(s=>s.pin_badgeuse).filter(Boolean));
-  for(let i=0;i<2000;i++){const p=String(Math.floor(Math.random()*10000)).padStart(4,'0');if(!used.has(p))return p;}
+  for(let i=0;i<2000;i++){const p=String(Math.floor(Math.random()*1000000)).padStart(6,'0');if(!used.has(p))return p;}
   return null;
 }
 async function setPinAndSave(id){
@@ -728,7 +730,7 @@ function renderFiche(){
           <div class="fld"><label>Nationalité</label><input id="f_nat" value="${s.nationalite||''}"></div>
           <div class="fld"><label>N° Sécurité sociale</label><input id="f_secu" value="${s.num_secu||''}"></div>
           <div class="fld"><label>Matricule interne</label><input id="f_matricule" value="${s.matricule||''}"></div>
-          <div class="fld"><label>Code badgeuse (auto)</label><div style="display:flex;gap:6px"><input id="f_pin" maxlength="4" pattern="[0-9]{4}" value="${s.pin_badgeuse||''}" placeholder="auto" style="flex:1">${s.id?`<button class="btn ghost sm" onclick="setPinAndSave('${s.id}')" type="button" title="Générer un nouveau code">🎲</button>`:''}</div></div>
+          <div class="fld"><label>Code badgeuse (auto)</label><div style="display:flex;gap:6px"><input id="f_pin" maxlength="6" pattern="[0-9]{4,6}" value="${s.pin_badgeuse||''}" placeholder="auto (4-6 chiffres)" style="flex:1">${s.id?`<button class="btn ghost sm" onclick="setPinAndSave('${s.id}')" type="button" title="Générer un nouveau code">🎲</button>`:''}</div></div>
         </div>
         <div class="chkrow"><label class="chk"><input type="checkbox" id="f_mineur" ${s.est_mineur?'checked':''}> Mineur</label></div>
       </div>
@@ -940,7 +942,7 @@ function renderFiche(){
               <span id="cfaOcrStatus" style="font-size:12px;color:var(--muted)"></span>
               <button class="btn ghost sm" id="cfaOcrBtn" onclick="document.getElementById('cfa_file').click()">📄 Importer un planning CFA (OCR)</button>
             </div>
-            <input type="file" id="cfa_file" accept=".pdf,.png,.jpg,.jpeg,.webp" class="hidden" onchange="onCfaFile(event)">
+            <input type="file" id="cfa_file" accept=".xlsx,.xls,.xlsm,.pdf,.png,.jpg,.jpeg,.webp,.heic" class="hidden" onchange="onCfaFile(event)">
           </div>
           ${!isAlt?`<div class="orange-box" style="margin-bottom:10px;font-size:12.5px">ℹ️ Le type de contrat n'indique pas « alternant » — le calendrier CFA reste utilisable ici si besoin.</div>`:''}
           <div class="grid3">
@@ -1172,14 +1174,14 @@ async function addDispo(){
   if(error){toast('Erreur: '+error.message);return;}
   const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();toast('Ajoutée');
 }
-async function delDispo(did){await sb.from('salarie_dispos').delete().eq('id',did);const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
+async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await sb.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
 async function addContrainte(){
   const id=currentFiche.id;
   const{error}=await sb.from('salarie_contraintes').insert({salarie_id:id,cle:document.getElementById('nc_cle').value,valeur:val('nc_val'),active:true});
   if(error){toast('Erreur: '+error.message);return;}
   const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();toast('Ajoutée');
 }
-async function delContrainte(cid){await sb.from('salarie_contraintes').delete().eq('id',cid);const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();}
+async function delContrainte(cid){if(!confirm('Supprimer cette contrainte ?'))return;const{error}=await sb.from('salarie_contraintes').delete().eq('id',cid);if(error){toast('Erreur : '+error.message);return;}const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();}
 
 let _uploadingDoc=false;
 async function uploadDoc(){
@@ -1248,6 +1250,7 @@ const ALT_TYPES=[
   {k:'examen',lbl:'Examen',ic:'📝',col:'#2e5496'},
   {k:'entreprise',lbl:'Entreprise',ic:'🏢',col:'#3fb87f'},
   {k:'vacances',lbl:'Vacances',ic:'🏖️',col:'#e0a93f'},
+  {k:'ferie',lbl:'Férié',ic:'🎌',col:'#c45a5a'},
   {k:'repos',lbl:'Repos',ic:'😴',col:'#8b94a3'},
 ];
 const ALT_TMAP=Object.fromEntries(ALT_TYPES.map(t=>[t.k,t]));
@@ -1294,8 +1297,8 @@ function renderAltCalendar(){
     for(let i=0;i<first;i++)html+='<span class="alt-d empty"></span>';
     for(let d=1;d<=ndays;d++){
       const date=`${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      const j=ALT.jours[date], t=j?ALT_TMAP[j.type]:null, wend=(new Date(date).getDay()+6)%7>=5;
-      html+=`<span class="alt-d${t?' has':''}${wend?' we':''}" data-date="${date}" title="${date}" style="${t?`background:${t.col}33;border-color:${t.col};color:${t.col}`:''}">${t?t.ic:d}</span>`;
+      const j=ALT.jours[date], t=j?ALT_TMAP[j.type]:null, wend=(new Date(date).getDay()+6)%7>=5, vf=!!(j&&j.verify);
+      html+=`<span class="alt-d${t?' has':''}${wend?' we':''}${vf?' cfa-verify':''}" data-date="${date}" title="${date}${vf?' — à vérifier (détection incertaine)':''}" style="${t?`background:${t.col}33;border-color:${t.col};color:${t.col}`:''}${vf?';outline:2px dashed var(--bad);outline-offset:-2px':''}">${t?t.ic:d}</span>`;
     }
     html+='</div></div>';
   }
@@ -1344,6 +1347,315 @@ async function applyAltCal(){
   toast(`✅ Appliqué — ${bloc} jour(s) bloquant(s) au planning · ${exas.length} examen(s) au Calendrier RH`);
 }
 
+// ===== DÉTECTION DÉTERMINISTE DU PLANNING CFA (refonte) =====
+// On ne demande PLUS à un LLM de deviner les couleurs. On lit la couleur de chaque case-jour de façon
+// déterministe (Excel = remplissage de cellule ; PDF/image = médiane de pixels), on regroupe en CLUSTERS
+// (espace Lab), et l'humain associe chaque cluster à une catégorie (flux validation-first). La vision
+// pixtral reste en SECOURS derrière un flag (défaut OFF).
+const CFA_USE_VISION_FALLBACK = false;
+const CFA_CONF_SEUIL = 0.6;        // sous ce score → case « à vérifier »
+const CFA_DELTAE = 16;             // seuil de regroupement des couleurs (ΔE Lab)
+// Mode debug détection image : ajouter ?cfadebug=1 à l'URL → log détaillé (colonnes/lignes, RGB G/D par jour,
+// couleur retenue, totaux/clusters) en console + window._cfaDebug. Aide à caler le pipeline navigateur réel.
+const CFA_DEBUG = /[?&]cfadebug=1/.test(location.search);
+const cfaChroma = rgb => Math.max(rgb[0],rgb[1],rgb[2]) - Math.min(rgb[0],rgb[1],rgb[2]);
+// Une sous-case porte une vraie couleur (vs vide blanc / fond hachuré gris clair) si elle n'est pas quasi-blanche
+// ET possède une chroma franche (écart canal max-min). Seuil 22 : laisse passer violet/cyan/vert/rouge, rejette gris/blanc.
+function cfaColored(rgb){ if(rgb[0]>230&&rgb[1]>230&&rgb[2]>230) return false; return cfaChroma(rgb)>=22; }
+function cfaRgb2lab(r,g,b){
+  const lin=c=>{c/=255;return c>0.04045?Math.pow((c+0.055)/1.055,2.4):c/12.92;};
+  r=lin(r);g=lin(g);b=lin(b);
+  let X=(r*0.4124+g*0.3576+b*0.1805)/0.95047, Y=r*0.2126+g*0.7152+b*0.0722, Z=(r*0.0193+g*0.1192+b*0.9505)/1.08883;
+  const f=t=>t>0.008856?Math.cbrt(t):7.787*t+16/116;
+  const fx=f(X),fy=f(Y),fz=f(Z); return [116*fy-16,500*(fx-fy),200*(fy-fz)];
+}
+const cfaDE=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+const cfaIsWhite=(r,g,b)=>r>238&&g>238&&b>238;
+function cfaMedianPatch(img,cx,cy,rad){
+  const {data,width,height}=img; const rs=[],gs=[],bs=[];
+  for(let dy=-rad;dy<=rad;dy++)for(let dx=-rad;dx<=rad;dx++){
+    const x=cx+dx,y=cy+dy; if(x<0||y<0||x>=width||y>=height)continue;
+    const i=(y*width+x)*4; rs.push(data[i]);gs.push(data[i+1]);bs.push(data[i+2]);
+  }
+  if(!rs.length)return [255,255,255];
+  const med=a=>{a.sort((p,q)=>p-q);return a[a.length>>1];};
+  return [med(rs),med(gs),med(bs)];
+}
+function cfaCluster(samples){
+  const clusters=[];
+  for(const s of samples){
+    if(cfaIsWhite(...s.rgb)){ s.cluster='blanc'; s.conf=1; continue; }
+    const lab=cfaRgb2lab(...s.rgb); let best=null,bd=1e9;
+    for(const c of clusters){const d=cfaDE(lab,c.lab); if(d<bd){bd=d;best=c;}}
+    if(best && bd<CFA_DELTAE){ best.n++; best.acc=best.acc.map((v,i)=>v+lab[i]); best.lab=best.acc.map(v=>v/best.n); s.cluster=best.id; s.conf=Math.max(0,Math.min(1,1-bd/CFA_DELTAE)); }
+    else { const id='c'+(clusters.length+1); clusters.push({id,lab,acc:[...lab],n:1,rgb:s.rgb.slice()}); s.cluster=id; s.conf=1; }
+  }
+  return clusters;
+}
+const cfaIsWE=date=>((new Date(date+'T00:00:00').getDay()+6)%7)>=5;
+async function cfaPdfToImageData(file){
+  const buf=await file.arrayBuffer(); const pdf=await pdfjsLib.getDocument({data:buf}).promise; const page=await pdf.getPage(1);
+  const vp=page.getViewport({scale:3}); const cv=document.createElement('canvas'); cv.width=vp.width; cv.height=vp.height;
+  const ctx=cv.getContext('2d',{willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:ctx,viewport:vp,background:'#ffffff'}).promise;
+  return {img:ctx.getImageData(0,0,cv.width,cv.height),canvas:cv};
+}
+async function cfaImgToImageData(file){
+  const url=URL.createObjectURL(file);
+  try{
+    const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url;});
+    const cv=document.createElement('canvas'); cv.width=im.naturalWidth; cv.height=im.naturalHeight;
+    const ctx=cv.getContext('2d',{willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height); ctx.drawImage(im,0,0);
+    return {img:ctx.getImageData(0,0,cv.width,cv.height),canvas:cv};
+  } finally { URL.revokeObjectURL(url); }
+}
+// Reconnaissance TOLÉRANTE des en-têtes de mois : noms pleins OU abrégés, sans accents (NFD), casse libre,
+// séparateur -/espace/. , année sur 2 ou 4 chiffres (ex. « janvier-26 », « déc-25 », « Août 2026 »).
+function cfaNorm(s){ return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+const CFA_MONTH_VAR=[['janvier','janv','jan'],['fevrier','fevr','fev'],['mars','mar'],['avril','avr'],['mai'],['juin'],['juillet','juil'],['aout','aou'],['septembre','sept','sep'],['octobre','oct'],['novembre','nov'],['decembre','dec']];
+function cfaParseMonth(text){
+  const t=cfaNorm(text).replace(/\s+/g,''); const m=t.match(/^([a-z]{3,9})\.?[-\/ ]?(\d{2,4})?/);
+  if(!m)return null; const w=m[1]; let mi=-1,best=0;
+  for(let i=0;i<CFA_MONTH_VAR.length;i++) for(const v of CFA_MONTH_VAR[i]){ if(w.startsWith(v) && v.length>best){ mi=i; best=v.length; } }
+  if(mi<0)return null; let y=m[2]?parseInt(m[2]):null; if(y!=null && y<100) y=2000+y;
+  return {mi,y};
+}
+// Échantillon de couleur de FOND de case (autour du numéro) : médiane d'un patch, en ignorant le texte
+// (quasi-noir). Convient aux grilles « mini-mois » où la catégorie est le fond de la case.
+function cfaSampleCell(img,cx,cy,rad){
+  const {data,width,height}=img; const rs=[],gs=[],bs=[];
+  for(let dy=-rad;dy<=rad;dy++)for(let dx=-rad;dx<=rad;dx++){ const x=cx+dx,y=cy+dy; if(x<0||y<0||x>=width||y>=height)continue;
+    const i=(y*width+x)*4, r=data[i],g=data[i+1],b=data[i+2]; if(r<70&&g<70&&b<70)continue; rs.push(r);gs.push(g);bs.push(b); }
+  if(!rs.length)return [255,255,255]; const md=a=>{a.sort((p,q)=>p-q);return a[a.length>>1];}; return [md(rs),md(gs),md(bs)];
+}
+function cfaSampleSwatch(img,xStart,y,xEnd){
+  const step=4; let last=null;
+  for(let x=xStart+2;x<xEnd;x+=step){ const p=cfaMedianPatch(img,x,y,3); if(!cfaIsWhite(...p)) last=p; }
+  return last||[255,255,255];
+}
+async function cfaFromImage(imageData,onStep){
+  const {img}=imageData; const W=img.width,H=img.height;
+  onStep&&onStep('Lecture des en-têtes (OCR)…',35,true);
+  const {data}=await Tesseract.recognize(imageData.canvas,'fra');
+  let words=(data&&data.words)||[];
+  if(!words.length && data&&data.blocks){ data.blocks.forEach(bl=>(bl.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(ln=>(ln.words||[]).forEach(w=>words.push(w))))); }
+  // En-têtes de mois (tolérants : pleins/abrégés, MAJUSCULES, accents, avec ou sans année) → colonnes
+  let months=[];
+  for(const w of words){ const pm=cfaParseMonth(w.text); if(pm) months.push({mi:pm.mi,y:pm.y,cx:(w.bbox.x0+w.bbox.x1)/2,cy:(w.bbox.y0+w.bbox.y1)/2,top:w.bbox.y0}); }
+  if(!months.length) return {error:'Aucun en-tête de mois détecté'};
+  // dédoublonnage par mois : un en-tête est unique. On garde l'occurrence la plus HAUTE (les en-têtes sont
+  // sur la 1re ligne ; un libellé de jour ou un faux positif plus bas dans la grille est ainsi écarté).
+  const byMi={}; for(const m of months){ if(!byMi[m.mi]||m.top<byMi[m.mi].top) byMi[m.mi]=m; }
+  months=Object.values(byMi).sort((a,b)=>a.cx-b.cx);
+  // RECONSTRUCTION des colonnes manquantes : si l'OCR a sauté un en-tête, on comble les mois consécutifs
+  // absents à pas horizontal régulier (planning annuel = mois consécutifs, colonnes de largeur égale).
+  // Garde : seulement si les mois sont strictement croissants de gauche à droite (pas de bascule d'année).
+  const mono=months.every((m,i)=>i===0||m.mi>months[i-1].mi);
+  if(mono && months.length>=2){
+    const pitches=[]; for(let i=1;i<months.length;i++){ const dmi=months[i].mi-months[i-1].mi; if(dmi>0) pitches.push((months[i].cx-months[i-1].cx)/dmi); }
+    pitches.sort((a,b)=>a-b); const pitch=pitches[pitches.length>>1];
+    const ref=months[0], minMi=months[0].mi, maxMi=months[months.length-1].mi;
+    const base=parseInt((ALT.annee||schoolYears()[1]).split('-')[0]);
+    const full=[];
+    for(let mi=minMi;mi<=maxMi;mi++){ const known=months.find(m=>m.mi===mi);
+      full.push(known||{mi,y:(mi>=8?base:base+1),cx:ref.cx+(mi-ref.mi)*pitch,cy:ref.cy,top:ref.top}); }
+    if(full.length>months.length) months=full;
+  }
+  for(let i=0;i<months.length;i++){ months[i].left=i===0?0:(months[i-1].cx+months[i].cx)/2; months[i].right=i===months.length-1?W:(months[i].cx+months[i+1].cx)/2; }
+  const base=parseInt((ALT.annee||schoolYears()[1]).split('-')[0]); months.forEach(m=>{ if(m.y==null) m.y=m.mi>=8?base:base+1; });
+  const headBottom=Math.max.apply(null,months.map(m=>m.cy))+6;
+  // mots « FERIE / férié » → catégorie indépendante de la couleur
+  const feries=words.filter(w=>/^feries?$/.test(cfaNorm(w.text))).map(w=>({cx:(w.bbox.x0+w.bbox.x1)/2,cy:(w.bbox.y0+w.bbox.y1)/2}));
+  // GÉOMÉTRIE : lignes-jours détectées sur le rendu (jour = index de ligne, plus d'OCR par numéro)
+  onStep&&onStep('Détection de la grille…',62,true);
+  const rows=cfaDetectRows(img,headBottom);
+  if(rows.length<3) return {error:'Grille non localisée (lignes-jours introuvables)'};
+  onStep&&onStep('Lecture des couleurs…',80,true);
+  const samples=[]; const dbg=[];
+  for(const col of months){
+    const ndays=new Date(col.y,col.mi+1,0).getDate();
+    const blockW=col.right-col.left;
+    // après numéro + lettre du jour (~38% de gauche), DEUX sous-cases couleur → on échantillonne les DEUX
+    const swStart=col.left+blockW*0.38, swMid=(swStart+col.right)/2;
+    for(let r=0;r<rows.length && r<ndays;r++){
+      const d=r+1, y0=rows[r][0], y1=rows[r][1];
+      const date=`${col.y}-${String(col.mi+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isFerie=feries.some(f=>f.cx>=col.left&&f.cx<col.right&&f.cy>=y0&&f.cy<y1);
+      if(isFerie){ samples.push({date,rgb:[255,255,255],d,forced:'ferie'});
+        if(CFA_DEBUG)dbg.push({date,L:'-',R:'-',pick:'FERIE'}); continue; }
+      const yy0=Math.round(y0+2), yy1=Math.round(y1-2);
+      // sous-case gauche et sous-case droite : la couleur utile est tantôt à gauche, tantôt à droite
+      const lc=cfaDominantColor(img,Math.round(swStart+1),Math.round(swMid-1),yy0,yy1);
+      const rc=cfaDominantColor(img,Math.round(swMid+1),Math.round(col.right-2),yy0,yy1);
+      const lcol=cfaColored(lc), rcol=cfaColored(rc);
+      // saillance : une seule colorée → elle ; les deux → la plus saturée (chroma) ; aucune → vide
+      let rgb,pick;
+      if(lcol&&rcol){ if(cfaChroma(lc)>=cfaChroma(rc)){rgb=lc;pick='L*';}else{rgb=rc;pick='*R';} }
+      else if(lcol){ rgb=lc; pick='L'; }
+      else if(rcol){ rgb=rc; pick='R'; }
+      else { rgb=[255,255,255]; pick='vide'; }
+      samples.push({date,rgb,d});
+      if(CFA_DEBUG)dbg.push({date,xL:Math.round((swStart+swMid)/2),xR:Math.round((swMid+col.right)/2),L:lc.join(','),R:rc.join(','),pick,rgb:rgb.join(',')});
+    }
+  }
+  if(!samples.length) return {error:'Aucune case-jour localisée'};
+  const det=cfaFinalize(samples,cfaCluster(samples),'image');
+  if(CFA_DEBUG){
+    const nonEmpty=Object.values(det.byDate).filter(v=>v.cluster!=='blanc').length;
+    const perCluster={}; Object.values(det.byDate).forEach(v=>perCluster[v.cluster]=(perCluster[v.cluster]||0)+1);
+    det.debug={months:months.map(m=>({mi:m.mi+1,y:m.y,left:Math.round(m.left),right:Math.round(m.right)})),rows:rows.length,days:dbg.length,nonEmpty,perCluster,perDay:dbg};
+    window._cfaDebug=det.debug;
+    console.log('%c[CFA debug] colonnes-mois:'+months.length+' · lignes:'+rows.length+' · jours échantillonnés:'+dbg.length+' · NON-VIDES:'+nonEmpty,'color:#b8860b;font-weight:bold');
+    console.log('[CFA debug] décompte par cluster:',perCluster);
+    console.log('[CFA debug] colonnes-mois (px):',det.debug.months);
+    try{ console.table(dbg); }catch(_){ console.log('[CFA debug] par-jour:',dbg); }
+    console.log('%c[CFA debug] → window._cfaDebug (objet complet)','color:#888');
+  }
+  return det;
+}
+// Bornes des lignes-jours par projection : pixels SOMBRES (bordures) par rangée → pics → cases entre pics.
+function cfaDetectRows(img,yStart){
+  const {data,width,height}=img; const dk=new Array(height).fill(0);
+  for(let y=0;y<height;y++){ let c=0; for(let x=0;x<width;x+=3){ const i=(y*width+x)*4; if(data[i]<110&&data[i+1]<110&&data[i+2]<110)c++; } dk[y]=c; }
+  let mx=0; for(let y=0;y<height;y++) if(dk[y]>mx)mx=dk[y];
+  const thr=mx*0.45; const lines=[];
+  for(let y=Math.max(0,yStart|0);y<height;y++){ if(dk[y]>=thr && (!lines.length||y-lines[lines.length-1]>=8)) lines.push(y); }
+  const rows=[]; for(let i=0;i<lines.length-1;i++){ if(lines[i+1]-lines[i]>=14) rows.push([lines[i],lines[i+1]]); }
+  return rows;
+}
+// Couleur dominante d'une région (histogramme quantifié, hors blanc/noir) → moyenne du bin majoritaire.
+function cfaDominantColor(img,x0,x1,y0,y1){
+  const {data,width,height}=img; const hist={}; let best=null,bestN=0;
+  for(let y=Math.max(0,y0);y<Math.min(height,y1);y++)for(let x=Math.max(0,x0);x<Math.min(width,x1);x++){
+    const i=(y*width+x)*4, r=data[i],g=data[i+1],b=data[i+2];
+    if(r>235&&g>235&&b>235)continue; if(r<110&&g<110&&b<110)continue;
+    const k=(r>>4)+'_'+(g>>4)+'_'+(b>>4); const o=hist[k]||(hist[k]={n:0,r:0,g:0,b:0}); o.n++;o.r+=r;o.g+=g;o.b+=b; if(o.n>bestN){bestN=o.n;best=o;}
+  }
+  return best?[Math.round(best.r/best.n),Math.round(best.g/best.n),Math.round(best.b/best.n)]:[255,255,255];
+}
+async function cfaFromExcel(file,onStep){
+  if(typeof ExcelJS==='undefined') return {error:'Librairie Excel non chargée'};
+  onStep&&onStep('Lecture du classeur…',40,true);
+  const wb=new ExcelJS.Workbook(); await wb.xlsx.load(await file.arrayBuffer());
+  const ws=wb.worksheets[0]; if(!ws) return {error:'Classeur vide'};
+  const monthsAt={};
+  ws.eachRow((row)=>{ row.eachCell((cell,c)=>{
+    const pm=cfaParseMonth(cell.text); if(!pm||pm.y==null)return; monthsAt[c]={mi:pm.mi,y:pm.y};
+  });});
+  const monthCols=Object.keys(monthsAt).map(Number).sort((a,b)=>a-b);
+  if(!monthCols.length) return {error:'Aucun en-tête de mois (ex. « janv-26 ») trouvé dans le classeur'};
+  const argb2rgb=a=>{ if(!a)return null; a=a.length===8?a.slice(2):a; if(a.length<6)return null; return [parseInt(a.slice(0,2),16),parseInt(a.slice(2,4),16),parseInt(a.slice(4,6),16)]; };
+  const fillRgb=cell=>{ const f=cell&&cell.fill; if(!f||f.type!=='pattern'||!f.fgColor)return null; return argb2rgb(f.fgColor.argb); };
+  const samples=[];
+  for(let k=0;k<monthCols.length;k++){
+    const c0=monthCols[k], c1=k+1<monthCols.length?monthCols[k+1]:c0+5; const {mi,y}=monthsAt[c0];
+    ws.eachRow((row)=>{
+      let dayN=null, numCol=null;
+      for(let c=c0;c<c1;c++){ const tv=(row.getCell(c).text||'').toString().trim(); if(/^\d{1,2}$/.test(tv)){const n=parseInt(tv); if(n>=1&&n<=31){dayN=n;numCol=c;break;}} }
+      if(dayN==null)return; const last=new Date(y,mi+1,0).getDate(); if(dayN>last)return;
+      let rgb=null; for(let c=numCol;c<c1;c++){ const f=fillRgb(row.getCell(c)); if(f && !cfaIsWhite(...f)) rgb=f; }
+      if(!rgb) rgb=[255,255,255];
+      samples.push({date:`${y}-${String(mi+1).padStart(2,'0')}-${String(dayN).padStart(2,'0')}`,rgb,d:dayN});
+    });
+  }
+  if(!samples.length) return {error:'Aucune case-jour lue (mauvais onglet ?)'};
+  return cfaFinalize(samples,cfaCluster(samples),'excel');
+}
+function cfaFinalize(samples,clusters,fmt){
+  for(const s of samples){ if(cfaIsWE(s.date)){ s.cluster='weekend'; s.conf=Math.max(s.conf||0,0.9); } }
+  for(const s of samples){ if(s.forced){ s.cluster=s.forced; s.conf=Math.max(s.conf||0,0.95); } }   // FERIE (texte) prime sur la couleur
+  const byDate={};
+  for(const s of samples){ const e=byDate[s.date]; if(!e||(s.conf||0)>e.conf) byDate[s.date]={cluster:s.cluster,rgb:s.rgb,conf:s.conf||0}; }
+  const present={}; Object.values(byDate).forEach(v=>{ (present[v.cluster]=present[v.cluster]||{n:0,rgb:v.rgb,cs:0}); present[v.cluster].n++; present[v.cluster].cs+=v.conf; });
+  const clusterList=Object.entries(present).filter(([id])=>id!=='blanc').map(([id,o])=>({id,n:o.n,rgb:o.rgb,conf:o.cs/o.n}));
+  const vals=Object.values(byDate); const low=vals.filter(v=>v.conf<CFA_CONF_SEUIL).length;
+  return {byDate,clusters:clusterList,fmt,lowRate:vals.length?low/vals.length:0};
+}
+// PDF VECTORIEL avec couche texte : on lit les positions des mois/jours via pdf.js getTextContent()
+// (fiable, AUCUN OCR), on déduit la grille (mini-mois en 2D), et on échantillonne la couleur de fond
+// de chaque case sur le rendu canvas. Tesseract n'est gardé qu'en fallback (PDF scanné, sans texte).
+async function cfaFromPdfText(file,onStep){
+  onStep&&onStep('Lecture du PDF (couche texte)…',30,true);
+  const buf=await file.arrayBuffer(); const pdf=await pdfjsLib.getDocument({data:buf}).promise; const page=await pdf.getPage(1);
+  const scale=3; const vp=page.getViewport({scale});
+  const tc=await page.getTextContent();
+  if(!tc||!tc.items||tc.items.length<20) return {error:'__notext__'};   // pas de couche texte → fallback OCR
+  // position (centre) de chaque item en pixels canvas
+  const items=tc.items.map(it=>{ const t=pdfjsLib.Util.transform(vp.transform,it.transform); const fh=Math.hypot(t[2],t[3])||10; const w=(it.width||0)*scale; return {str:(it.str||'').trim(), cx:t[4]+w/2, cy:t[5]-fh/2}; }).filter(it=>it.str);
+  // en-têtes de mois (tolérants)
+  const heads=[]; for(const it of items){ const pm=cfaParseMonth(it.str); if(pm) heads.push({mi:pm.mi,y:pm.y,cx:it.cx,cy:it.cy}); }
+  // anti-collision : un libellé de jour (« mar » = mardi) peut matcher un mois. Les vrais en-têtes portent
+  // une année → s'il y en a assez, on ne garde que ceux-là (élimine le bruit jour-de-semaine).
+  const wy=heads.filter(h=>h.y!=null); if(wy.length>=3 && wy.length<heads.length) heads.splice(0,heads.length,...wy);
+  if(!heads.length) return {error:'Aucun en-tête de mois détecté'};
+  const base=parseInt((ALT.annee||schoolYears()[1]).split('-')[0]); heads.forEach(h=>{ if(h.y==null) h.y=h.mi>=8?base:base+1; });
+  // largeur de bloc-mois = espacement médian entre colonnes d'en-têtes → assignation 2D jour→mois
+  const xs=heads.map(h=>h.cx).slice().sort((a,b)=>a-b); const cols=[]; xs.forEach(x=>{ if(!cols.length||x-cols[cols.length-1]>40*scale) cols.push(x); });
+  let colgap=190*scale/3; if(cols.length>1){ const g=[]; for(let i=1;i<cols.length;i++)g.push(cols[i]-cols[i-1]); g.sort((a,b)=>a-b); colgap=g[g.length>>1]; }
+  const half=colgap*0.6;
+  const assign=(x,y)=>{ const cand=heads.filter(h=>h.cy<y-2 && Math.abs(h.cx-x)<half); if(cand.length) return cand.reduce((a,b)=>b.cy>a.cy?b:a); return heads.reduce((a,b)=>(Math.abs(b.cx-x)+Math.abs(b.cy-y)<Math.abs(a.cx-x)+Math.abs(a.cy-y))?b:a); };
+  // rendu canvas pour l'échantillonnage des couleurs
+  onStep&&onStep('Lecture des couleurs…',70,true);
+  const cv=document.createElement('canvas'); cv.width=vp.width; cv.height=vp.height; const ctx=cv.getContext('2d',{willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:ctx,viewport:vp,background:'#ffffff'}).promise;
+  const img=ctx.getImageData(0,0,cv.width,cv.height); const rad=Math.max(4,Math.round(scale*2.5));
+  const samples=[];
+  for(const it of items){ if(!/^\d{1,2}$/.test(it.str))continue; const n=parseInt(it.str); if(n<1||n>31)continue;
+    const h=assign(it.cx,it.cy); const last=new Date(h.y,h.mi+1,0).getDate(); if(n>last)continue;
+    const date=`${h.y}-${String(h.mi+1).padStart(2,'0')}-${String(n).padStart(2,'0')}`;
+    samples.push({date,rgb:cfaSampleCell(img,Math.round(it.cx),Math.round(it.cy),rad),d:n});
+  }
+  if(!samples.length) return {error:'Aucune case-jour localisée'};
+  return cfaFinalize(samples,cfaCluster(samples),'pdf');
+}
+async function cfaDetect(file,onStep){
+  const ext=(file.name||'').split('.').pop().toLowerCase();
+  if(['xlsx','xls','xlsm'].includes(ext)) return await cfaFromExcel(file,onStep);
+  if(ext==='pdf' || file.type==='application/pdf'){
+    const r=await cfaFromPdfText(file,onStep);          // 1) couche texte (vectoriel) — sans OCR
+    if(!(r&&r.error==='__notext__')) return r;
+    onStep&&onStep('PDF scanné — OCR…',20,true);         // 2) fallback : PDF image → Tesseract
+    const id=await cfaPdfToImageData(file); return await cfaFromImage(id,onStep);
+  }
+  onStep&&onStep('Chargement de l\'image…',20,true);
+  return await cfaFromImage(await cfaImgToImageData(file),onStep);
+}
+
+// — Mémoire du mapping couleur→catégorie PAR ORGANISATION (aucune palette fixe ; on apprend de l'user) —
+let _cfaMappings=[];
+const CFA_MATCH_DELTAE=24;   // tolérance de match d'un cluster à un mapping mémorisé (> seuil de clustering)
+async function cfaLoadMappings(){
+  try{
+    const {data}=await sb.from('cfa_color_mappings').select('id,source_label,rgb,categorie').eq('organization_id',ME.organization_id);
+    _cfaMappings=(data||[]).map(m=>{ const rgb=(m.rgb||'').split(',').map(Number); return {id:m.id,source:m.source_label||null,rgb,lab:cfaRgb2lab(rgb[0]||255,rgb[1]||255,rgb[2]||255),categorie:m.categorie}; });
+  }catch(e){ _cfaMappings=[]; }
+  return _cfaMappings;
+}
+// Cherche dans les mappings de l'org la catégorie d'une couleur proche (ΔE Lab). Priorité au même CFA/source.
+function cfaGuessCategory(rgb,source){
+  if(!rgb||!_cfaMappings.length)return null;
+  const lab=cfaRgb2lab(rgb[0],rgb[1],rgb[2]);
+  const pool=_cfaMappings.filter(m=>!source||!m.source||m.source===source);
+  let best=null,bd=1e9; for(const m of (pool.length?pool:_cfaMappings)){ const d=cfaDE(lab,m.lab); if(d<bd){bd=d;best=m;} }
+  return (best && bd<CFA_MATCH_DELTAE)?best.categorie:null;
+}
+// À la validation : mémorise (ou met à jour) le mapping couleur→catégorie pour cette org. Non bloquant.
+async function cfaSaveMappings(map){
+  try{
+    const det=window._cfaDet; if(!det||!det.clusters)return;
+    const source=(val('alt_cfa')||'').trim()||null; const ops=[];
+    for(const c of det.clusters){
+      if(c.id==='weekend' || c.id==='ferie' || !c.rgb)continue;   // 'weekend'/'ferie' sont auto → pas mémorisés couleur
+      const cat=map[c.id]; if(!cat||cat==='ignore')continue;
+      const lab=cfaRgb2lab(c.rgb[0],c.rgb[1],c.rgb[2]);
+      let near=null,bd=1e9; for(const m of _cfaMappings){ if(m.source!=null && m.source!==source)continue; const d=cfaDE(lab,m.lab); if(d<bd){bd=d;near=m;} }
+      if(near && bd<16){ ops.push(sb.from('cfa_color_mappings').update({rgb:c.rgb.join(','),categorie:cat,source_label:source,updated_at:new Date().toISOString()}).eq('id',near.id)); near.categorie=cat; near.lab=lab; }
+      else { ops.push(sb.from('cfa_color_mappings').insert({organization_id:ME.organization_id,source_label:source,rgb:c.rgb.join(','),categorie:cat})); _cfaMappings.push({id:null,source,rgb:c.rgb,lab,categorie:cat}); }
+    }
+    if(ops.length) await Promise.allSettled(ops);
+  }catch(e){ console.warn('[cfa] sauvegarde mapping:',e); }
+}
+
 // ── OCR du planning CFA (Mistral vision via edge function cfa-ocr) — IMPORT EN MÉMOIRE (aperçu) ──
 const ALT_MONTHS={janvier:0,'février':1,fevrier:1,mars:2,avril:3,mai:4,juin:5,juillet:6,'août':7,aout:7,septembre:8,octobre:9,novembre:10,'décembre':11,decembre:11};
 // "decembre-25" / "octobre-26" → {mi, year} en lisant le suffixe d'année du nom
@@ -1389,21 +1701,35 @@ async function onCfaFile(ev){
   _cfaAbort=new AbortController();
   showCfaProgress();
   try{
-    setCfaStep('Extraction du document…',18);
-    const dataUrl=await cfaFileToImage(file);
+    // 1) Détection DÉTERMINISTE côté client (Excel / PDF / image) — zéro API.
+    let det;
+    try{ det=await cfaDetect(file,(l,p,i)=>setCfaStep(l,p,i)); }
+    catch(e){ det={error:(e&&e.message)||String(e)}; }
     if(_cfaAbort.signal.aborted) throw new DOMException('aborted','AbortError');
-    setCfaStep('Analyse des couleurs (IA)…',0,true);
-    const {data:sess}=await sb.auth.getSession();
-    const r=await fetch(SUPA_URL+'/functions/v1/cfa-ocr',{method:'POST',signal:_cfaAbort.signal,
-      headers:{'Authorization':'Bearer '+(sess?.session?.access_token||''),'Content-Type':'application/json','apikey':SUPA_KEY},
-      body:JSON.stringify({image:dataUrl})});
-    const data=await r.json().catch(()=>null);
-    if(!r.ok || !data || !data.ok) throw new Error((data&&data.error)||('Échec analyse (HTTP '+r.status+')'));
+    // 2) Secours vision (uniquement si activé ET si la détection déterministe n'a rien donné).
+    const empty=det.error || !det.byDate || !Object.keys(det.byDate).length;
+    if(empty && CFA_USE_VISION_FALLBACK){
+      setCfaStep('Secours : analyse IA…',0,true);
+      const dataUrl=await cfaFileToImage(file);
+      const {data:sess}=await sb.auth.getSession();
+      const r=await fetch(SUPA_URL+'/functions/v1/cfa-ocr',{method:'POST',signal:_cfaAbort.signal,
+        headers:{'Authorization':'Bearer '+(sess?.session?.access_token||''),'Content-Type':'application/json','apikey':SUPA_KEY},
+        body:JSON.stringify({image:dataUrl})});
+      const data=await r.json().catch(()=>null);
+      if(r.ok && data && data.ok){
+        const bd=processCfaMois(data.mois||[]); const byDate={}; const present={};
+        Object.entries(bd).forEach(([d,c])=>{ byDate[d]={cluster:c,rgb:null,conf:0.5}; present[c]=(present[c]||0)+1; });
+        det={byDate,clusters:Object.entries(present).map(([id,n])=>({id,n,rgb:null,conf:0.5})),fmt:'vision (secours)',lowRate:1};
+      }
+    }
     setCfaStep('Reconstitution du calendrier…',92);
-    const byDate=processCfaMois(data.mois||[]);
-    await new Promise(res=>setTimeout(res,250));
+    await new Promise(res=>setTimeout(res,150));
     hideCfaProgress();
-    showCfaLegend(byDate);
+    if(det.error || !det.byDate || !Object.keys(det.byDate).length){
+      toast('Détection impossible : '+(det.error||'aucune case détectée')+'. Tu peux remplir au pinceau.'); return;
+    }
+    await cfaLoadMappings();   // mappings couleur→catégorie déjà appris par cette org → pré-remplissage auto
+    showCfaClusters(det);
   }catch(e){
     hideCfaProgress();
     if(e && e.name==='AbortError') toast('Analyse annulée.');
@@ -1430,35 +1756,47 @@ function prefillWeekends(silent){
   if(!silent) toast(n?`✓ ${n} week-ends pré-remplis en repos`:'Week-ends déjà remplis');
   return n;
 }
-function showCfaLegend(byDate){
-  window._cfaByDate=byDate;
-  const cnt={}; Object.values(byDate).forEach(t=>cnt[t]=(cnt[t]||0)+1);
-  const TYPES=[['ecole','🎓 École'],['examen','📝 Examen'],['entreprise','🏢 Entreprise'],['vacances','🏖️ Vacances'],['ferie','🎌 Férié'],['repos','😴 Repos'],['ignore','— Ignorer —']];
-  // n'afficher que les catégories réellement présentes (filtre min : ≥1 jour)
-  const cats=['ecole','examen','weekend','entreprise'].filter(c=>(cnt[c]||0)>=1);
-  const rows=cats.map(c=>{ const meta=ALT_CAT_META[c]; return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)">
-    <span style="width:22px;height:22px;border-radius:5px;border:1px solid var(--line-2);background:${meta.col}"></span>
-    <span style="flex:1;font-size:13px">${meta.ic} ${meta.lbl} <span style="color:var(--muted)">(${cnt[c]} j)</span></span>
-    <select class="cfa-map" data-c="${c}" style="background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:7px;padding:6px 8px">${TYPES.map(t=>`<option value="${t[0]}" ${ALT_CAT_DEF[c]===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select>
-  </div>`;}).join('');
-  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:500px">
-    <h2 style="margin-top:0">🎓 Détection du planning CFA</h2>
-    <div style="color:var(--muted);font-size:12.5px;margin:-8px 0 14px;line-height:1.5">Voici les catégories détectées. Associe chacune à un type. <b style="color:var(--text)">Rien n'est appliqué au planning</b> à cette étape — tu pourras tout corriger au pinceau dans le calendrier, puis valider.</div>
-    ${rows||'<div style="color:var(--muted)">Aucune catégorie détectée.</div>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyCfaOcr()">Pré-remplir le calendrier (aperçu)</button></div>
+// Modale d'association CLUSTER DE COULEUR DÉTECTÉ → catégorie (l'humain donne le sens).
+const CFA_MAP_TYPES=[['ecole','🎓 École'],['examen','📝 Examen'],['entreprise','🏢 Entreprise'],['vacances','🏖️ Vacances'],['ferie','🎌 Férié'],['repos','😴 Repos'],['ignore','— Ignorer —']];
+function showCfaClusters(det){
+  window._cfaDet=det;
+  const rgbCss=rgb=>rgb?`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`:'repeating-linear-gradient(45deg,#9994,#9994 4px,#5554 4px,#5554 8px)';
+  // tri par effectif décroissant ; le cluster « weekend » (réservé) proposé en « repos » par défaut
+  const clusters=(det.clusters||[]).slice().sort((a,b)=>b.n-a.n);
+  const src=(val('alt_cfa')||'').trim()||null; let nMem=0;
+  const rows=clusters.map(c=>{
+    // pré-remplissage : 1) mapping déjà appris par l'org (couleur proche) ; 2) sinon vision (id=catégorie) ; 3) sinon « ignorer »
+    const auto=(c.id==='weekend'||c.id==='ferie'); const guess=!auto?cfaGuessCategory(c.rgb,src):null; if(guess)nMem++;
+    const def=guess||(c.id==='weekend'?'repos':(c.id==='ferie'?'ferie':(CFA_MAP_TYPES.find(t=>t[0]===c.id)?c.id:'ignore')));
+    const lowPct=Math.round((1-(c.conf||1))*100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)">
+      <span style="width:24px;height:24px;border-radius:6px;border:1px solid var(--line-2);background:${rgbCss(c.rgb)}"></span>
+      <span style="flex:1;font-size:13px">${c.id==='weekend'?'Week-end / férié':(c.id==='ferie'?'🎌 Jours « FERIE »':'Couleur détectée')}${guess?' <span style="color:var(--gold)" title="Pré-rempli depuis ce que tu as déjà mappé">✨ mémorisé</span>':''} <span style="color:var(--muted)">(${c.n} j${lowPct>20?` · ⚠ ${lowPct}% incertain`:''})</span></span>
+      <select class="cfa-map" data-c="${c.id}" style="background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:7px;padding:6px 8px">${CFA_MAP_TYPES.map(t=>`<option value="${t[0]}" ${def===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select>
+    </div>`;}).join('');
+  const lowRate=Math.round((det.lowRate||0)*100);
+  const dbgBanner=(CFA_DEBUG&&det.debug)?`<div style="background:#b8860b22;border:1px solid var(--gold);border-radius:8px;padding:8px 10px;margin:0 0 12px;font-size:11.5px;font-family:monospace;line-height:1.5">🐞 <b>DEBUG</b> · colonnes-mois: ${det.debug.months.length} · lignes: ${det.debug.rows} · jours: ${det.debug.days} · <b>NON-VIDES: ${det.debug.nonEmpty}</b><br>clusters: ${Object.entries(det.debug.perCluster).map(([k,v])=>k+'×'+v).join(' · ')}<br><span style="color:var(--muted)">détail par jour → console (console.table) + <code>window._cfaDebug</code></span></div>`:'';
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:520px">
+    <h2 style="margin-top:0">🎓 Détection du planning CFA <span style="font-size:12px;color:var(--muted);font-weight:400">(${det.fmt})</span></h2>
+    ${dbgBanner}
+    <div style="color:var(--muted);font-size:12.5px;margin:-8px 0 14px;line-height:1.5">Chaque <b style="color:var(--text)">couleur</b> de ton planning a été regroupée. Indique ce qu'elle représente. <b style="color:var(--text)">Rien n'est appliqué au planning</b> — tu corriges au pinceau puis tu valides.${nMem?` <span style="color:var(--gold)">✨ ${nMem} couleur(s) pré-remplie(s) depuis tes imports précédents.</span>`:''}${lowRate>0?` <span style="color:var(--warn)">~${lowRate}% des cases sont incertaines (surlignées à corriger).</span>`:''}</div>
+    ${rows||'<div style="color:var(--muted)">Aucune couleur détectée.</div>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyCfaClusters()">Pré-remplir le calendrier (aperçu)</button></div>
   </div></div>`;
 }
-function applyCfaOcr(){
+function applyCfaClusters(){
   const map={}; document.querySelectorAll('.cfa-map').forEach(s=>map[s.dataset.c]=s.value);
-  const byDate=window._cfaByDate||{}; closeModal();
-  const dates=Object.keys(byDate); if(!dates.length){ toast('Aucun jour détecté.'); return; }
-  // cadre la vue sur la plage réellement détectée (le calendrier CFA peut déborder de l'année scolaire)
-  const sorted=dates.sort(); const dMin=new Date(sorted[0]), dMax=new Date(sorted[sorted.length-1]);
+  const det=window._cfaDet; closeModal(); if(!det||!det.byDate){toast('Aucune donnée.');return;}
+  const dates=Object.keys(det.byDate); if(!dates.length){ toast('Aucun jour détecté.'); return; }
+  // cadre la vue sur la plage réellement détectée
+  const sorted=dates.sort(); const dMin=new Date(sorted[0]+'T00:00:00'), dMax=new Date(sorted[sorted.length-1]+'T00:00:00');
   ALT.period={debut:`${dMin.getFullYear()}-${String(dMin.getMonth()+1).padStart(2,'0')}-01`, fin:`${dMax.getFullYear()}-${String(dMax.getMonth()+1).padStart(2,'0')}-${String(new Date(dMax.getFullYear(),dMax.getMonth()+1,0).getDate()).padStart(2,'0')}`};
-  ALT.jours={}; let n=0;
-  Object.entries(byDate).forEach(([date,cat])=>{ const type=map[cat]; if(!type||type==='ignore')return; ALT.jours[date]={type,source:'ocr'}; n++; });
+  ALT.jours={}; let n=0,low=0;
+  Object.entries(det.byDate).forEach(([date,v])=>{ const type=map[v.cluster]; if(!type||type==='ignore')return;
+    const verify=(v.conf||0)<CFA_CONF_SEUIL; ALT.jours[date]={type,source:'ocr',conf:v.conf,verify}; n++; if(verify)low++; });
   ALT.dirty=true; markAltDirty(); renderAltCalendar();
-  toast(`✓ ${n} jours pré-remplis (aperçu) — corrige au pinceau, puis « Valider & appliquer »`);
+  cfaSaveMappings(map);   // mémorise couleur→catégorie pour cette org (le prochain import sera auto-rempli)
+  toast(`✓ ${n} jours pré-remplis (aperçu, ${det.fmt})${low?` · ${low} à vérifier`:''} — corrige au pinceau puis « Valider & appliquer »`);
 }
 
 // ===== OCR / Pré-remplissage =====
