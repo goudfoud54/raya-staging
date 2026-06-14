@@ -940,9 +940,9 @@ function renderFiche(){
             <h3 style="margin:0">🎓 Planning d'alternance / CFA</h3>
             <div style="display:flex;gap:8px;align-items:center">
               <span id="cfaOcrStatus" style="font-size:12px;color:var(--muted)"></span>
-              <button class="btn ghost sm" id="cfaOcrBtn" onclick="document.getElementById('cfa_file').click()">📄 Importer un planning CFA (OCR)</button>
+              <button class="btn ghost sm" id="cfaOcrBtn" onclick="document.getElementById('cfa_file').click()" title="Excel : exporte-le d'abord en PDF">📄 Importer un planning CFA — PDF ou image</button>
             </div>
-            <input type="file" id="cfa_file" accept=".xlsx,.xls,.xlsm,.pdf,.png,.jpg,.jpeg,.webp,.heic" class="hidden" onchange="onCfaFile(event)">
+            <input type="file" id="cfa_file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" class="hidden" onchange="onCfaFile(event)">
           </div>
           ${!isAlt?`<div class="orange-box" style="margin-bottom:10px;font-size:12.5px">ℹ️ Le type de contrat n'indique pas « alternant » — le calendrier CFA reste utilisable ici si besoin.</div>`:''}
           <div class="grid3">
@@ -1682,7 +1682,9 @@ async function cfaFromPdfText(file,onStep){
 }
 async function cfaDetect(file,onStep){
   const ext=(file.name||'').split('.').pop().toLowerCase();
-  if(['xlsx','xls','xlsm'].includes(ext)) return await cfaFromExcel(file,onStep);
+  // V1 : Excel non parsé ici (intercepté en amont par onCfaFile → consigne « exporte en PDF »).
+  // cfaFromExcel + helpers thème/tint restent dans le fichier mais ne sont plus appelés pour la détection.
+  if(['xlsx','xls','xlsm','xlsb','xltx','xltm'].includes(ext)) return {error:'__excel__'};
   if(ext==='pdf' || file.type==='application/pdf'){
     const r=await cfaFromPdfText(file,onStep);          // 1) couche texte (vectoriel) — sans OCR
     if(!(r&&r.error==='__notext__')) return r;
@@ -1766,8 +1768,24 @@ function showCfaProgress(){ const o=document.getElementById('cfaProgress'); if(o
 function hideCfaProgress(){ const o=document.getElementById('cfaProgress'); if(o)o.classList.remove('on'); const f=document.getElementById('cfaProgFill'); if(f){f.classList.remove('indet');f.style.marginLeft='0';f.style.width='0';} }
 function setCfaStep(label,pct,indet){ const s=document.getElementById('cfaProgStep'),f=document.getElementById('cfaProgFill'); if(s&&label!=null)s.textContent=label; if(f){ f.classList.toggle('indet',!!indet); if(!indet){f.style.marginLeft='0';f.style.width=(pct||0)+'%';} } }
 function cancelCfaOcr(){ if(_cfaAbort){ try{_cfaAbort.abort();}catch(_){} } }
+// V1 — on n'essaie PLUS de parser les fichiers Excel (formules, couleurs de thème, mises en page variables) :
+// on redirige vers l'export PDF (un Excel → PDF devient un PDF vectoriel → chemin PDF déjà fiable).
+function cfaIsExcel(file){ const ext=((file&&file.name)||'').split('.').pop().toLowerCase(); return ['xlsx','xls','xlsm','xlsb','xltx','xltm'].includes(ext); }
+function showCfaExcelHint(){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:480px">
+    <h2 style="margin-top:0">📄 Calendrier Excel → exporte-le en PDF</h2>
+    <div style="font-size:13.5px;line-height:1.6;color:var(--text)">
+      Pour les calendriers <b>Excel</b>, exporte d'abord en <b>PDF</b> :<br>
+      dans Excel, <b>Fichier ▸ Enregistrer sous / Exporter ▸ PDF</b>, puis <b>ré-importe le PDF</b> ici.<br>
+      <span style="color:var(--muted)">C'est plus fiable : le PDF garde les dates et les couleurs exactes.</span><br><br>
+      Tu peux aussi <b>remplir au pinceau</b> directement sur le calendrier.
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">J'ai compris</button></div>
+  </div></div>`;
+}
 async function onCfaFile(ev){
   const file=ev.target.files[0]; if(!file)return; ev.target.value='';
+  if(cfaIsExcel(file)){ showCfaExcelHint(); return; }   // pas de parsing Excel en V1 — consigne PDF (sans erreur)
   if(_cfaBusy) return;                                  // anti double-clic / double-fichier
   _cfaBusy=true; const btn=document.getElementById('cfaOcrBtn'); if(btn)btn.disabled=true;
   _cfaAbort=new AbortController();
@@ -1797,6 +1815,7 @@ async function onCfaFile(ev){
     setCfaStep('Reconstitution du calendrier…',92);
     await new Promise(res=>setTimeout(res,150));
     hideCfaProgress();
+    if(det.error==='__excel__'){ showCfaExcelHint(); return; }   // garde défensive (Excel normalement intercepté en amont)
     if(det.error || !det.byDate || !Object.keys(det.byDate).length){
       toast('Détection impossible : '+(det.error||'aucune case détectée')+'. Tu peux remplir au pinceau.'); return;
     }
