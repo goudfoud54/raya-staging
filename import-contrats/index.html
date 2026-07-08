@@ -242,10 +242,18 @@ async function processFiles(files){
   const queue=ROWS.map((row,i)=>async()=>{
     try{
       const b64=await fileToBase64(row.file);
-      const r=await fetch(`${SUPA_URL}/functions/v1/import-contrat-ai`,{
-        method:'POST',headers,
-        body:JSON.stringify({base64:b64,mime_type:'application/pdf',filename:row.file.name}),
-      });
+      // Timeout 90 s : l'OCR peut être lent, mais on évite que l'UI reste bloquée indéfiniment.
+      const ctrl=new AbortController();
+      const to=setTimeout(()=>ctrl.abort(),90000);
+      let r;
+      try{
+        r=await fetch(`${SUPA_URL}/functions/v1/import-contrat-ai`,{
+          method:'POST',headers,
+          body:JSON.stringify({base64:b64,mime_type:'application/pdf',filename:row.file.name}),
+          signal:ctrl.signal,
+        });
+      }catch(err){ throw new Error(err.name==='AbortError'?'Délai dépassé (90 s) — réessaie':err.message); }
+      finally{ clearTimeout(to); }
       const j=await r.json();
       if(!r.ok)throw new Error(j.error||'Erreur IA');
       row.raw=j.data;

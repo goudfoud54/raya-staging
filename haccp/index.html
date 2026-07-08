@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Eatime360 — HACCP</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -180,7 +181,7 @@ function nameSal(id){const s=S.salaries.find(x=>x.id===id);return s?(s.prenom?s.
 function nameEq(id){const e=S.equipements.find(x=>x.id===id);return e?e.nom:'—';}
 function nameZone(id){const z=S.zones.find(x=>x.id===id);return z?z.nom:'—';}
 function fmtDt(ts){if(!ts)return'—';return new Date(ts).toLocaleString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}
-function fmtD(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR');}
+/* fmtD factorisé dans utils.js (C3) */
 function eqOfSnack(){return S.equipements.filter(e=>!SNACK||e.restaurant_id===SNACK.id||!e.restaurant_id);}
 function zonesOfSnack(){return S.zones.filter(z=>!SNACK||z.restaurant_id===SNACK.id||!z.restaurant_id);}
 
@@ -338,7 +339,7 @@ async function saveHuile(){
   const{error}=await sb.from('haccp_huiles').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderHuiles(document.getElementById('content'));
 }
-async function delHuile(id){if(!confirm('Supprimer ?'))return;await sb.from('haccp_huiles').delete().eq('id',id);renderHuiles(document.getElementById('content'));}
+async function delHuile(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('haccp_huiles').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderHuiles(document.getElementById('content'));}
 
 // ────────────── RÉCEPTIONS ──────────────
 async function renderReceptions(el){
@@ -437,7 +438,7 @@ async function saveReception(){
   if(e2){toast('Réception créée mais erreur contrôles : '+e2.message);return;}
   toast(`Réception enregistrée + ${controles.length} contrôles ✓`);closeModal();renderReceptions(document.getElementById('content'));
 }
-async function delReception(id){if(!confirm('Supprimer ?'))return;await sb.from('haccp_receptions').delete().eq('id',id);renderReceptions(document.getElementById('content'));}
+async function delReception(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('haccp_receptions').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderReceptions(document.getElementById('content'));}
 
 // ────────────── NETTOYAGE ──────────────
 async function renderNettoyage(el){
@@ -480,7 +481,7 @@ async function saveNettoyage(){
   const{error}=await sb.from('haccp_nettoyages').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderNettoyage(document.getElementById('content'));
 }
-async function delNettoyage(id){if(!confirm('Supprimer ?'))return;await sb.from('haccp_nettoyages').delete().eq('id',id);renderNettoyage(document.getElementById('content'));}
+async function delNettoyage(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('haccp_nettoyages').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderNettoyage(document.getElementById('content'));}
 
 // ────────────── ÉQUIPEMENTS ──────────────
 function renderEquipements(el){
@@ -521,7 +522,7 @@ async function saveEq(){
   const{error}=id?await sb.from('haccp_equipements').update(payload).eq('id',id):await sb.from('haccp_equipements').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderEquipements(document.getElementById('content'));
 }
-async function delEq(id){if(!confirm('Supprimer cet équipement (et tous ses relevés) ?'))return;await sb.from('haccp_equipements').delete().eq('id',id);await loadCommonData();renderEquipements(document.getElementById('content'));}
+async function delEq(id){if(!confirm('Supprimer cet équipement (et tous ses relevés) ?'))return;const{error}=await sb.from('haccp_equipements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderEquipements(document.getElementById('content'));}
 
 // ────────────── ZONES NETTOYAGE ──────────────
 function renderZones(el){
@@ -557,7 +558,7 @@ async function saveZone(){
   const{error}=id?await sb.from('haccp_zones_nettoyage').update(payload).eq('id',id):await sb.from('haccp_zones_nettoyage').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderZones(document.getElementById('content'));
 }
-async function delZone(id){if(!confirm('Supprimer cette zone ?'))return;await sb.from('haccp_zones_nettoyage').delete().eq('id',id);await loadCommonData();renderZones(document.getElementById('content'));}
+async function delZone(id){if(!confirm('Supprimer cette zone ?'))return;const{error}=await sb.from('haccp_zones_nettoyage').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderZones(document.getElementById('content'));}
 
 // ────────────── EXPORT PDF DDPP ──────────────
 function renderExport(el){

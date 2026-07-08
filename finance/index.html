@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Eatime360 — Finance</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -149,7 +150,7 @@ function val(id){const e=document.getElementById(id);return e?(e.value||'').trim
 function num(id){const v=val(id);return v===''?null:parseFloat(v);}
 function eur(n){if(n==null||isNaN(n))return'—';return Number(n).toLocaleString('fr-FR',{maximumFractionDigits:0})+' €';}
 function pct(n){if(n==null||isNaN(n))return'—';return n.toFixed(1)+' %';}
-function fmtD(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR');}
+/* fmtD factorisé dans utils.js (C3) */
 
 async function login(){
   const{error}=await sb.auth.signInWithPassword({email:val('loginEmail'),password:val('loginPw')});
@@ -320,7 +321,7 @@ async function saveCA(){
   const{error}=id?await sb.from('fin_ca_journalier').update(payload).eq('id',id):await sb.from('fin_ca_journalier').upsert(payload,{onConflict:'organization_id,restaurant_id,date,service'});
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderCA(document.getElementById('content'));
 }
-async function delCA(id){if(!confirm('Supprimer cette saisie ?'))return;await sb.from('fin_ca_journalier').delete().eq('id',id);renderCA(document.getElementById('content'));}
+async function delCA(id){if(!confirm('Supprimer cette saisie ?'))return;const{error}=await sb.from('fin_ca_journalier').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderCA(document.getElementById('content'));}
 function openCABulk(){
   const today=new Date().toISOString().slice(0,10);
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:480px">
@@ -424,7 +425,7 @@ async function markPaid(id){
   const{error}=await sb.from('fin_depenses').update({statut:'paye',date_paiement:new Date().toISOString().slice(0,10)}).eq('id',id);
   if(error){toast(error.message);return;}toast('Marqué payé ✓');renderDepenses(document.getElementById('content'));
 }
-async function delDep(id){if(!confirm('Supprimer cette dépense ?'))return;await sb.from('fin_depenses').delete().eq('id',id);renderDepenses(document.getElementById('content'));}
+async function delDep(id){if(!confirm('Supprimer cette dépense ?'))return;const{error}=await sb.from('fin_depenses').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderDepenses(document.getElementById('content'));}
 
 // ─────── TRÉSORERIE ───────
 async function renderTreso(el){
@@ -479,7 +480,7 @@ async function saveEnc(){
   const{error}=await sb.from('fin_encaissements').insert({organization_id:ORG.id,restaurant_id:val('e_sn'),date:val('e_date'),mode:val('e_mode'),montant:num('e_mt'),notes:val('e_notes')||null,saisi_par:ME.id});
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderTreso(document.getElementById('content'));
 }
-async function delEnc(id){if(!confirm('Supprimer ?'))return;await sb.from('fin_encaissements').delete().eq('id',id);renderTreso(document.getElementById('content'));}
+async function delEnc(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('fin_encaissements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderTreso(document.getElementById('content'));}
 function openVers(){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>Nouveau versement banque</h2>
@@ -501,7 +502,7 @@ async function saveVers(){
   const{error}=await sb.from('fin_versements').insert({organization_id:ORG.id,restaurant_id:val('v_sn')||null,date:val('v_date'),banque:val('v_bk')||null,reference:val('v_ref')||null,montant:num('v_mt'),notes:val('v_notes')||null,saisi_par:ME.id});
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderTreso(document.getElementById('content'));
 }
-async function delVers(id){if(!confirm('Supprimer ?'))return;await sb.from('fin_versements').delete().eq('id',id);renderTreso(document.getElementById('content'));}
+async function delVers(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('fin_versements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderTreso(document.getElementById('content'));}
 
 // ─────── MARGE & RATIOS ───────
 async function renderMarge(el){
@@ -595,7 +596,7 @@ async function saveCat(){
   const{error}=id?await sb.from('fin_categories').update(payload).eq('id',id):await sb.from('fin_categories').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderCategories(document.getElementById('content'));
 }
-async function delCat(id){if(!confirm('Supprimer cette catégorie ?'))return;await sb.from('fin_categories').delete().eq('id',id);await loadCommonData();renderCategories(document.getElementById('content'));}
+async function delCat(id){if(!confirm('Supprimer cette catégorie ?'))return;const{error}=await sb.from('fin_categories').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderCategories(document.getElementById('content'));}
 
 // ─────── BANQUE (import + transactions + règles) ───────
 async function renderBanque(el){
@@ -672,7 +673,7 @@ async function autoCategorize(){
   if(nbCat===0){toast('Aucune correspondance trouvée');return;}
   const byCat={};Object.entries(updates).forEach(([id,catId])=>{(byCat[catId]=byCat[catId]||[]).push(id);});
   for(const[catId,ids]of Object.entries(byCat)){
-    await sb.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).in('id',ids);
+    const{error}=await sb.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).in('id',ids);if(error){toast('Erreur : '+error.message);return;}
   }
   toast(`✨ ${nbCat} transactions catégorisées · ${nbSkip} sans match`);
   renderBanque(document.getElementById('content'));
@@ -686,12 +687,12 @@ async function categoriserTrx(id,catId){
   const lib=trx?.children[2]?.textContent.trim();
   if(lib && confirm(`Créer une règle pour catégoriser auto les futures transactions contenant "${lib.slice(0,40)}…" ?`)){
     const pattern=prompt('Pattern (le texte à détecter dans le libellé) :',lib.slice(0,30));
-    if(pattern){await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pattern.toLowerCase(),categorie_id:catId,priorite:1});toast('Règle créée ✓');}
+    if(pattern){const{error:eR}=await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pattern.toLowerCase(),categorie_id:catId,priorite:1});toast(eR?('Règle non créée : '+eR.message):'Règle créée ✓');}
   }
   toast('Catégorisé ✓');renderBanque(document.getElementById('content'));
 }
-async function ignoreTrx(id){await sb.from('fin_transactions_bancaires').update({statut:'ignoree'}).eq('id',id);renderBanque(document.getElementById('content'));}
-async function delTrx(id){if(!confirm('Supprimer cette transaction ?'))return;await sb.from('fin_transactions_bancaires').delete().eq('id',id);renderBanque(document.getElementById('content'));}
+async function ignoreTrx(id){const{error}=await sb.from('fin_transactions_bancaires').update({statut:'ignoree'}).eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderBanque(document.getElementById('content'));}
+async function delTrx(id){if(!confirm('Supprimer cette transaction ?'))return;const{error}=await sb.from('fin_transactions_bancaires').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderBanque(document.getElementById('content'));}
 
 function openCompte(){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
@@ -869,7 +870,8 @@ async function doImport(){
   });
   if(!toInsert.length){toast('Aucune ligne valide — vérifie le mapping');return;}
   // Créer import record
-  const{data:imp}=await sb.from('fin_imports_bancaires').insert({organization_id:ORG.id,compte_id:compteId,nom_fichier:document.getElementById('imp_file').files[0].name,format_detecte:IMP_FORMAT,nb_lignes:toInsert.length,imported_by:ME.id}).select().single();
+  const{data:imp,error:eImp}=await sb.from('fin_imports_bancaires').insert({organization_id:ORG.id,compte_id:compteId,nom_fichier:document.getElementById('imp_file').files[0].name,format_detecte:IMP_FORMAT,nb_lignes:toInsert.length,imported_by:ME.id}).select().single();
+  if(eImp){toast('⚠️ Suivi d\'import non créé : '+eImp.message);}
 
   // Progress UI
   const total=toInsert.length;
@@ -911,7 +913,7 @@ async function doImport(){
     document.getElementById('imp_prog_bar').style.width=pct+'%';
     document.getElementById('imp_prog_sub').textContent=`${nbNew} nouvelles · ${nbDup} doublons${nbErr?' · '+nbErr+' erreurs':''}`;
   }
-  if(imp) await sb.from('fin_imports_bancaires').update({nb_nouvelles:nbNew,nb_dupliquees:nbDup}).eq('id',imp.id);
+  if(imp){const{error:eU}=await sb.from('fin_imports_bancaires').update({nb_nouvelles:nbNew,nb_dupliquees:nbDup}).eq('id',imp.id);if(eU)console.warn('[finance] maj stats import:',eU.message);}
   document.getElementById('imp_preview').innerHTML=`<div style="background:rgba(63,184,127,.08);border:1px solid var(--ok);border-radius:10px;padding:18px;text-align:center"><div style="color:var(--ok);font-weight:700;font-size:16px;margin-bottom:6px">✓ Import terminé</div><div style="color:var(--text);font-size:13.5px;line-height:1.7">${nbNew} <b>nouvelles</b> transactions insérées<br>${nbDup} doublons déjà présents ${nbErr?' · '+nbErr+' erreurs':''}${skipped.length?'<br>'+skipped.length+' lignes vides ignorées':''}</div><div style="margin-top:12px;color:var(--muted);font-size:11.5px">Période ajustée automatiquement sur <b>"Tout"</b> pour afficher tes transactions.</div></div>`;
   toast(`Import OK · ${nbNew} nouvelles, ${nbDup} doublons`);
   // Auto-switch period sur "all" pour montrer les trx importées (qu'elles soient nouvelles ou pré-existantes)

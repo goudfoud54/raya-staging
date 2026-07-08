@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>HACCP — Kiosque</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.0"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:#0b0b15;color:#e8e8ec;min-height:100vh;overflow-x:hidden}
@@ -42,7 +43,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 
-let SALARIE=null,PIN='',SNACK_ID=null,SNACKS=[],EQS=[],ZONES=[];
+let SALARIE=null,PIN='',SNACK_ID=null,SNACK_ORG=null,SNACKS=[],EQS=[],ZONES=[];
 
 const TYPES_EQ={frigo:'Frigo',congel:'Congel',vitrine:'Vitrine',friteuse:'Friteuse',sonde:'Sonde'};
 const ACTIONS_HUILE={controle:'Contrôle polarité',filtration:'Filtration',vidange:'Vidange',ajout:'Ajout'};
@@ -51,8 +52,10 @@ const PERIODS={quotidien:'1× / jour','2x_jour':'2× / jour',hebdo:'Hebdo',mensu
 async function init(){
   SNACK_ID=localStorage.getItem('haccp_kiosk_snack');
   if(!SNACK_ID){await pickSnack();return;}
-  const{data:snacks}=await sb.from('restaurants').select('id,nom');SNACKS=snacks||[];
-  if(!SNACKS.find(s=>s.id===SNACK_ID)){localStorage.removeItem('haccp_kiosk_snack');await pickSnack();return;}
+  const{data:snacks}=await sb.from('restaurants').select('id,nom,organization_id');SNACKS=snacks||[];
+  const curSnack=SNACKS.find(s=>s.id===SNACK_ID);
+  if(!curSnack){localStorage.removeItem('haccp_kiosk_snack');await pickSnack();return;}
+  SNACK_ORG=curSnack.organization_id;  // org du snack → isole le lookup PIN (S2)
   const[e,z]=await Promise.all([
     sb.from('haccp_equipements').select('*').eq('actif',true),
     sb.from('haccp_zones_nettoyage').select('*').eq('actif',true)
@@ -96,10 +99,12 @@ function addPin(d){if(PIN.length<6){PIN+=d;document.getElementById('pinDisp').te
 function clrPin(){PIN='';document.getElementById('pinDisp').textContent='';document.getElementById('pinErr').textContent='';}
 async function validatePin(){
   if(!PIN){document.getElementById('pinErr').textContent='Code requis';return;}
-  const{data}=await sb.from('salaries').select('id,nom,prenom,actif').eq('pin_badgeuse',PIN).maybeSingle();
-  if(!data){document.getElementById('pinErr').textContent='Code inconnu';PIN='';document.getElementById('pinDisp').textContent='';return;}
-  if(data.actif===false){document.getElementById('pinErr').textContent='Salarié inactif';return;}
-  SALARIE=data;
+  // S11 : vérification du PIN côté serveur (rate-limit par tablette) via edge function verify-pin.
+  const res=await verifyPin(SUPA_URL,SUPA_KEY,SNACK_ORG,SNACK_ID,PIN);
+  const clear=()=>{PIN='';document.getElementById('pinDisp').textContent='';};
+  if(res.status===429){document.getElementById('pinErr').textContent='Trop de tentatives. Réessaie dans '+Math.ceil((res.retry||60)/60)+' min.';clear();return;}
+  if(!res.ok){document.getElementById('pinErr').textContent=res.error||'Code inconnu';clear();return;}
+  SALARIE=res.salarie;
   menuScreen();
 }
 

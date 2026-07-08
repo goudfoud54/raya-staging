@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Stock — Kiosque</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.0"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:#0b0b15;color:#e8e8ec;min-height:100vh;overflow-x:hidden}
@@ -116,10 +117,12 @@ function addPin(d){if(PIN.length<6){PIN+=d;document.getElementById('pinDisp').te
 function clrPin(){PIN='';document.getElementById('pinDisp').textContent='';document.getElementById('pinErr').textContent='';}
 async function validatePin(){
   if(!PIN){document.getElementById('pinErr').textContent='Code requis';return;}
-  const{data}=await sb.from('salaries').select('id,nom,prenom,actif').eq('pin_badgeuse',PIN).eq('organization_id',SNACK.organization_id).maybeSingle();
-  if(!data){document.getElementById('pinErr').textContent='Code inconnu';PIN='';document.getElementById('pinDisp').textContent='';return;}
-  if(data.actif===false){document.getElementById('pinErr').textContent='Salarié inactif';return;}
-  SALARIE=data;
+  // S11 : vérification du PIN côté serveur (rate-limit par tablette) via edge function verify-pin.
+  const res=await verifyPin(SUPA_URL,SUPA_KEY,SNACK.organization_id,SNACK.id,PIN);
+  const clear=()=>{PIN='';document.getElementById('pinDisp').textContent='';};
+  if(res.status===429){document.getElementById('pinErr').textContent='Trop de tentatives. Réessaie dans '+Math.ceil((res.retry||60)/60)+' min.';clear();return;}
+  if(!res.ok){document.getElementById('pinErr').textContent=res.error||'Code inconnu';clear();return;}
+  SALARIE=res.salarie;
   inventaireScreen();
 }
 

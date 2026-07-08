@@ -163,6 +163,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       <button class="ic" onclick="openDemandes()" data-tip="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
       <button class="ic accent" onclick="autoFillWeek()" data-tip="Auto-fill : remplir la semaine selon les dispos & règles" aria-label="Auto-fill">🎲</button>
       <button class="ic" onclick="openReglages()" data-tip="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
+      <button class="ic" onclick="openReport()" data-tip="Rapport réel vs prévu (pointages badgeuse × planning)" aria-label="Rapport réel vs prévu">📊</button>
       <button class="ic" onclick="document.getElementById('xlsxFile').click()" data-tip="Importer un planning Excel" aria-label="Import Excel">📥</button>
       <input type="file" id="xlsxFile" accept=".xlsx,.xlsm" style="display:none" onchange="handleImport(event)">
       <button class="ic" onclick="openPdfModal()" data-tip="Exporter le planning en PDF" aria-label="Export PDF">📄</button>

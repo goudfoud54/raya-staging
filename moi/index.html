@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Mon espace — Eatime360</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.0"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
@@ -128,7 +129,7 @@ const JOURS_SH=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
 
 let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
 function val(id){const e=document.getElementById(id);return e?(e.value||'').trim():'';}
-function fmtD(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR');}
+/* fmtD factorisé dans utils.js (C3) */
 function fmtDS(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});}
 
 async function login(){
@@ -312,9 +313,14 @@ function updateDispoType(){const t=val('d_type');document.getElementById('d_date
 function updateDispoFull(){document.getElementById('d_plageBox').classList.toggle('hidden',val('d_full')==='1');}
 async function saveDispo(){
   const type=val('d_type');
-  const payload={organization_id:ORG.id,salarie_id:SALARIE.id,type,statut_demande:'en_attente',motif:val('d_motif')||null,statut:'indispo'};
-  if(type==='ponctuelle') payload.date_specifique=val('d_date');
-  else payload.jour_semaine=parseInt(val('d_jour'));
+  // NB : salarie_dispos n'a PAS de colonne organization_id (l'isolation passe par salarie_id → RLS).
+  const payload={salarie_id:SALARIE.id,type,statut_demande:'en_attente',motif:val('d_motif')||null,statut:'indispo'};
+  if(type==='ponctuelle'){
+    const ds=val('d_date');
+    const _t=new Date();_t.setHours(0,0,0,0);
+    if(ds && new Date(ds+'T00:00:00')<_t){toast('Cette date est déjà passée — choisis une date à venir.');return;}
+    payload.date_specifique=ds;
+  } else payload.jour_semaine=parseInt(val('d_jour'));
   if(val('d_full')==='0'){payload.heure_debut=val('d_hd');payload.heure_fin=val('d_hf');}
   const{error}=await sb.from('salarie_dispos').insert(payload);
   if(error){toast(error.message);return;}

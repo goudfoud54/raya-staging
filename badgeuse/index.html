@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Raya — Badgeuse</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.0"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--pause:#5b9cff}
@@ -89,11 +90,20 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 <!-- SETUP -->
 <div id="setup" class="setup hidden">
   <h1>Configuration badgeuse</h1>
-  <div class="sub">Cet appareil va être associé à un snack. Choisis le snack puis valide avec le mot de passe admin.</div>
-  <select id="cfg_snack"><option value="">— Choisir un snack —</option></select>
-  <input type="password" id="cfg_pwd" placeholder="Mot de passe admin">
-  <div class="err" id="cfg_err"></div>
-  <button class="btn-prim" onclick="saveSetup()">Activer</button>
+  <div class="sub">Cet appareil va être associé à un snack. Connecte-toi avec un compte <b>admin</b> ou <b>manager</b> pour le configurer.</div>
+  <!-- Étape 1 : connexion admin (remplace le mot de passe en dur) -->
+  <div id="cfg_login" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+    <input type="email" id="cfg_email" placeholder="Email" autocomplete="username">
+    <input type="password" id="cfg_pwd" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')cfgLogin()">
+    <div class="err" id="cfg_err"></div>
+    <button class="btn-prim" onclick="cfgLogin()">Se connecter</button>
+  </div>
+  <!-- Étape 2 : choix du snack (restaurants de l'org, filtrés par RLS) -->
+  <div id="cfg_pick" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+    <select id="cfg_snack"><option value="">— Choisir un snack —</option></select>
+    <div class="err" id="cfg_err2"></div>
+    <button class="btn-prim" onclick="saveSetup()">Activer cet appareil</button>
+  </div>
 </div>
 
 <!-- KIOSK -->
@@ -106,7 +116,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     </div>
   </div>
   <div class="k-body">
-    <div class="k-hint">Tape sur ton prénom puis ton code à 4 chiffres</div>
+    <div class="k-hint">Tape sur ton prénom puis ton code (4 à 6 chiffres)</div>
     <div class="grid" id="grid"></div>
   </div>
 </div>
@@ -114,7 +124,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 <!-- PIN MODAL -->
 <div id="pin" class="modal hidden">
   <div class="who"><small>Identification</small><span id="pin-who">—</span></div>
-  <div class="pin-dots" id="pin-dots"><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div></div>
+  <div class="pin-dots" id="pin-dots"><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div></div>
   <div class="pin-err" id="pin-err"></div>
   <div class="pad">
     <button onclick="pinKey('1')">1</button><button onclick="pinKey('2')">2</button><button onclick="pinKey('3')">3</button>
@@ -122,6 +132,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button onclick="pinKey('7')">7</button><button onclick="pinKey('8')">8</button><button onclick="pinKey('9')">9</button>
     <button class="cx" onclick="closePin()">Annuler</button><button onclick="pinKey('0')">0</button><button onclick="pinKey('B')">⌫</button>
   </div>
+  <button class="btn-prim" style="margin-top:8px;min-width:160px" onclick="checkPin()">✓ Valider</button>
 </div>
 
 <!-- ACTION MODAL -->
@@ -142,10 +153,9 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const ADMIN_PW='Rayan1301';
-const VERSION='v0.1 · 29 mai';
+const VERSION='v0.2 · config par session admin (plus de mot de passe en dur)';
 
-let SNACK={id:null,nom:null};
+let SNACK={id:null,nom:null,organization_id:null};
 let SALARIES=[], LAST={}; // LAST[salarie_id] = dernier pointage
 let curSal=null, pinBuf='';
 
@@ -153,7 +163,13 @@ let curSal=null, pinBuf='';
 async function init(){
   SNACK.id=localStorage.getItem('badgeuse_snack_id');
   SNACK.nom=localStorage.getItem('badgeuse_snack_nom');
+  SNACK.organization_id=localStorage.getItem('badgeuse_snack_org');
   if(!SNACK.id){showSetup();return;}
+  // Rétro-compat : kiosque déjà configuré avant cette version (sans org stockée) → on la récupère une fois
+  if(!SNACK.organization_id){
+    const{data:r}=await sb.from('restaurants').select('organization_id').eq('id',SNACK.id).maybeSingle();
+    if(r&&r.organization_id){SNACK.organization_id=r.organization_id;localStorage.setItem('badgeuse_snack_org',r.organization_id);}
+  }
   document.getElementById('k-snack-name').textContent=SNACK.nom||'?';
   document.getElementById('kiosk').classList.remove('hidden');
   startClock();
@@ -161,25 +177,53 @@ async function init(){
   setInterval(loadData, 30000); // refresh état toutes les 30s
 }
 
-async function showSetup(){
+function showSetup(){
   document.getElementById('setup').classList.remove('hidden');
-  const{data}=await sb.from('restaurants').select('id,nom').eq('actif',true).order('nom');
-  document.getElementById('cfg_snack').innerHTML='<option value="">— Choisir un snack —</option>'+(data||[]).map(r=>`<option value="${r.id}" data-nom="${r.nom}">${r.nom}</option>`).join('');
+  // Toujours repartir de l'étape connexion
+  document.getElementById('cfg_login').classList.remove('hidden');
+  document.getElementById('cfg_pick').classList.add('hidden');
 }
-function saveSetup(){
-  const sel=document.getElementById('cfg_snack');
-  const id=sel.value;const nom=sel.options[sel.selectedIndex]?.dataset.nom;
+// Étape 1 : un admin/manager se connecte → on charge SES restaurants (RLS filtre par auth_org())
+async function cfgLogin(){
+  const email=document.getElementById('cfg_email').value.trim();
   const pwd=document.getElementById('cfg_pwd').value;
-  if(!id){document.getElementById('cfg_err').textContent='Choisis un snack';return;}
-  if(pwd!==ADMIN_PW){document.getElementById('cfg_err').textContent='Mot de passe incorrect';return;}
+  const err=document.getElementById('cfg_err');
+  if(!email||!pwd){err.textContent='Email + mot de passe requis';return;}
+  err.textContent='Connexion…';
+  const{error:e1}=await sb.auth.signInWithPassword({email,password:pwd});
+  if(e1){err.textContent='Identifiants incorrects';return;}
+  const{data:{session}}=await sb.auth.getSession();
+  const{data:prof}=await sb.from('profiles').select('role,organization_id').eq('id',session.user.id).maybeSingle();
+  if(!prof||!['admin','manager','super_admin'].includes(prof.role)){
+    err.textContent='Ce compte n’a pas le droit de configurer une badgeuse.';
+    await sb.auth.signOut();return;
+  }
+  const{data,error:e2}=await sb.from('restaurants').select('id,nom,organization_id').eq('actif',true).order('nom');
+  if(e2){err.textContent='Erreur de chargement des snacks';return;}
+  document.getElementById('cfg_snack').innerHTML='<option value="">— Choisir un snack —</option>'+(data||[]).map(r=>`<option value="${r.id}" data-nom="${r.nom.replace(/"/g,'&quot;')}" data-org="${r.organization_id}">${r.nom}</option>`).join('');
+  err.textContent='';
+  document.getElementById('cfg_login').classList.add('hidden');
+  document.getElementById('cfg_pick').classList.remove('hidden');
+}
+// Étape 2 : enregistre le snack + son org, puis FERME la session (kiosque anonyme, aucune session persistante)
+async function saveSetup(){
+  const sel=document.getElementById('cfg_snack');
+  const opt=sel.options[sel.selectedIndex];
+  const id=sel.value;
+  if(!id){document.getElementById('cfg_err2').textContent='Choisis un snack';return;}
   localStorage.setItem('badgeuse_snack_id',id);
-  localStorage.setItem('badgeuse_snack_nom',nom);
+  localStorage.setItem('badgeuse_snack_nom',opt.dataset.nom||'');
+  localStorage.setItem('badgeuse_snack_org',opt.dataset.org||'');
+  await sb.auth.signOut();
   location.reload();
 }
+// Reconfiguration : on efface la config et on repasse par la connexion admin (aucun mot de passe en dur)
 function askReconfig(){
-  const p=prompt('Mot de passe admin pour reconfigurer cet appareil :');
-  if(p===ADMIN_PW){localStorage.removeItem('badgeuse_snack_id');localStorage.removeItem('badgeuse_snack_nom');location.reload();}
-  else if(p!==null) alert('Mot de passe incorrect');
+  if(!confirm('Reconfigurer cet appareil ? Il faudra se reconnecter avec un compte admin/manager.'))return;
+  localStorage.removeItem('badgeuse_snack_id');
+  localStorage.removeItem('badgeuse_snack_nom');
+  localStorage.removeItem('badgeuse_snack_org');
+  location.reload();
 }
 
 // ===== CLOCK =====
@@ -196,7 +240,7 @@ function startClock(){
 // ===== LOAD =====
 async function loadData(){
   // Salariés actifs du snack OU multi
-  const{data:sals}=await sb.from('salaries').select('id,nom,prenom,couleur,snack_origine_id,est_multi,actif,pin_badgeuse').eq('actif',true).order('prenom');
+  const{data:sals}=await sb.from('salaries').select('id,nom,prenom,couleur,snack_origine_id,est_multi,actif').eq('actif',true).eq('organization_id',SNACK.organization_id).order('prenom');
   SALARIES=(sals||[]).filter(s=>s.snack_origine_id===SNACK.id || s.est_multi);
   // Derniers pointages (limit 200 récents)
   const{data:pts}=await sb.from('pointages').select('*').order('ts',{ascending:false}).limit(500);
@@ -236,7 +280,7 @@ function renderGrid(){
 function openPin(sid){
   curSal=SALARIES.find(x=>x.id===sid);
   if(!curSal)return;
-  if(!curSal.pin_badgeuse){alert(`${fullName(curSal)} n'a pas de code badgeuse. Génère son code dans Gestion Salariés (onglet Badgeuse).`);return;}
+  // S11 : le PIN n'est plus lu côté client ; verify-pin tranche (« Code inconnu » si pas de PIN).
   pinBuf='';renderDots();
   document.getElementById('pin-who').textContent=fullName(curSal);
   document.getElementById('pin-err').textContent='';
@@ -249,12 +293,16 @@ function renderDots(){
 }
 function pinKey(k){
   if(k==='B'){pinBuf=pinBuf.slice(0,-1);renderDots();return;}
-  if(pinBuf.length>=4)return;
+  if(pinBuf.length>=6)return;          // S11 : jusqu'à 6 chiffres
   pinBuf+=k;renderDots();
-  if(pinBuf.length===4) checkPin();
 }
-function checkPin(){
-  if(pinBuf===curSal.pin_badgeuse){document.getElementById('pin').classList.add('hidden');showActions();}
+async function checkPin(){
+  if(!curSal)return;
+  if(pinBuf.length<4){document.getElementById('pin-err').textContent='Code à 4-6 chiffres';return;}
+  // S11 : vérification côté serveur (rate-limit). On vérifie que le PIN appartient bien au salarié choisi.
+  const res=await verifyPin(SUPA_URL,SUPA_KEY,SNACK.organization_id,SNACK.id,pinBuf);
+  if(res.status===429){document.getElementById('pin-err').textContent='Trop de tentatives. Réessaie dans '+Math.ceil((res.retry||60)/60)+' min.';pinBuf='';renderDots();return;}
+  if(res.ok && res.salarie && res.salarie.id===curSal.id){document.getElementById('pin').classList.add('hidden');showActions();}
   else{document.getElementById('pin-err').textContent='Code incorrect';pinBuf='';setTimeout(renderDots,400);}
 }
 

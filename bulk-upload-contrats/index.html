@@ -73,8 +73,8 @@ input{font-family:inherit;color:var(--text)}
 
   <div class="dropzone" id="dz" onclick="document.getElementById('multiFile').click()">
     <div class="ic">📂</div>
-    <p><b>Glisse-dépose ici les 6 PDF</b> (ou clique pour choisir)</p>
-    <p class="hint">Le matching se fait automatiquement par le nom du fichier (Diaddie, Moumouni, Cali…)</p>
+    <p><b>Glisse-dépose les PDF de contrats</b> (ou clique pour choisir)</p>
+    <p class="hint">Le matching se fait automatiquement par le nom du fichier (nom/prénom du salarié)</p>
     <input type="file" id="multiFile" multiple accept="application/pdf" style="display:none" onchange="handleMultiFiles(this.files)">
   </div>
 
@@ -95,17 +95,10 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 
-// Cible : 6 fiches à pré-remplir. IDs récupérés via MCP plus tôt dans la session.
-const FICHES=[
-  {id:'f94188b4-603f-4a3f-9884-e7fa0e89d68c',label:'SY Diaddie',  keywords:['diaddie','sy','diadie']},
-  {id:'afc70807-86b1-4b9b-8a0c-03151b596964',label:'BELEM Moumouni',keywords:['moumouni','belem']},
-  {id:'589a50a3-3418-4bb2-8732-d073baf6cccd',label:'TOUSSAINT Cali',keywords:['cali','toussaint','cerfa_d_apprentissage']},
-  {id:'07a0b5cc-1697-48bb-a3ca-c1d32e851727',label:'TESTAU Louna', keywords:['louna','testau']},
-  {id:'12e78c56-63ee-4f2b-9082-aef9a10fa2df',label:'EL HAI Assma',keywords:['assma','el_hai','elhai']},
-  {id:'9fddebae-852e-4efb-bbd3-fc03721a3c40',label:'ISAEVA Yakhita',keywords:['yakhita','isaeva']},
-];
-const STATE={};
-FICHES.forEach(f=>{STATE[f.id]={file:null,status:'pending',msg:'',docId:null}});
+// Fiches chargées dynamiquement depuis la base, filtrées par organisation (plus d'UUID en dur — S4).
+let FICHES=[];
+let STATE={};
+const slug=s=>(s||'').normalize('NFD').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
 
 async function login(){
   const email=document.getElementById('loginEmail').value.trim();
@@ -120,15 +113,23 @@ async function login(){
 async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){document.getElementById('lock').classList.remove('hidden');return;}
-  const{data:profile}=await sb.from('profiles').select('full_name,role,email').eq('id',session.user.id).maybeSingle();
+  const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id').eq('id',session.user.id).maybeSingle();
   if(!profile||!['admin','super_admin','manager'].includes(profile.role)){
     document.getElementById('lock').classList.remove('hidden');
     document.getElementById('loginErr').textContent='Accès refusé (rôle insuffisant)';
     await sb.auth.signOut();return;
   }
+  // Charge les salariés de l'organisation (plus d'UUID en dur — S4). La RLS isole déjà ; on double-filtre côté requête.
+  const{data:sals,error:errS}=await sb.from('salaries').select('id,nom,prenom').eq('organization_id',profile.organization_id).eq('actif',true).order('nom');
+  if(errS){document.getElementById('loginErr').textContent='Erreur chargement salariés : '+errS.message;return;}
+  FICHES=(sals||[]).map(s=>{
+    const label=[s.nom,s.prenom].filter(Boolean).join(' ');
+    return {id:s.id,label,keywords:[slug(s.nom),slug(s.prenom),slug(label)].filter(Boolean)};
+  });
+  STATE={};FICHES.forEach(f=>{STATE[f.id]={file:null,status:'pending',msg:'',docId:null};});
   document.getElementById('lock').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
-  document.getElementById('userInfo').textContent='Connecté : '+(profile.full_name||profile.email)+' · '+profile.role;
+  document.getElementById('userInfo').textContent='Connecté : '+(profile.full_name||profile.email)+' · '+profile.role+' · '+FICHES.length+' salariés';
   renderFiches();
   setupDropzone();
 }

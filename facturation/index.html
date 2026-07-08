@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Eatime360 — Facturation</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -120,7 +121,7 @@ const MODES={cb:'CB',especes:'Espèces',virement:'Virement',cheque:'Chèque',aut
 let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
 function val(id){const e=document.getElementById(id);return e?(e.value||'').trim():'';}
 function num(id){const v=val(id);return v===''?null:parseFloat(v.replace(',','.'));}
-function fmtD(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR');}
+/* fmtD factorisé dans utils.js (C3) */
 function eur(n){if(n==null||isNaN(n))return'0,00 €';return Number(n).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';}
 function nameClient(id){const c=S.clients.find(x=>x.id===id);return c?c.nom:'—';}
 
@@ -224,7 +225,9 @@ function filterFactures(){renderFacturesList();}
 async function openFacture(id){
   const{data:f}=await sb.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
   if(!f){toast('Facture introuvable');return;}
-  const lignes=f.lignes||[];
+  // Lignes détaillées depuis la table relationnelle (factures.lignes n'existe pas — A2)
+  const{data:fl}=await sb.from('factures_lignes').select('*').eq('facture_id',id).order('ordre');
+  const lignes=fl||[];
   const paiements=f.fact_paiements||[];
   const totPaye=paiements.reduce((a,p)=>a+Number(p.montant||0),0)+Number(f.montant_paye||0);
   const restant=Math.max(0,Number(f.total_ttc)-totPaye);
@@ -276,22 +279,22 @@ async function addPaiement(facId,totalTTC){
   const{data:paiements}=await sb.from('fact_paiements').select('montant').eq('facture_id',facId);
   const totPaye=(paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0);
   const statut=totPaye>=Number(totalTTC)?'paye':totPaye>0?'partiel':'emise';
-  await sb.from('factures').update({statut,montant_paye:totPaye}).eq('id',facId);
+  const{error:eF}=await sb.from('factures').update({statut,montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
   toast('✓ Paiement enregistré');openFacture(facId);renderFactures(document.getElementById('content'));
 }
 async function delPaiement(id,facId){
   if(!confirm('Supprimer ce paiement ?'))return;
-  await sb.from('fact_paiements').delete().eq('id',id);
+  const{error}=await sb.from('fact_paiements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}
   const{data:f}=await sb.from('factures').select('total_ttc').eq('id',facId).maybeSingle();
   const{data:paiements}=await sb.from('fact_paiements').select('montant').eq('facture_id',facId);
   const totPaye=(paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0);
   const statut=totPaye>=Number(f.total_ttc)?'paye':totPaye>0?'partiel':'emise';
-  await sb.from('factures').update({statut,montant_paye:totPaye}).eq('id',facId);
+  const{error:eF}=await sb.from('factures').update({statut,montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
   openFacture(facId);
 }
 async function annulerFacture(id){
   if(!confirm('Annuler cette facture ? (statut "annulée", non supprimée)'))return;
-  await sb.from('factures').update({statut:'annulee'}).eq('id',id);
+  const{error}=await sb.from('factures').update({statut:'annulee'}).eq('id',id);if(error){toast('Erreur : '+error.message);return;}
   toast('Facture annulée');closeModal();renderFactures(document.getElementById('content'));
 }
 
@@ -355,7 +358,7 @@ async function saveFacture(){
   if(!val('nf_cl')){toast('Client requis');return;}
   if(!CURRENT_LIGNES.length||CURRENT_LIGNES.every(l=>!l.designation)){toast('Au moins une ligne');return;}
   const annee=new Date(val('nf_date')).getFullYear();
-  const{data:numData}=await sb.rpc('next_facture_number',{p_org:ORG.id,p_annee:annee});
+  const{data:numData,error:eNum}=await sb.rpc('next_facture_number',{p_org:ORG.id,p_annee:annee});if(eNum){toast('Erreur numérotation : '+eNum.message);return;}
   const n=numData||1;
   const prefix=S.fparam?.prefix_numero||'';
   const numero=`${prefix}${annee}-${String(n).padStart(3,'0')}`;
@@ -366,12 +369,15 @@ async function saveFacture(){
     totHT+=ht;totTTC+=ttc;
     return {designation:l.designation,quantite:l.quantite,prix_unitaire_ht:l.prix_unitaire_ht,tva_pct:l.tva_pct,total_ht:+ht.toFixed(2),total_ttc:+ttc.toFixed(2),ordre:idx};
   });
-  const{data:fac,error}=await sb.from('factures').insert({organization_id:ORG.id,numero,client_id:val('nf_cl'),date_facture:val('nf_date'),total_ht:+totHT.toFixed(2),total_ttc:+totTTC.toFixed(2),statut:'emise',lignes:lignes.map(l=>({nom:l.designation,qte:l.quantite,pu_ht:l.prix_unitaire_ht,tva:l.tva_pct}))}).select().single();
-  if(error){toast(error.message);return;}
+  // NB : `factures` n'a pas de colonne `lignes` (A2) — les lignes vivent dans la table factures_lignes.
+  const{data:fac,error}=await sb.from('factures').insert({organization_id:ORG.id,numero,client_id:val('nf_cl'),date_facture:val('nf_date'),total_ht:+totHT.toFixed(2),total_ttc:+totTTC.toFixed(2),statut:'emise'}).select().single();
+  if(error){toast('Erreur création facture : '+error.message);return;}
   // Insert lignes structurées
   const lignesPayload=lignes.map(l=>({...l,organization_id:ORG.id,facture_id:fac.id}));
-  await sb.from('factures_lignes').insert(lignesPayload);
-  toast(`✓ Facture ${numero} créée`);closeModal();renderFactures(document.getElementById('content'));
+  const{error:errL}=await sb.from('factures_lignes').insert(lignesPayload);
+  if(errL){toast('Facture créée mais lignes non enregistrées : '+errL.message);}
+  else toast(`✓ Facture ${numero} créée`);
+  closeModal();renderFactures(document.getElementById('content'));
 }
 
 // ─────── PDF ───────
@@ -401,8 +407,9 @@ async function downloadFacturePDF(id){
   if(f.clients?.adr)doc.text(f.clients.adr,196,63,{align:'right'});
   if(f.clients?.ville)doc.text(f.clients.ville,196,67,{align:'right'});
   doc.setTextColor(0);
-  // Lignes
-  const lignes=f.lignes||[];
+  // Lignes depuis la table relationnelle (factures.lignes n'existe pas — A2)
+  const{data:fl}=await sb.from('factures_lignes').select('*').eq('facture_id',id).order('ordre');
+  const lignes=fl||[];
   doc.autoTable({
     startY:78,
     head:[['Désignation','Qté','PU HT','TVA','Total HT']],
@@ -472,7 +479,7 @@ async function saveClient(){
   const{error}=id?await sb.from('clients').update(payload).eq('id',id):await sb.from('clients').insert(payload);
   if(error){toast(error.message);return;}toast('✓ Enregistré');closeModal();await loadCommonData();renderClients(document.getElementById('content'));
 }
-async function delClient(id){if(!confirm('Supprimer ce client ?'))return;await sb.from('clients').delete().eq('id',id);await loadCommonData();renderClients(document.getElementById('content'));}
+async function delClient(id){if(!confirm('Supprimer ce client ?'))return;const{error}=await sb.from('clients').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderClients(document.getElementById('content'));}
 
 // ─────── CATALOGUE ───────
 function renderCatalogue(el){
@@ -498,7 +505,7 @@ async function saveProd(){
   const{error}=id?await sb.from('produits').update(payload).eq('id',id):await sb.from('produits').insert(payload);
   if(error){toast(error.message);return;}toast('✓');closeModal();await loadCommonData();renderCatalogue(document.getElementById('content'));
 }
-async function delProd(id){if(!confirm('Supprimer ?'))return;await sb.from('produits').delete().eq('id',id);await loadCommonData();renderCatalogue(document.getElementById('content'));}
+async function delProd(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('produits').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderCatalogue(document.getElementById('content'));}
 
 // ─────── PARAMÈTRES ───────
 function renderParametres(el){

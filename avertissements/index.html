@@ -1273,8 +1273,8 @@ function generatePDF(kind){
     try{
       const blob=doc.output('blob');
       sb.storage.from('disciplinary-docs').upload(`${dossierId}/${kind}.pdf`, blob, {contentType:'application/pdf', upsert:true})
-        .then(({error})=>{ if(error) console.warn('[avert] archivage PDF:', error.message); });
-    }catch(e){ console.warn('[avert] archivage PDF:', e.message||e); }
+        .then(({error})=>{ if(error){ console.warn('[avert] archivage PDF:', error.message); alert('⚠️ Le PDF a bien été téléchargé sur cet appareil, mais son ARCHIVAGE dans le dossier a échoué :\n'+error.message+'\n\nLe courrier ne sera pas disponible dans « 📄 PDF ». Vérifie ta connexion et régénère le document (enjeu de preuve).'); } });
+    }catch(e){ console.warn('[avert] archivage PDF:', e.message||e); alert('⚠️ PDF téléchargé mais NON archivé dans le dossier : '+(e.message||e)+'\nRégénère le document (enjeu de preuve).'); }
   }
 }
 // ── Accès rapide aux courriers générés (bucket disciplinary-docs) ──
