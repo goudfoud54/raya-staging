@@ -6,9 +6,9 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Raya — Badgeuse</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.0"></script>
+<script src="../utils.js?v=1.1"></script>
 <style>
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--pause:#5b9cff}
 [data-theme="light"]{--gold:#c8a035;--bg:#f5f5f7;--card:#ffffff;--surface:#f0f0f3;--line:rgba(0,0,0,.06);--line-2:rgba(0,0,0,.12);--text:#1a1a1f;--muted:#6b6b78;--ok:#2a8f5f;--warn:#b8841f;--bad:#b04444;--info:#4a7fbd}
 html,body{height:100%}
@@ -32,11 +32,12 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 .k-clock{font-size:22px;font-weight:600;letter-spacing:.5px}
 .k-clock small{color:var(--muted);font-size:11px;display:block;text-align:right}
 .k-gear{color:var(--muted);font-size:18px;padding:8px;opacity:.5}
-.k-body{padding:24px 28px;overflow-y:auto;height:calc(100vh - 80px)}
+.k-body{padding:24px 28px;overflow-y:auto;height:calc(100vh - 80px);-webkit-overflow-scrolling:touch}
 .k-hint{color:var(--muted);font-size:13px;text-align:center;margin-bottom:22px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px}
-.sal{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 14px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;transition:.12s;min-height:140px;justify-content:center}
-.sal:hover{border-color:var(--gold);transform:translateY(-2px)}
+/* contain:content — évite qu'un re-render de la grille (toutes les 30s) fasse relayouter toute la
+   page sur un SoC d'entrée de gamme (Tab A9 : MediaTek Helio G99) ; chaque carte se repeint isolément. */
+.sal{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 14px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;transition:.12s;min-height:140px;justify-content:center;contain:content}
 .sal:active{transform:scale(.97)}
 .av{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#111;font-size:18px;background:#444}
 .sal-nm{font-weight:600;font-size:14px;line-height:1.2}
@@ -81,6 +82,14 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
   .k-body{padding:14px}
   .grid{grid-template-columns:repeat(2,1fr);gap:10px}
   .sal{min-height:120px}
+}
+/* Tab A9 8.7" (1340×800, DPR~2 → ~670×400 CSS px en portrait, ~800-900 en paysage selon la barre
+   système) : ni le pas de 480px (trop petit) ni le layout desktop par défaut ne conviennent —
+   3 colonnes fixes + cibles tactiles agrandies (le digitizer d'entrée de gamme est moins précis). */
+@media(min-width:481px) and (max-width:1024px){
+  .grid{grid-template-columns:repeat(3,1fr);gap:12px}
+  .sal{min-height:130px;padding:16px 10px}
+  .pad button{width:84px;height:70px}
 }
 </style>
 </head>
@@ -153,7 +162,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.2 · config par session admin (plus de mot de passe en dur)';
+const VERSION='v0.3 · pointage anti-fraude serveur (create-pointage)';
 
 let SNACK={id:null,nom:null,organization_id:null};
 let SALARIES=[], LAST={}; // LAST[salarie_id] = dernier pointage
@@ -242,8 +251,11 @@ async function loadData(){
   // Salariés actifs du snack OU multi
   const{data:sals}=await sb.from('salaries').select('id,nom,prenom,couleur,snack_origine_id,est_multi,actif').eq('actif',true).eq('organization_id',SNACK.organization_id).order('prenom');
   SALARIES=(sals||[]).filter(s=>s.snack_origine_id===SNACK.id || s.est_multi);
-  // Derniers pointages (limit 200 récents)
-  const{data:pts}=await sb.from('pointages').select('*').order('ts',{ascending:false}).limit(500);
+  if(!SALARIES.length){LAST={};renderGrid();return;}
+  // Derniers pointages — filtrés sur les salariés de CE snack uniquement (avant : requête globale
+  // toutes orgs confondues, limit(500) — payload inutile + risque de troncature. Perf : moins de
+  // JSON à parser sur un SoC d'entrée de gamme (Tab A9).
+  const{data:pts}=await sb.from('pointages').select('*').in('salarie_id',SALARIES.map(s=>s.id)).order('ts',{ascending:false}).limit(500);
   LAST={};
   (pts||[]).forEach(p=>{if(!LAST[p.salarie_id])LAST[p.salarie_id]=p;});
   renderGrid();
@@ -261,9 +273,10 @@ function stateOf(sid){
 const initials=s=>((s.prenom||'').charAt(0)+(s.nom||'').charAt(0)).toUpperCase()||'?';
 const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ');
 
+let _lastGridHTML='';
 function renderGrid(){
   const STLBL={absent:'Hors poste',present:'Présent',pause:'En pause'};
-  document.getElementById('grid').innerHTML=SALARIES.map(s=>{
+  const html=SALARIES.map(s=>{
     const st=stateOf(s.id);
     const last=LAST[s.id];
     const lastT=last?new Date(last.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'';
@@ -274,6 +287,9 @@ function renderGrid(){
       ${last?`<span class="sal-time">${last.type.replace('_',' ')} · ${lastT}</span>`:''}
     </button>`;
   }).join('')||'<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px">Aucun salarié actif pour ce snack</div>';
+  // Diffing : sur un SoC d'entrée de gamme (Tab A9), réécrire innerHTML toutes les 30s même quand
+  // rien n'a changé provoque un reflow/repaint inutile — coûteux et source de saccades visibles.
+  if(html!==_lastGridHTML){document.getElementById('grid').innerHTML=html;_lastGridHTML=html;}
 }
 
 // ===== PIN =====
@@ -321,8 +337,16 @@ function closeAct(){document.getElementById('act').classList.add('hidden');curSa
 
 async function doPoint(type,lbl){
   document.getElementById('act').classList.add('hidden');
-  const{error}=await sb.from('pointages').insert({salarie_id:curSal.id,restaurant_id:SNACK.id,type});
-  if(error){alert('Erreur: '+error.message);return;}
+  // S11 suite : le pointage passe par create-pointage (service_role) qui re-vérifie le PIN
+  // (déjà en mémoire dans pinBuf depuis checkPin), la cohérence org/resto, la séquence d'état
+  // et bloque les doubles-tap — un insert direct via la clé anon ne garantissait plus rien de tout ça.
+  const res=await createPointage(SUPA_URL,SUPA_KEY,SNACK.organization_id,SNACK.id,curSal.id,type,pinBuf);
+  pinBuf='';
+  if(!res.ok){
+    let msg=res.error||'Erreur inconnue';
+    if(res.status===429) msg='Trop de tentatives. Réessaie dans '+Math.ceil((res.retry||60)/60)+' min.';
+    alert('⚠️ '+msg);curSal=null;return;
+  }
   // Succès
   document.getElementById('suc-msg').textContent=lbl+' enregistré';
   document.getElementById('suc-who').textContent=fullName(curSal)+' · '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});

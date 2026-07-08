@@ -218,7 +218,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.23 · alternance/CFA : jours école bloquants + règle veille d\'école';
+const VERSION='v0.24 · rapport pointages : oublis de sortie + correction manuelle (admin)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1337,8 +1337,23 @@ async function openReport(){
       if(arr) sansPlan.push({sid,date,time:new Date(arr.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})});
     }
   });
+  // Oublis de sortie : un jour PASSÉ (pas aujourd'hui, le service peut être en cours) dont le
+  // dernier pointage n'est pas 'sortie' → calculé à la volée depuis idx, aucune colonne stockée.
+  const oublis=[];
+  const todayStr=fmtDate(new Date());
+  Object.entries(idx).forEach(([k,dayPts])=>{
+    const[sid,date]=k.split('|');
+    if(date>=todayStr)return;
+    const sorted=dayPts.slice().sort((a,b)=>a.ts.localeCompare(b.ts));
+    const last=sorted[sorted.length-1];
+    if(last && last.type!=='sortie'){
+      oublis.push({sid,date,lastType:last.type,lastTime:new Date(last.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})});
+    }
+  });
 
   const fmtD=d=>new Date(d).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'});
+  const TLBL={arrivee:'arrivée',pause_debut:'pause',pause_fin:'reprise',sortie:'sortie'};
+  const corBtn=(sid,date)=>`<button class="btn ghost sm" style="padding:2px 8px;font-size:11px;margin-left:8px" onclick="openPointageCorrection('${sid}','${date}')">✏️ Corriger</button>`;
   const section=(title,color,items,renderItem)=>{
     return `<div style="margin-bottom:18px">
       <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:${color}">${title} <span style="color:var(--muted);font-weight:400">(${items.length})</span></div>
@@ -1354,13 +1369,93 @@ async function openReport(){
       <button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕</button>
     </div>
     <div style="margin:14px 0">
-      ${section('🔴 Retards (>5 min)','var(--bad)',retards.sort((a,b)=>b.delta-a.delta),r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned} → réel ${r.actual} <b style="color:var(--bad);margin-left:6px">+${r.delta} min</b></span></div>`)}
-      ${section('⚠ Absences (pas de pointage)','var(--warn)',absences,r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned}</span></div>`)}
-      ${section('🟠 Départs anticipés (>10 min)','var(--warn)',depAntic.sort((a,b)=>b.delta-a.delta),r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned} → réel ${r.actual} <b style="color:var(--warn);margin-left:6px">−${r.delta} min</b></span></div>`)}
-      ${section('🔵 Pointages sans planning','#5b9cff',sansPlan,r=>`<div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)}</span><span style="color:var(--muted)">arrivée ${r.time}</span></div>`)}
+      ${section('🕳 Oublis de sortie','var(--bad)',oublis,r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)}</span><span style="color:var(--muted)">dernier pointage : ${TLBL[r.lastType]||r.lastType} à ${r.lastTime}${corBtn(r.sid,r.date)}</span></div>`)}
+      ${section('🔴 Retards (>5 min)','var(--bad)',retards.sort((a,b)=>b.delta-a.delta),r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned} → réel ${r.actual} <b style="color:var(--bad);margin-left:6px">+${r.delta} min</b>${corBtn(r.sid,r.date)}</span></div>`)}
+      ${section('⚠ Absences (pas de pointage)','var(--warn)',absences,r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned}${corBtn(r.sid,r.date)}</span></div>`)}
+      ${section('🟠 Départs anticipés (>10 min)','var(--warn)',depAntic.sort((a,b)=>b.delta-a.delta),r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)} ${r.svc}</span><span style="color:var(--muted)">prévu ${r.planned} → réel ${r.actual} <b style="color:var(--warn);margin-left:6px">−${r.delta} min</b>${corBtn(r.sid,r.date)}</span></div>`)}
+      ${section('🔵 Pointages sans planning','#5b9cff',sansPlan,r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px"><span><b>${nameOf(r.sid)}</b> · ${fmtD(r.date)}</span><span style="color:var(--muted)">arrivée ${r.time}${corBtn(r.sid,r.date)}</span></div>`)}
     </div>
-    ${(!retards.length && !absences.length && !depAntic.length && !sansPlan.length)?'<div style="text-align:center;padding:24px;color:var(--ok);font-weight:600">✓ Tout est conforme</div>':''}`;
+    ${(!oublis.length && !retards.length && !absences.length && !depAntic.length && !sansPlan.length)?'<div style="text-align:center;padding:24px;color:var(--ok);font-weight:600">✓ Tout est conforme</div>':''}`;
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:88vh;overflow:auto;padding:24px">${html}</div></div>`;
+}
+
+// ===== MODULE ADMIN : correction manuelle d'un pointage (depuis le rapport réel vs prévu) =====
+// Portée : le jour cliqué + le lendemain matin jusqu'à 10h (couvre les services qui finissent
+// après minuit, ex. soir 18h30→00h30, sans quoi une sortie tardive serait invisible ici).
+async function openPointageCorrection(sid,date){
+  setSS('busy','Chargement…');
+  const from=date+'T00:00:00', to=fmtDate(new Date(new Date(date+'T00:00:00').getTime()+86400000))+'T10:00:00';
+  const{data:pts,error}=await sb.from('pointages').select('*').eq('salarie_id',sid).gte('ts',from).lt('ts',to).order('ts');
+  if(error){setSS('err','Erreur: '+error.message);return;}
+  setSS('','');
+  const s=S.salaries.find(x=>x.id===sid);
+  const nom=[s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';
+  renderPointageCorrectionModal(sid,date,nom,pts||[]);
+}
+function renderPointageCorrectionModal(sid,date,nom,pts){
+  const TLBL={arrivee:'Arrivée',pause_debut:'Pause',pause_fin:'Reprise',sortie:'Sortie'};
+  const rows=pts.map(p=>{
+    const d=new Date(p.ts);
+    const hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px">
+      <span style="min-width:70px;color:var(--muted)">${d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})}</span>
+      <span style="min-width:80px;font-weight:600">${TLBL[p.type]||p.type}</span>
+      <input type="time" id="pc_t_${p.id}" value="${hh}:${mm}" style="padding:4px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+      <button class="btn ghost sm" onclick="savePointageTime('${p.id}','${sid}','${date}')">💾</button>
+      <button class="btn ghost sm" style="color:var(--bad)" onclick="deletePointageRow('${p.id}','${sid}','${date}')">🗑</button>
+      ${p.corrige_par?`<span style="color:var(--muted);font-size:10.5px" title="${(p.motif_correction||'').replace(/"/g,'&quot;')}">✏️ corrigé</span>`:''}
+    </div>`;
+  }).join('')||'<div style="color:var(--muted);font-size:12.5px;padding:8px 0">Aucun pointage ce jour-là</div>';
+  const html=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3 style="margin:0;font-size:16px">Corriger les pointages — ${nom}</h3>
+      <button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕</button>
+    </div>
+    <div style="color:var(--muted);font-size:11.5px;margin-bottom:12px">${fmtD_(date)} (+ lendemain matin si service de nuit)</div>
+    <div style="margin-bottom:16px">${rows}</div>
+    <div style="border-top:1px solid var(--line-2);padding-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="pc_new_type" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+        <option value="arrivee">Arrivée</option><option value="pause_debut">Pause</option>
+        <option value="pause_fin">Reprise</option><option value="sortie">Sortie</option>
+      </select>
+      <input type="date" id="pc_new_date" value="${date}" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+      <input type="time" id="pc_new_time" value="09:00" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)">
+      <button class="btn sm" onclick="addPointageManual('${sid}','${date}')">+ Ajouter (ex. sortie oubliée)</button>
+    </div>`;
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:560px;width:92vw;max-height:88vh;overflow:auto;padding:24px">${html}</div></div>`;
+}
+function fmtD_(d){return new Date(d+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});}
+async function savePointageTime(id,sid,date){
+  const inp=document.getElementById('pc_t_'+id);
+  const motif=prompt('Motif de la correction (obligatoire, ex. "oubli de sortie signalé par le salarié") :');
+  if(!motif){alert('Motif requis pour toute correction (traçabilité).');return;}
+  const[h,m]=inp.value.split(':');
+  // On garde la date d'origine du pointage, on change juste l'heure saisie.
+  const{data:orig}=await sb.from('pointages').select('ts').eq('id',id).maybeSingle();
+  if(!orig){alert('Pointage introuvable');return;}
+  const d=new Date(orig.ts);d.setHours(+h,+m,0,0);
+  const{error}=await sb.from('pointages').update({ts:d.toISOString(),corrige_par:ME.id,corrige_le:new Date().toISOString(),motif_correction:motif}).eq('id',id);
+  if(error){alert('Erreur: '+error.message);return;}
+  openPointageCorrection(sid,date);
+}
+async function deletePointageRow(id,sid,date){
+  const motif=prompt('Motif de la suppression (obligatoire) :');
+  if(!motif){alert('Motif requis pour toute correction (traçabilité).');return;}
+  if(!confirm('Supprimer ce pointage ?'))return;
+  const{error}=await sb.from('pointages').delete().eq('id',id);
+  if(error){alert('Erreur: '+error.message);return;}
+  openPointageCorrection(sid,date);
+}
+async function addPointageManual(sid,date){
+  const type=document.getElementById('pc_new_type').value;
+  const d2=document.getElementById('pc_new_date').value;
+  const t=document.getElementById('pc_new_time').value;
+  const motif=prompt('Motif de l\'ajout manuel (obligatoire) :');
+  if(!motif){alert('Motif requis pour toute correction (traçabilité).');return;}
+  const restaurant_id=SNACK.id;
+  const{error}=await sb.from('pointages').insert({salarie_id:sid,restaurant_id,type,ts:new Date(d2+'T'+t+':00').toISOString(),source:'admin_correction',corrige_par:ME.id,corrige_le:new Date().toISOString(),motif_correction:motif});
+  if(error){alert('Erreur: '+error.message);return;}
+  openPointageCorrection(sid,date);
 }
 
 // ===== AUTO-FILL =====

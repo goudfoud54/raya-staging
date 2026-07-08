@@ -48,9 +48,24 @@
     return { status: r.status, ok: r.ok && j.ok === true, salarie: j.salarie || null, error: j.error || null, retry: j.retry_after_s || null };
   }
 
-  const api = { fmtD, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin };
+  // Appelle l'edge function create-pointage (S11 suite) : insertion serveur avec re-vérif PIN,
+  // cohérence org/resto, séquence d'état et anti double-tap. Renvoie {status, ok, pointage, error, retry}.
+  async function createPointage(supaUrl, anonKey, organization_id, restaurant_id, salarie_id, type, pin) {
+    let r, j = {};
+    try {
+      r = await fetch(supaUrl + '/functions/v1/create-pointage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + anonKey, apikey: anonKey },
+        body: JSON.stringify({ organization_id, restaurant_id, salarie_id, type, pin, kiosk_id: kioskId() }),
+      });
+    } catch (e) { return { status: 0, ok: false, pointage: null, error: 'Réseau indisponible', retry: null }; }
+    try { j = await r.json(); } catch (e) {}
+    return { status: r.status, ok: r.ok && j.ok === true, pointage: j.pointage || null, error: j.error || null, retry: j.retry_after_s || null };
+  }
+
+  const api = { fmtD, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
   g.EatimeUtils = api;
   // Drop-in globaux :
   if (typeof g.fmtD === 'undefined') g.fmtD = fmtD;
-  g.kioskId = kioskId; g.verifyPin = verifyPin;
+  g.kioskId = kioskId; g.verifyPin = verifyPin; g.createPointage = createPointage;
 })(window);
