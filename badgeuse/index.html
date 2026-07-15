@@ -118,8 +118,8 @@ button:disabled{cursor:default}
   </div>
   <div class="k-body">
     <div class="kp-wrap">
-      <div class="k-hint">Tape ton code (4 à 6 chiffres)</div>
-      <div class="pin-dots" id="pin-dots"><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div></div>
+      <div class="k-hint">Tape ton code (4 chiffres)</div>
+      <div class="pin-dots" id="pin-dots"><div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div></div>
       <div class="pin-err" id="pin-err"></div>
       <div class="pad">
         <button onclick="pinKey('1')">1</button><button onclick="pinKey('2')">2</button><button onclick="pinKey('3')">3</button>
@@ -127,7 +127,6 @@ button:disabled{cursor:default}
         <button onclick="pinKey('7')">7</button><button onclick="pinKey('8')">8</button><button onclick="pinKey('9')">9</button>
         <button class="cx" onclick="clearAll()">✕</button><button onclick="pinKey('0')">0</button><button onclick="pinKey('B')">⌫</button>
       </div>
-      <button class="btn-prim" id="pin-ok" style="margin-top:18px;min-width:200px" disabled onclick="checkPin()">✓ Valider</button>
     </div>
   </div>
 </div>
@@ -168,7 +167,7 @@ button:disabled{cursor:default}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.4 · PIN direct (style Skello, sans liste salariés) + reconfig cachée (long-press + login admin)';
+const VERSION='v0.5 · PIN strict 4 chiffres (validation auto, plus de bouton Valider)';
 
 let SNACK={id:null,nom:null,organization_id:null};
 let curSal=null, curLast=null, pinBuf='';
@@ -312,15 +311,16 @@ async function fetchLastPointage(sid){
 }
 
 // ===== PIN DIRECT =====
+// v6.18 : PIN strict 4 chiffres (fini le 4-6 du S11) → validation systématiquement automatique,
+// pas besoin de bouton "Valider".
 function renderDots(){
   document.querySelectorAll('#pin-dots .pd').forEach((d,i)=>d.classList.toggle('on',i<pinBuf.length));
-  document.getElementById('pin-ok').disabled=pinBuf.length<4;
 }
 function pinKey(k){
   if(k==='B'){pinBuf=pinBuf.slice(0,-1);renderDots();return;}
-  if(pinBuf.length>=6)return;
+  if(pinBuf.length>=4)return;
   pinBuf+=k;renderDots();
-  if(pinBuf.length===6)checkPin(); // détection auto : longueur max (6) atteinte
+  if(pinBuf.length===4)checkPin();
 }
 function clearAll(){pinBuf='';renderDots();document.getElementById('pin-err').textContent='';}
 

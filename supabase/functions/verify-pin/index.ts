@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
   const pin = String(body.pin || '').trim();
 
   if (!organization_id || !kiosk_id) return json({ error: 'Paramètres manquants' }, 400);
-  if (!/^\d{4,6}$/.test(pin)) return json({ ok: false, error: 'Code invalide' }, 401);
+  if (!/^\d{4}$/.test(pin)) return json({ ok: false, error: 'Code invalide' }, 401); // v6.18 : PIN strict 4 chiffres
 
   const sb = createClient(SUPA_URL, SERVICE_KEY);
 

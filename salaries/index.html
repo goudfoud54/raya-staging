@@ -372,9 +372,14 @@ const contrOf=sid=>S.contraintes.filter(x=>x.salarie_id===sid);
 const docsOf=sid=>S.docs.filter(x=>x.salarie_id===sid);
 const ptsOf=sid=>S.pts.filter(x=>x.salarie_id===sid);
 function generatePin(){
-  // S11 : nouveaux codes à 6 chiffres (plus sûrs). Les anciens codes 4 chiffres restent valides.
+  // v6.18 : PIN strict 4 chiffres (edge functions verify-pin/create-pointage + contrainte DB
+  // rejettent tout le reste). Évite aussi les codes évidents (répétition, suite croissante/décroissante).
   const used=new Set(S.salaries.map(s=>s.pin_badgeuse).filter(Boolean));
-  for(let i=0;i<2000;i++){const p=String(Math.floor(Math.random()*1000000)).padStart(6,'0');if(!used.has(p))return p;}
+  const isObvious=p=>/^(\d)\1{3}$/.test(p) || '0123456789'.includes(p) || '9876543210'.includes(p);
+  for(let i=0;i<2000;i++){
+    const p=String(Math.floor(Math.random()*10000)).padStart(4,'0');
+    if(!used.has(p) && !isObvious(p)) return p;
+  }
   return null;
 }
 async function setPinAndSave(id){
@@ -730,7 +735,7 @@ function renderFiche(){
           <div class="fld"><label>Nationalité</label><input id="f_nat" value="${s.nationalite||''}"></div>
           <div class="fld"><label>N° Sécurité sociale</label><input id="f_secu" value="${s.num_secu||''}"></div>
           <div class="fld"><label>Matricule interne</label><input id="f_matricule" value="${s.matricule||''}"></div>
-          <div class="fld"><label>Code badgeuse (auto)</label><div style="display:flex;gap:6px"><input id="f_pin" maxlength="6" pattern="[0-9]{4,6}" value="${s.pin_badgeuse||''}" placeholder="auto (4-6 chiffres)" style="flex:1">${s.id?`<button class="btn ghost sm" onclick="setPinAndSave('${s.id}')" type="button" title="Générer un nouveau code">🎲</button>`:''}</div></div>
+          <div class="fld"><label>Code badgeuse (auto)</label><div style="display:flex;gap:6px"><input id="f_pin" maxlength="4" pattern="[0-9]{4}" value="${s.pin_badgeuse||''}" placeholder="auto (4 chiffres)" style="flex:1">${s.id?`<button class="btn ghost sm" onclick="setPinAndSave('${s.id}')" type="button" title="Générer un nouveau code">🎲</button>`:''}</div></div>
         </div>
         <div class="chkrow"><label class="chk"><input type="checkbox" id="f_mineur" ${s.est_mineur?'checked':''}> Mineur</label></div>
       </div>

@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
 
   if (!organization_id || !restaurant_id || !salarie_id || !kiosk_id) return json({ ok: false, error: 'Paramètres manquants' }, 400);
   if (!TYPES.has(type)) return json({ ok: false, error: 'Type de pointage invalide' }, 400);
-  if (!/^\d{4,6}$/.test(pin)) return json({ ok: false, error: 'Code invalide' }, 401);
+  if (!/^\d{4}$/.test(pin)) return json({ ok: false, error: 'Code invalide' }, 401); // v6.18 : PIN strict 4 chiffres
 
   const sb = createClient(SUPA_URL, SERVICE_KEY);
 

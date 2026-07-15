@@ -167,10 +167,10 @@ function changeSnack(){if(confirm('Changer de snack pour cette tablette ?')){loc
 function openPin(sid){curSal=SALARIES.find(x=>x.id===sid);if(!curSal)return;pinBuf='';renderDots();document.getElementById('pinWho').textContent=fullName(curSal);document.getElementById('pin-err').textContent='';document.getElementById('pin').classList.remove('hidden');}
 function closePin(){document.getElementById('pin').classList.add('hidden');curSal=null;pinBuf='';}
 function renderDots(){document.querySelectorAll('#pin-dots .pd').forEach((d,i)=>d.classList.toggle('on',i<pinBuf.length));}
-function pinKey(k){if(k==='B'){pinBuf=pinBuf.slice(0,-1);renderDots();return;}if(pinBuf.length>=6)return;pinBuf+=k;renderDots();}
+function pinKey(k){if(k==='B'){pinBuf=pinBuf.slice(0,-1);renderDots();return;}if(pinBuf.length>=4)return;pinBuf+=k;renderDots();}
 async function checkPin(){
   if(!curSal)return;
-  if(pinBuf.length<4){document.getElementById('pin-err').textContent='Code à 4-6 chiffres';return;}
+  if(pinBuf.length<4){document.getElementById('pin-err').textContent='Code à 4 chiffres';return;}
   // S11 : vérification côté serveur (rate-limit) ; on confirme que le PIN correspond au salarié choisi.
   const res=await verifyPin(SUPA_URL,SUPA_KEY,SNACK_ORG,SNACK_ID,pinBuf);
   if(res.status===429){document.getElementById('pin-err').textContent='Trop de tentatives. Réessaie dans '+Math.ceil((res.retry||60)/60)+' min.';pinBuf='';renderDots();return;}
