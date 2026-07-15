@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0,user-scalable=no">
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Raya — Badgeuse</title>
+<meta name="theme-color" content="#c8a035">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../utils.js?v=1.1"></script>
+<script src="../kiosk-shared.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--pause:#5b9cff}
@@ -17,22 +19,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;ba
 button{cursor:pointer;border:none;background:none;color:var(--text);font-family:inherit}
 button:disabled{cursor:default}
 
-/* ── SETUP ── */
-.setup{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:30px}
-.setup h1{color:var(--gold);font-size:24px;margin-bottom:6px}
-.setup .sub{color:var(--muted);font-size:13px;margin-bottom:18px;text-align:center;max-width:340px}
-.setup input,.setup select{padding:14px 18px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:15px;width:280px;outline:none;text-align:center}
-.setup input:focus,.setup select:focus{border-color:var(--gold)}
-.btn-prim{padding:14px 28px;border-radius:12px;background:var(--gold);color:#1a1a1a;font-weight:700;font-size:15px;border:none}
-.btn-prim:disabled{opacity:.4}
 .err{color:var(--bad);font-size:13px;min-height:18px}
 
 /* ── KIOSK ── */
 .k-head{display:flex;align-items:center;justify-content:space-between;padding:18px 28px;border-bottom:1px solid var(--line)}
+.k-left{display:flex;align-items:center;gap:12px}
+.k-home{width:38px;height:38px;border-radius:10px;background:var(--surface);border:1px solid var(--line-2);font-size:17px;display:flex;align-items:center;justify-content:center;text-decoration:none;flex-shrink:0}
 .k-snack{color:var(--gold);font-weight:700;font-size:20px}
 .k-snack small{color:var(--muted);font-weight:400;font-size:12px;display:block;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px}
+.k-right{display:flex;align-items:center;gap:14px}
 .k-clock{font-size:22px;font-weight:600;letter-spacing:.5px}
 .k-clock small{color:var(--muted);font-size:11px;display:block;text-align:right}
+.net-pill{font-size:11px;font-weight:700;padding:5px 11px;border-radius:20px;white-space:nowrap}
+.net-on{background:rgba(63,184,127,.15);color:var(--ok)}
+.net-off{background:rgba(196,90,90,.15);color:var(--bad)}
 .k-body{padding:24px 28px;overflow-y:auto;height:calc(100vh - 80px);-webkit-overflow-scrolling:touch;display:flex;align-items:center;justify-content:center}
 .k-hint{color:var(--muted);font-size:14px;text-align:center;margin-bottom:18px}
 
@@ -60,10 +60,9 @@ button:disabled{cursor:default}
 .act-sortie{border-color:var(--warn);color:var(--warn)}
 .cancel{margin-top:4px;color:var(--muted);font-size:13px;padding:10px 24px}
 
-/* ── RECONFIG (accès caché, long-press 5s sur le nom du snack) ── */
-#reconfig input{padding:14px 18px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:15px;width:100%;outline:none}
-#reconfig input:focus{border-color:var(--gold)}
-.rc-check{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
+/* ── BANNIÈRE MISE À JOUR ── */
+.upd-bar{position:fixed;left:0;right:0;bottom:0;background:var(--gold);color:#1a1a1a;padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:16px;font-size:14px;font-weight:600;z-index:300}
+.upd-bar button{background:#1a1a1a;color:var(--gold);padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;border:none}
 
 /* ── SUCCESS ── */
 .suc{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.92);z-index:200;gap:20px}
@@ -90,31 +89,17 @@ button:disabled{cursor:default}
 <body>
 <div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
 
-<!-- SETUP -->
-<div id="setup" class="setup hidden">
-  <h1>Configuration badgeuse</h1>
-  <div class="sub">Cet appareil va être associé à un snack. Connecte-toi avec un compte <b>admin</b> ou <b>manager</b> pour le configurer.</div>
-  <!-- Étape 1 : connexion admin (remplace le mot de passe en dur) -->
-  <div id="cfg_login" style="display:flex;flex-direction:column;align-items:center;gap:12px">
-    <input type="email" id="cfg_email" placeholder="Email" autocomplete="username">
-    <input type="password" id="cfg_pwd" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')cfgLogin()">
-    <div class="err" id="cfg_err"></div>
-    <button class="btn-prim" onclick="cfgLogin()">Se connecter</button>
-  </div>
-  <!-- Étape 2 : choix du snack (restaurants de l'org, filtrés par RLS) -->
-  <div id="cfg_pick" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:12px">
-    <select id="cfg_snack"><option value="">— Choisir un snack —</option></select>
-    <div class="err" id="cfg_err2"></div>
-    <button class="btn-prim" onclick="saveSetup()">Activer cet appareil</button>
-  </div>
-</div>
-
 <!-- KIOSK -->
 <div id="kiosk" class="hidden">
   <div class="k-head">
-    <!-- Pas de bouton "reconfigurer" visible : accès caché via appui long (5s) sur le nom du snack. -->
-    <div class="k-snack" id="k-snack"><small>Pointage</small><span id="k-snack-name">—</span></div>
-    <div class="k-clock"><span id="k-clock">--:--:--</span><small id="k-date">—</small></div>
+    <div class="k-left">
+      <a href="../kiosk/" class="k-home" title="Retour au menu">🏠</a>
+      <div class="k-snack"><small>Pointage</small><span id="k-snack-name">—</span></div>
+    </div>
+    <div class="k-right">
+      <span class="net-pill" id="net-pill">—</span>
+      <div class="k-clock"><span id="k-clock">--:--:--</span><small id="k-date">—</small></div>
+    </div>
   </div>
   <div class="k-body">
     <div class="kp-wrap">
@@ -138,22 +123,10 @@ button:disabled{cursor:default}
   <button class="cancel" onclick="closeAct()">Annuler</button>
 </div>
 
-<!-- RECONFIG (caché — appui long 5s sur le nom du snack + login admin obligatoire) -->
-<div id="reconfig" class="modal hidden">
-  <div class="who"><small>Accès réservé</small><span>Reconfiguration de l'appareil</span></div>
-  <div id="rc_login" style="display:flex;flex-direction:column;gap:12px;width:90%;max-width:320px">
-    <input type="email" id="rc_email" placeholder="Email admin / manager" autocomplete="username">
-    <input type="password" id="rc_pwd" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')rcLogin()">
-    <div class="err" id="rc_err"></div>
-    <button class="btn-prim" onclick="rcLogin()">Se connecter</button>
-    <button class="cancel" onclick="closeReconfig()">Annuler</button>
-  </div>
-  <div id="rc_options" class="hidden" style="display:flex;flex-direction:column;gap:16px;width:90%;max-width:320px;align-items:center">
-    <div style="color:var(--muted);font-size:13px">Connecté : <b id="rc_who"></b></div>
-    <label class="rc-check"><input type="checkbox" checked disabled> 🔒 Appareil verrouillé sur ce snack (actif)</label>
-    <button class="btn-prim" onclick="rcReconfigure()">🔄 Reconfigurer l'appareil</button>
-    <button class="cancel" onclick="closeReconfig()">Fermer</button>
-  </div>
+<!-- BANNIÈRE MISE À JOUR -->
+<div id="updBar" class="upd-bar hidden">
+  <span>🆕 Nouvelle version disponible</span>
+  <button onclick="applyUpd()">Recharger</button>
 </div>
 
 <!-- SUCCÈS -->
@@ -167,124 +140,42 @@ button:disabled{cursor:default}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.5 · PIN strict 4 chiffres (validation auto, plus de bouton Valider)';
+const VERSION='v0.6 · module du hub Kiosk (config partagée, 🏠 retour, wake lock, hors-ligne, auto-update)';
 
 let SNACK={id:null,nom:null,organization_id:null};
 let curSal=null, curLast=null, pinBuf='';
+let _swReg=null;
 
 // ===== INIT =====
+// Config + reconfig ne vivent plus ici : le SEUL point d'entrée pour tout ça est désormais le hub
+// (/kiosk/) — un appareil sans config connue (ni clé unifiée, ni ancienne clé badgeuse_snack_*)
+// est renvoyé là-bas plutôt que de repasser par un écran de setup dupliqué ici.
 async function init(){
-  SNACK.id=localStorage.getItem('badgeuse_snack_id');
-  SNACK.nom=localStorage.getItem('badgeuse_snack_nom');
-  SNACK.organization_id=localStorage.getItem('badgeuse_snack_org');
-  if(!SNACK.id){showSetup();return;}
-  // Rétro-compat : kiosque déjà configuré avant cette version (sans org stockée) → on la récupère une fois
+  const cfg=EatimeKiosk.getSnackConfig('badgeuse');
+  SNACK.id=cfg.id;SNACK.nom=cfg.nom;SNACK.organization_id=cfg.organization_id;
+  if(!SNACK.id){location.href='../kiosk/';return;}
   if(!SNACK.organization_id){
     const{data:r}=await sb.from('restaurants').select('organization_id').eq('id',SNACK.id).maybeSingle();
-    if(r&&r.organization_id){SNACK.organization_id=r.organization_id;localStorage.setItem('badgeuse_snack_org',r.organization_id);}
+    if(r&&r.organization_id){SNACK.organization_id=r.organization_id;EatimeKiosk.setSnackConfig({id:SNACK.id,nom:SNACK.nom,organization_id:r.organization_id});}
   }
   document.getElementById('k-snack-name').textContent=SNACK.nom||'?';
   document.getElementById('kiosk').classList.remove('hidden');
   startClock();
-  setupLongPress();
+  EatimeKiosk.initWakeLock();
+  EatimeKiosk.watchOnline(renderNetPill);
+  // Le pointage en cours (modale #act ouverte) bloque le retour auto au hub — jamais interrompre
+  // un salarié en train de choisir son action.
+  EatimeKiosk.initIdleReturn(10, ()=>!document.getElementById('act').classList.contains('hidden'));
+  _swReg=await EatimeKiosk.registerSW(showUpdateBar);
 }
 
-function showSetup(){
-  document.getElementById('setup').classList.remove('hidden');
-  // Toujours repartir de l'étape connexion
-  document.getElementById('cfg_login').classList.remove('hidden');
-  document.getElementById('cfg_pick').classList.add('hidden');
+function renderNetPill(online){
+  const el=document.getElementById('net-pill');
+  el.textContent=online?'🟢 En ligne':'🔴 Hors-ligne';
+  el.className='net-pill '+(online?'net-on':'net-off');
 }
-// Étape 1 : un admin/manager se connecte → on charge SES restaurants (RLS filtre par auth_org())
-async function cfgLogin(){
-  const email=document.getElementById('cfg_email').value.trim();
-  const pwd=document.getElementById('cfg_pwd').value;
-  const err=document.getElementById('cfg_err');
-  if(!email||!pwd){err.textContent='Email + mot de passe requis';return;}
-  err.textContent='Connexion…';
-  const{error:e1}=await sb.auth.signInWithPassword({email,password:pwd});
-  if(e1){err.textContent='Identifiants incorrects';return;}
-  const{data:{session}}=await sb.auth.getSession();
-  const{data:prof}=await sb.from('profiles').select('role,organization_id').eq('id',session.user.id).maybeSingle();
-  if(!prof||!['admin','manager','super_admin'].includes(prof.role)){
-    err.textContent='Ce compte n’a pas le droit de configurer une badgeuse.';
-    await sb.auth.signOut();return;
-  }
-  const{data,error:e2}=await sb.from('restaurants').select('id,nom,organization_id').eq('actif',true).order('nom');
-  if(e2){err.textContent='Erreur de chargement des snacks';return;}
-  document.getElementById('cfg_snack').innerHTML='<option value="">— Choisir un snack —</option>'+(data||[]).map(r=>`<option value="${r.id}" data-nom="${r.nom.replace(/"/g,'&quot;')}" data-org="${r.organization_id}">${r.nom}</option>`).join('');
-  err.textContent='';
-  document.getElementById('cfg_login').classList.add('hidden');
-  document.getElementById('cfg_pick').classList.remove('hidden');
-}
-// Étape 2 : enregistre le snack + son org, puis FERME la session (kiosque anonyme, aucune session persistante)
-async function saveSetup(){
-  const sel=document.getElementById('cfg_snack');
-  const opt=sel.options[sel.selectedIndex];
-  const id=sel.value;
-  if(!id){document.getElementById('cfg_err2').textContent='Choisis un snack';return;}
-  localStorage.setItem('badgeuse_snack_id',id);
-  localStorage.setItem('badgeuse_snack_nom',opt.dataset.nom||'');
-  localStorage.setItem('badgeuse_snack_org',opt.dataset.org||'');
-  await sb.auth.signOut();
-  location.reload();
-}
-
-// ===== RECONFIG (accès caché) =====
-// Plus de roue crantée visible : un stagiaire curieux ne voit rien à cliquer. L'accès passe par un
-// appui long (5s) sur le nom du snack, puis un login admin/manager obligatoire (même sécurité que
-// la configuration initiale — pas de raccourci PIN). Un appui court (tap normal) ne déclenche rien
-// visuellement : aucun teasing d'un mode caché.
-let lpTimer=null;
-function setupLongPress(){
-  const el=document.getElementById('k-snack');
-  const start=()=>{clearTimeout(lpTimer);lpTimer=setTimeout(openReconfig,5000);};
-  const cancel=()=>clearTimeout(lpTimer);
-  el.addEventListener('pointerdown',start);
-  el.addEventListener('pointerup',cancel);
-  el.addEventListener('pointerleave',cancel);
-  el.addEventListener('pointercancel',cancel);
-  el.addEventListener('contextmenu',e=>e.preventDefault());
-}
-function openReconfig(){
-  document.getElementById('rc_email').value='';
-  document.getElementById('rc_pwd').value='';
-  document.getElementById('rc_err').textContent='';
-  document.getElementById('rc_login').classList.remove('hidden');
-  document.getElementById('rc_options').classList.add('hidden');
-  document.getElementById('reconfig').classList.remove('hidden');
-}
-async function closeReconfig(){
-  document.getElementById('reconfig').classList.add('hidden');
-  // Auto-déconnexion systématique : pas de session Supabase Auth qui traîne sur un kiosque partagé.
-  await sb.auth.signOut();
-}
-async function rcLogin(){
-  const email=document.getElementById('rc_email').value.trim();
-  const pwd=document.getElementById('rc_pwd').value;
-  const err=document.getElementById('rc_err');
-  if(!email||!pwd){err.textContent='Email + mot de passe requis';return;}
-  err.textContent='Connexion…';
-  const{error:e1}=await sb.auth.signInWithPassword({email,password:pwd});
-  if(e1){err.textContent='Identifiants incorrects';return;}
-  const{data:{session}}=await sb.auth.getSession();
-  const{data:prof}=await sb.from('profiles').select('role').eq('id',session.user.id).maybeSingle();
-  if(!prof||!['admin','manager','super_admin'].includes(prof.role)){
-    err.textContent='Ce compte n’a pas le droit d’administrer une badgeuse.';
-    await sb.auth.signOut();return;
-  }
-  document.getElementById('rc_who').textContent=email;
-  document.getElementById('rc_login').classList.add('hidden');
-  document.getElementById('rc_options').classList.remove('hidden');
-}
-async function rcReconfigure(){
-  if(!confirm('Reconfigurer cet appareil ? Il faudra choisir un nouveau snack.'))return;
-  localStorage.removeItem('badgeuse_snack_id');
-  localStorage.removeItem('badgeuse_snack_nom');
-  localStorage.removeItem('badgeuse_snack_org');
-  await sb.auth.signOut();
-  location.reload();
-}
+function showUpdateBar(reg){document.getElementById('updBar').classList.remove('hidden');}
+function applyUpd(){EatimeKiosk.applyUpdate(_swReg);}
 
 // ===== CLOCK =====
 function startClock(){

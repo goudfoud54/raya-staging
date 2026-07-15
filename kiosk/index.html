@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0,user-scalable=no">
+<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<title>Eatime360 Kiosk</title>
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#c8a035">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Eatime Kiosk">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../utils.js?v=1.1"></script>
+<script src="../kiosk-shared.js?v=1"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+:root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
+[data-theme="light"]{--gold:#c8a035;--bg:#f5f5f7;--card:#ffffff;--surface:#f0f0f3;--line:rgba(0,0,0,.06);--line-2:rgba(0,0,0,.12);--text:#1a1a1f;--muted:#6b6b78;--ok:#2a8f5f;--warn:#b8841f;--bad:#b04444}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:15px;overflow:hidden}
+.hidden{display:none!important}
+button{cursor:pointer;border:none;background:none;color:var(--text);font-family:inherit}
+button:disabled{cursor:default}
+
+/* ── SETUP (login admin → choix snack — le SEUL endroit du système où ça se passe) ── */
+.setup{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:30px}
+.setup h1{color:var(--gold);font-size:24px;margin-bottom:6px}
+.setup .sub{color:var(--muted);font-size:13px;margin-bottom:18px;text-align:center;max-width:360px}
+.setup input,.setup select{padding:14px 18px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:15px;width:280px;outline:none;text-align:center}
+.setup input:focus,.setup select:focus{border-color:var(--gold)}
+.btn-prim{padding:14px 28px;border-radius:12px;background:var(--gold);color:#1a1a1a;font-weight:700;font-size:15px;border:none}
+.btn-prim:disabled{opacity:.4}
+.err{color:var(--bad);font-size:13px;min-height:18px}
+
+/* ── HUB ── */
+.k-head{display:flex;align-items:center;justify-content:space-between;padding:18px 28px;border-bottom:1px solid var(--line)}
+.k-snack{color:var(--gold);font-weight:700;font-size:20px}
+.k-snack small{color:var(--muted);font-weight:400;font-size:12px;display:block;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px}
+.k-right{display:flex;align-items:center;gap:16px}
+.k-clock{font-size:22px;font-weight:600;letter-spacing:.5px}
+.k-clock small{color:var(--muted);font-size:11px;display:block;text-align:right}
+.net-pill{font-size:11px;font-weight:700;padding:5px 11px;border-radius:20px;white-space:nowrap}
+.net-on{background:rgba(63,184,127,.15);color:var(--ok)}
+.net-off{background:rgba(196,90,90,.15);color:var(--bad)}
+.k-body{padding:28px;overflow-y:auto;height:calc(100vh - 80px);-webkit-overflow-scrolling:touch}
+.k-hint{color:var(--muted);font-size:14px;text-align:center;margin-bottom:22px}
+.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px;max-width:900px;margin:0 auto}
+.hub-tile{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:32px 20px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;transition:.12s;color:inherit;text-decoration:none}
+.hub-tile:active{transform:scale(.97);border-color:var(--gold)}
+.hub-tile .ic{font-size:46px}
+.hub-tile .nm{font-weight:700;font-size:17px;color:var(--text)}
+.hub-tile .ds{color:var(--muted);font-size:12px}
+
+/* ── RECONFIG (accès caché, appui long 5s sur le nom du snack) ── */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;gap:18px}
+.modal .who{font-size:18px;font-weight:600}
+.modal .who small{color:var(--muted);font-size:12px;display:block;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.cancel{margin-top:4px;color:var(--muted);font-size:13px;padding:10px 24px}
+#reconfig input,#reconfig select{padding:14px 18px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:15px;width:100%;outline:none}
+#reconfig input:focus,#reconfig select:focus{border-color:var(--gold)}
+.rc-check{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
+
+/* ── BANNIÈRE MISE À JOUR ── */
+.upd-bar{position:fixed;left:0;right:0;bottom:0;background:var(--gold);color:#1a1a1a;padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:16px;font-size:14px;font-weight:600;z-index:300}
+.upd-bar button{background:#1a1a1a;color:var(--gold);padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px}
+
+@media(max-width:480px){
+  .k-head{padding:14px}
+  .k-body{padding:16px}
+  .hub-grid{grid-template-columns:repeat(2,1fr);gap:12px}
+  .hub-tile{padding:22px 12px}
+}
+@media(min-width:481px) and (max-width:1024px){
+  .hub-grid{grid-template-columns:repeat(3,1fr);gap:16px}
+}
+</style>
+</head>
+<body>
+<div style="background:#b03a3a;color:#fff;text-align:center;padding:6px;font-size:12px;font-weight:700">ENVIRONNEMENT DE TEST — base séparée, aucune donnée de production</div>
+
+<!-- SETUP -->
+<div id="setup" class="setup hidden">
+  <h1>Eatime360 Kiosk</h1>
+  <div class="sub">Cet appareil va être associé à un snack — cette configuration s'appliquera à TOUS les modules (badgeuse, stock, HACCP). Connecte-toi avec un compte <b>admin</b> ou <b>manager</b>.</div>
+  <div id="cfg_login" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+    <input type="email" id="cfg_email" placeholder="Email" autocomplete="username">
+    <input type="password" id="cfg_pwd" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')cfgLogin()">
+    <div class="err" id="cfg_err"></div>
+    <button class="btn-prim" onclick="cfgLogin()">Se connecter</button>
+  </div>
+  <div id="cfg_pick" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+    <select id="cfg_snack"><option value="">— Choisir un snack —</option></select>
+    <div class="err" id="cfg_err2"></div>
+    <button class="btn-prim" onclick="saveSetup()">Activer cet appareil</button>
+  </div>
+</div>
+
+<!-- HUB -->
+<div id="hub" class="hidden">
+  <div class="k-head">
+    <div class="k-snack" id="k-snack"><small>Eatime360 Kiosk</small><span id="k-snack-name">—</span></div>
+    <div class="k-right">
+      <span class="net-pill" id="net-pill">—</span>
+      <div class="k-clock"><span id="k-clock">--:--:--</span><small id="k-date">—</small></div>
+    </div>
+  </div>
+  <div class="k-body">
+    <div class="k-hint">Choisis un module</div>
+    <div class="hub-grid" id="hub-grid"></div>
+  </div>
+</div>
+
+<!-- RECONFIG (caché — appui long 5s sur le nom du snack + login admin obligatoire) -->
+<div id="reconfig" class="modal hidden">
+  <div class="who"><small>Accès réservé</small><span>Reconfiguration de l'appareil</span></div>
+  <div id="rc_login" style="display:flex;flex-direction:column;gap:12px;width:90%;max-width:320px">
+    <input type="email" id="rc_email" placeholder="Email admin / manager" autocomplete="username">
+    <input type="password" id="rc_pwd" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')rcLogin()">
+    <div class="err" id="rc_err"></div>
+    <button class="btn-prim" onclick="rcLogin()">Se connecter</button>
+    <button class="cancel" onclick="closeReconfig()">Annuler</button>
+  </div>
+  <div id="rc_options" class="hidden" style="display:flex;flex-direction:column;gap:16px;width:90%;max-width:320px;align-items:center">
+    <div style="color:var(--muted);font-size:13px">Connecté : <b id="rc_who"></b></div>
+    <label class="rc-check"><input type="checkbox" checked disabled> 🔒 Appareil verrouillé sur ce snack (actif)</label>
+    <button class="btn-prim" onclick="rcReconfigure()">🔄 Reconfigurer l'appareil</button>
+    <button class="cancel" onclick="closeReconfig()">Fermer</button>
+  </div>
+</div>
+
+<!-- BANNIÈRE MISE À JOUR -->
+<div id="updBar" class="upd-bar hidden">
+  <span>🆕 Nouvelle version disponible</span>
+  <button onclick="applyUpd()">Recharger</button>
+</div>
+
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+const VERSION='v0.1 · hub kiosque (PWA installable, config snack unifiée)';
+
+const MODULES=[
+  {ic:'⏱',nm:'Badgeuse',ds:'Arrivée · pause · sortie',href:'../badgeuse/'},
+  {ic:'📦',nm:'Stock',ds:'Inventaire quotidien',href:'../stock-kiosk/'},
+  {ic:'🧽',nm:'HACCP',ds:'Températures · huile · nettoyage · réception',href:'../haccp-kiosk/'},
+];
+
+let SNACK={id:null,nom:null,organization_id:null};
+let _swReg=null;
+
+// ===== INIT =====
+async function init(){
+  const cfg=EatimeKiosk.getSnackConfig();
+  SNACK={id:cfg.id,nom:cfg.nom,organization_id:cfg.organization_id};
+  if(!SNACK.id){showSetup();return;}
+  if(!SNACK.organization_id){
+    const{data:r}=await sb.from('restaurants').select('organization_id').eq('id',SNACK.id).maybeSingle();
+    if(r&&r.organization_id){SNACK.organization_id=r.organization_id;EatimeKiosk.setSnackConfig({id:SNACK.id,nom:SNACK.nom,organization_id:r.organization_id});}
+  }
+  document.getElementById('k-snack-name').textContent=SNACK.nom||'?';
+  document.getElementById('hub').classList.remove('hidden');
+  renderGrid();
+  startClock();
+  EatimeKiosk.setupLongPress(document.getElementById('k-snack'), openReconfig);
+  EatimeKiosk.initWakeLock();
+  EatimeKiosk.watchOnline(renderNetPill);
+  _swReg=await EatimeKiosk.registerSW(showUpdateBar);
+}
+
+function renderGrid(){
+  document.getElementById('hub-grid').innerHTML=MODULES.map(m=>`
+    <a class="hub-tile" href="${m.href}">
+      <span class="ic">${m.ic}</span>
+      <span class="nm">${m.nm}</span>
+      <span class="ds">${m.ds}</span>
+    </a>`).join('');
+}
+
+function renderNetPill(online){
+  const el=document.getElementById('net-pill');
+  el.textContent=online?'🟢 En ligne':'🔴 Hors-ligne';
+  el.className='net-pill '+(online?'net-on':'net-off');
+}
+
+function showUpdateBar(reg){ document.getElementById('updBar').classList.remove('hidden'); }
+function applyUpd(){ EatimeKiosk.applyUpdate(_swReg); }
+
+// ===== SETUP (unique dans tout le système) =====
+function showSetup(){
+  document.getElementById('setup').classList.remove('hidden');
+  document.getElementById('cfg_login').classList.remove('hidden');
+  document.getElementById('cfg_pick').classList.add('hidden');
+}
+async function cfgLogin(){
+  const email=document.getElementById('cfg_email').value.trim();
+  const pwd=document.getElementById('cfg_pwd').value;
+  const err=document.getElementById('cfg_err');
+  if(!email||!pwd){err.textContent='Email + mot de passe requis';return;}
+  err.textContent='Connexion…';
+  const{error:e1}=await sb.auth.signInWithPassword({email,password:pwd});
+  if(e1){err.textContent='Identifiants incorrects';return;}
+  const{data:{session}}=await sb.auth.getSession();
+  const{data:prof}=await sb.from('profiles').select('role,organization_id').eq('id',session.user.id).maybeSingle();
+  if(!prof||!['admin','manager','super_admin'].includes(prof.role)){
+    err.textContent='Ce compte n’a pas le droit de configurer un kiosque.';
+    await sb.auth.signOut();return;
+  }
+  const{data,error:e2}=await sb.from('restaurants').select('id,nom,organization_id').eq('actif',true).order('nom');
+  if(e2){err.textContent='Erreur de chargement des snacks';return;}
+  document.getElementById('cfg_snack').innerHTML='<option value="">— Choisir un snack —</option>'+(data||[]).map(r=>`<option value="${r.id}" data-nom="${r.nom.replace(/"/g,'&quot;')}" data-org="${r.organization_id}">${r.nom}</option>`).join('');
+  err.textContent='';
+  document.getElementById('cfg_login').classList.add('hidden');
+  document.getElementById('cfg_pick').classList.remove('hidden');
+}
+async function saveSetup(){
+  const sel=document.getElementById('cfg_snack');
+  const opt=sel.options[sel.selectedIndex];
+  const id=sel.value;
+  if(!id){document.getElementById('cfg_err2').textContent='Choisis un snack';return;}
+  EatimeKiosk.setSnackConfig({id,nom:opt.dataset.nom||'',organization_id:opt.dataset.org||''});
+  await sb.auth.signOut();
+  location.reload();
+}
+
+// ===== RECONFIG (seul endroit du système — appui long 5s sur le nom du snack) =====
+function openReconfig(){
+  document.getElementById('rc_email').value='';
+  document.getElementById('rc_pwd').value='';
+  document.getElementById('rc_err').textContent='';
+  document.getElementById('rc_login').classList.remove('hidden');
+  document.getElementById('rc_options').classList.add('hidden');
+  document.getElementById('reconfig').classList.remove('hidden');
+}
+async function closeReconfig(){
+  document.getElementById('reconfig').classList.add('hidden');
+  await sb.auth.signOut();
+}
+async function rcLogin(){
+  const email=document.getElementById('rc_email').value.trim();
+  const pwd=document.getElementById('rc_pwd').value;
+  const err=document.getElementById('rc_err');
+  if(!email||!pwd){err.textContent='Email + mot de passe requis';return;}
+  err.textContent='Connexion…';
+  const{error:e1}=await sb.auth.signInWithPassword({email,password:pwd});
+  if(e1){err.textContent='Identifiants incorrects';return;}
+  const{data:{session}}=await sb.auth.getSession();
+  const{data:prof}=await sb.from('profiles').select('role').eq('id',session.user.id).maybeSingle();
+  if(!prof||!['admin','manager','super_admin'].includes(prof.role)){
+    err.textContent='Ce compte n’a pas le droit d’administrer un kiosque.';
+    await sb.auth.signOut();return;
+  }
+  document.getElementById('rc_who').textContent=email;
+  document.getElementById('rc_login').classList.add('hidden');
+  document.getElementById('rc_options').classList.remove('hidden');
+}
+async function rcReconfigure(){
+  if(!confirm('Reconfigurer cet appareil ? Il faudra choisir un nouveau snack — ça affectera aussi la badgeuse, le stock et le HACCP.'))return;
+  EatimeKiosk.clearSnackConfig();
+  await sb.auth.signOut();
+  location.reload();
+}
+
+// ===== CLOCK =====
+function startClock(){
+  const upd=()=>{
+    const d=new Date();
+    const pad=n=>String(n).padStart(2,'0');
+    document.getElementById('k-clock').textContent=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    document.getElementById('k-date').textContent=d.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
+  };
+  upd();setInterval(upd,1000);
+}
+
+init();
+</script>
+</body>
+</html>

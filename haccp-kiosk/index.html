@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>HACCP — Kiosque</title>
+<meta name="theme-color" content="#c8a035">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../utils.js?v=1.1"></script>
+<script src="../kiosk-shared.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:#0b0b15;color:#e8e8ec;min-height:100vh;overflow-x:hidden}
@@ -14,7 +16,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;ba
 h1{color:#c8a035;font-size:32px;font-weight:800;text-align:center;margin-bottom:8px}
 h1 small{display:block;font-size:13px;color:#7b7b8a;font-weight:400;margin-top:6px}
 .hint{color:#7b7b8a;text-align:center;font-size:14px;margin-bottom:22px}
-.back{position:absolute;top:14px;left:14px;background:none;border:1px solid #2a2a3a;color:#e8e8ec;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer}
+.back{position:absolute;top:58px;left:14px;background:none;border:1px solid #2a2a3a;color:#e8e8ec;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer}
+.kiosk-topbar{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;z-index:50}
+.hub-home{width:36px;height:36px;border-radius:9px;background:#15151f;border:1px solid rgba(255,255,255,.08);color:#e8e8ec;display:flex;align-items:center;justify-content:center;text-decoration:none;font-size:16px}
+.net-pill{font-size:11px;font-weight:700;padding:5px 11px;border-radius:20px;white-space:nowrap}
+.net-on{background:rgba(63,184,127,.15);color:#3fb87f}
+.net-off{background:rgba(196,90,90,.15);color:#c45a5a}
+.upd-bar{position:fixed;left:0;right:0;bottom:0;background:#c8a035;color:#1a1a1a;padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:16px;font-size:14px;font-weight:600;z-index:300}
+.upd-bar button{background:#1a1a1a;color:#c8a035;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;border:none;cursor:pointer}
 .tile{background:#15151f;border:1px solid rgba(255,255,255,.08);padding:24px;border-radius:14px;text-align:center;cursor:pointer;transition:.15s;font-size:16px;font-weight:600}
 .tile:hover,.tile:active{border-color:#c8a035;transform:translateY(-2px)}
 .tile .ic{font-size:42px;margin-bottom:10px;display:block}
@@ -37,24 +46,36 @@ h1 small{display:block;font-size:13px;color:#7b7b8a;font-weight:400;margin-top:6
 </style>
 </head>
 <body>
+<div class="kiosk-topbar">
+  <a href="../kiosk/" class="hub-home" title="Retour au menu">🏠</a>
+  <span class="net-pill" id="net-pill">—</span>
+</div>
 <div id="scr"></div>
+<div id="updBar" class="upd-bar hidden">
+  <span>🆕 Nouvelle version disponible</span>
+  <button onclick="applyUpd()">Recharger</button>
+</div>
 <script>
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 
 let SALARIE=null,PIN='',SNACK_ID=null,SNACK_ORG=null,SNACKS=[],EQS=[],ZONES=[];
+let _swReg=null;
 
 const TYPES_EQ={frigo:'Frigo',congel:'Congel',vitrine:'Vitrine',friteuse:'Friteuse',sonde:'Sonde'};
 const ACTIONS_HUILE={controle:'Contrôle polarité',filtration:'Filtration',vidange:'Vidange',ajout:'Ajout'};
 const PERIODS={quotidien:'1× / jour','2x_jour':'2× / jour',hebdo:'Hebdo',mensuel:'Mensuel'};
 
+// Config partagée avec badgeuse/stock/hub (kiosk-shared.js) : plus de picker local ici — un
+// appareil non configuré est renvoyé vers le hub, seul endroit qui gère setup + reconfig.
 async function init(){
-  SNACK_ID=localStorage.getItem('haccp_kiosk_snack');
-  if(!SNACK_ID){await pickSnack();return;}
+  const cfg=EatimeKiosk.getSnackConfig('haccp');
+  SNACK_ID=cfg.id;
+  if(!SNACK_ID){location.href='../kiosk/';return;}
   const{data:snacks}=await sb.from('restaurants').select('id,nom,organization_id');SNACKS=snacks||[];
   const curSnack=SNACKS.find(s=>s.id===SNACK_ID);
-  if(!curSnack){localStorage.removeItem('haccp_kiosk_snack');await pickSnack();return;}
+  if(!curSnack){EatimeKiosk.clearSnackConfig();location.href='../kiosk/';return;}
   SNACK_ORG=curSnack.organization_id;  // org du snack → isole le lookup PIN (S2)
   const[e,z]=await Promise.all([
     sb.from('haccp_equipements').select('*').eq('actif',true),
@@ -63,26 +84,23 @@ async function init(){
   EQS=(e.data||[]).filter(x=>!x.restaurant_id||x.restaurant_id===SNACK_ID);
   ZONES=(z.data||[]).filter(x=>!x.restaurant_id||x.restaurant_id===SNACK_ID);
   pinScreen();
+  EatimeKiosk.initWakeLock();
+  EatimeKiosk.watchOnline(renderNetPill);
+  EatimeKiosk.initIdleReturn(10, ()=>!!SALARIE);
+  _swReg=await EatimeKiosk.registerSW(showUpdateBar);
 }
-
-async function pickSnack(){
-  const{data}=await sb.from('restaurants').select('id,nom').order('nom');
-  SNACKS=data||[];
-  document.getElementById('scr').innerHTML=`<div class="scr">
-    <h1>HACCP<small>Configuration kiosque</small></h1>
-    <div class="hint">Choisis le snack pour cette tablette :</div>
-    <div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">
-      ${SNACKS.map(s=>`<button class="tile" onclick="setSnack('${s.id}')">${s.nom}</button>`).join('')||'<div style="color:#7b7b8a;text-align:center">Aucun snack configuré</div>'}
-    </div>
-  </div>`;
+function renderNetPill(online){
+  const el=document.getElementById('net-pill');
+  el.textContent=online?'🟢 En ligne':'🔴 Hors-ligne';
+  el.className='net-pill '+(online?'net-on':'net-off');
 }
-function setSnack(id){localStorage.setItem('haccp_kiosk_snack',id);location.reload();}
+function showUpdateBar(reg){document.getElementById('updBar').classList.remove('hidden');}
+function applyUpd(){EatimeKiosk.applyUpdate(_swReg);}
 
 function pinScreen(){
   PIN='';SALARIE=null;
   const snack=SNACKS.find(s=>s.id===SNACK_ID);
   document.getElementById('scr').innerHTML=`<div class="scr">
-    <button class="back" onclick="if(confirm('Changer de snack ?')){localStorage.removeItem('haccp_kiosk_snack');location.reload();}">⚙</button>
     <h1>HACCP<small>${snack?.nom||''}</small></h1>
     <div class="hint">Saisis ton code PIN pour commencer</div>
     <div class="pin-display" id="pinDisp"></div>
