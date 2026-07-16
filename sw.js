@@ -13,7 +13,7 @@
 //     passe en "waiting" et n'active jamais tant que la page ne l'a pas explicitement demandé
 //     (message SKIP_WAITING), donc jamais de rechargement forcé pendant une saisie en cours.
 
-const CACHE_VERSION = 'eatime-kiosk-v2';
+const CACHE_VERSION = 'eatime-kiosk-v3';
 
 const SCOPED_DIRS = ['kiosk/', 'badgeuse/', 'stock-kiosk/', 'haccp-kiosk/'];
 
@@ -63,7 +63,12 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data === 'SKIP_WAITING') { self.skipWaiting(); return; }
+  // GET_VERSION : round-trip utilisé par kiosk-shared.js pour confirmer qu'un worker "installed"
+  // porte réellement un CACHE_VERSION différent avant d'afficher la bannière de mise à jour —
+  // le cycle d'install peut se rejouer pour un script strictement identique (ex. absence d'ETag
+  // fiable côté serveur), donc l'état "waiting" seul ne suffit pas à garantir une VRAIE nouveauté.
+  if (event.data === 'GET_VERSION') { event.source && event.source.postMessage({ type: 'EATIME_SW_VERSION', version: CACHE_VERSION }); return; }
 });
 
 function inKioskScope(url) {

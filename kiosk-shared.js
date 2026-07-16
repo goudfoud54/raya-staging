@@ -71,24 +71,79 @@
     const m = location.pathname.match(/^(.*?\/)(?:kiosk|badgeuse|stock-kiosk|haccp-kiosk)\/?/);
     return m ? m[1] : '/';
   }
-  async function registerSW(onUpdateReady) {
+  // Demande sa CACHE_VERSION à un worker précis (round-trip postMessage) — timeout court en filet
+  // de sécurité si jamais le worker ne répond pas (ne doit jamais bloquer indéfiniment l'UI).
+  function askVersion(worker) {
+    return new Promise((resolve) => {
+      if (!worker) { resolve(null); return; }
+      let done = false;
+      const onMsg = (e) => {
+        if (e.data && e.data.type === 'EATIME_SW_VERSION') {
+          done = true; navigator.serviceWorker.removeEventListener('message', onMsg); resolve(e.data.version);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', onMsg);
+      try { worker.postMessage('GET_VERSION'); } catch (e) {}
+      setTimeout(() => { if (!done) { navigator.serviceWorker.removeEventListener('message', onMsg); resolve(null); } }, 2000);
+    });
+  }
+
+  // Câble la bannière #updBar présente dans le HTML de la page (markup identique sur les 4 pages
+  // kiosque) : bouton [data-upd-reload] et [data-upd-close]. Ne fait rien si l'élément est absent.
+  function wireUpdateBanner(reg) {
+    const bar = document.getElementById('updBar');
+    if (!bar) return;
+    const reloadBtn = bar.querySelector('[data-upd-reload]');
+    const closeBtn = bar.querySelector('[data-upd-close]');
+    const hide = () => { bar.classList.add('hidden'); document.body.classList.remove('upd-open'); };
+    if (reloadBtn) reloadBtn.onclick = () => {
+      if (reg && reg.waiting) {
+        reg.waiting.postMessage('SKIP_WAITING');
+        // Filet de sécurité : si controllerchange ne fire pas sous 3s (édge case de cycle SW
+        // avorté), on recharge quand même — "Recharger" ne doit JAMAIS rester sans effet visible.
+        setTimeout(() => location.reload(), 3000);
+      } else {
+        location.reload();
+      }
+    };
+    if (closeBtn) closeBtn.onclick = hide;
+    bar.classList.remove('hidden');
+    document.body.classList.add('upd-open'); // réserve l'espace en bas — ne masque jamais les boutons d'action
+  }
+
+  async function registerSW() {
     if (!('serviceWorker' in navigator)) return null;
     const root = siteRoot();
     try {
       const reg = await navigator.serviceWorker.register(root + 'sw.js', { scope: root });
-      // Auto-update : une nouvelle version est déjà en "waiting" (visite précédente) → prévenir tout de suite.
-      if (reg.waiting) onUpdateReady && onUpdateReady(reg);
+
+      // Compare la VERSION RÉELLE (postMessage) du worker "waiting" contre celle actuellement
+      // active avant d'afficher quoi que ce soit. `reg.waiting` seul ne suffit pas : un serveur
+      // sans ETag/Last-Modified fiable peut faire rejouer tout le cycle d'install pour un script
+      // strictement identique (observé en test) — sans ce contrôle, la bannière s'affiche pour
+      // "rien", et "Recharger" n'a alors plus de worker waiting valide au moment du clic (elle
+      // semble ne rien faire). C'est ce double symptôme qu'on élimine ici, à la source.
+      async function checkRealUpdate() {
+        // Snapshots pris de façon SYNCHRONE avant tout await : sur un tout premier install, le
+        // worker "waiting" est celui-là même qui devient "active" quelques instants plus tard
+        // (rien ne le bloque, il n'y a pas d'ancien worker à faire libérer). Si on relit reg.active
+        // APRÈS les awaits, on peut le retrouver déjà rempli par ce même worker en cours
+        // d'activation, et le comparer par erreur à sa propre version (toujours "différente" de
+        // null) → fausse détection de mise à jour. D'où : figer les deux références AVANT d'attendre.
+        const waitingWorker = reg.waiting;
+        const activeWorkerAtStart = reg.active;
+        if (!waitingWorker || !activeWorkerAtStart) return; // pas de worker actif préexistant = install initial, pas une mise à jour
+        const [waitingV, activeV] = await Promise.all([askVersion(waitingWorker), askVersion(activeWorkerAtStart)]);
+        if (!waitingV || !activeV || waitingV === activeV) return;
+        wireUpdateBanner(reg);
+      }
+
+      if (reg.waiting) checkRealUpdate();
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
         if (!sw) return;
         sw.addEventListener('statechange', () => {
-          // reg.waiting (pas juste navigator.serviceWorker.controller) : un serveur qui ne renvoie
-          // pas d'ETag/Last-Modified fiables peut faire rejouer tout le cycle d'install pour un
-          // script strictement identique — le navigateur l'annule alors sans jamais le mettre en
-          // "waiting". Ne prévenir que si une vraie nouvelle version attend d'être activée.
-          if (sw.state === 'installed' && reg.waiting) {
-            onUpdateReady && onUpdateReady(reg); // nouvelle version prête, jamais forcée
-          }
+          if (sw.state === 'installed') checkRealUpdate();
         });
       });
       let reloaded = false;
@@ -98,9 +153,6 @@
       });
       return reg;
     } catch (e) { return null; }
-  }
-  function applyUpdate(reg) {
-    if (reg && reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
   }
 
   // ── Wake Lock : réacquis automatiquement au retour au premier plan (le verrou est libéré par
@@ -160,7 +212,7 @@
 
   g.EatimeKiosk = {
     getSnackConfig, setSnackConfig, clearSnackConfig,
-    registerSW, applyUpdate,
+    registerSW,
     initWakeLock,
     watchOnline,
     setupLongPress,

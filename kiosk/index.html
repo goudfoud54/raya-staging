@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0,user-scalable=no">
-<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<script>(function(){var t=localStorage.getItem("eatime_theme");var th=t==="light"?"light":"dark";document.documentElement.setAttribute("data-theme",th);document.documentElement.style.colorScheme=th;})();</script>
 <title>Eatime360 Kiosk</title>
 <link rel="manifest" href="../manifest.json">
+<meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#c8a035">
 <link rel="icon" href="../icons/icon-192.png">
 <link rel="apple-touch-icon" href="../icons/icon-192.png">
@@ -64,8 +65,10 @@ button:disabled{cursor:default}
 .rc-check{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
 
 /* ── BANNIÈRE MISE À JOUR ── */
-.upd-bar{position:fixed;left:0;right:0;bottom:0;background:var(--gold);color:#1a1a1a;padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:16px;font-size:14px;font-weight:600;z-index:300}
-.upd-bar button{background:#1a1a1a;color:var(--gold);padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px}
+body.upd-open{padding-bottom:64px}
+.upd-bar{position:fixed;left:0;right:0;bottom:0;background:var(--gold);color:#1a1a1a;padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:14px;font-weight:600;z-index:300}
+.upd-bar button{background:#1a1a1a;color:var(--gold);padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;border:none}
+.upd-bar .upd-close{background:transparent;color:#1a1a1a;padding:4px 8px;font-size:16px;font-weight:700}
 
 @media(max-width:480px){
   .k-head{padding:14px}
@@ -134,14 +137,15 @@ button:disabled{cursor:default}
 <!-- BANNIÈRE MISE À JOUR -->
 <div id="updBar" class="upd-bar hidden">
   <span>🆕 Nouvelle version disponible</span>
-  <button onclick="applyUpd()">Recharger</button>
+  <button data-upd-reload>Recharger</button>
+  <button class="upd-close" data-upd-close aria-label="Fermer">✕</button>
 </div>
 
 <script>
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.1 · hub kiosque (PWA installable, config snack unifiée)';
+const VERSION='v0.2 · thème dark forcé (color-scheme) + bannière MAJ fiable (version réelle, ne bloque plus les boutons)';
 
 const MODULES=[
   {ic:'⏱',nm:'Badgeuse',ds:'Arrivée · pause · sortie',href:'../badgeuse/'},
@@ -150,7 +154,6 @@ const MODULES=[
 ];
 
 let SNACK={id:null,nom:null,organization_id:null};
-let _swReg=null;
 
 // ===== INIT =====
 async function init(){
@@ -168,7 +171,7 @@ async function init(){
   EatimeKiosk.setupLongPress(document.getElementById('k-snack'), openReconfig);
   EatimeKiosk.initWakeLock();
   EatimeKiosk.watchOnline(renderNetPill);
-  _swReg=await EatimeKiosk.registerSW(showUpdateBar);
+  await EatimeKiosk.registerSW();
 }
 
 function renderGrid(){
@@ -185,9 +188,6 @@ function renderNetPill(online){
   el.textContent=online?'🟢 En ligne':'🔴 Hors-ligne';
   el.className='net-pill '+(online?'net-on':'net-off');
 }
-
-function showUpdateBar(reg){ document.getElementById('updBar').classList.remove('hidden'); }
-function applyUpd(){ EatimeKiosk.applyUpdate(_swReg); }
 
 // ===== SETUP (unique dans tout le système) =====
 function showSetup(){
