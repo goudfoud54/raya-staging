@@ -145,7 +145,9 @@ async function loadCommonData(){
     sb.from('restaurants').select('id,nom').eq('organization_id',ORG.id).order('nom'),
     sb.from('stock_produits').select('*').eq('organization_id',ORG.id).eq('actif',true).order('categorie').order('nom'),
     sb.from('fournisseurs').select('*').eq('organization_id',ORG.id).eq('actif',true).order('nom'),
-    sb.from('stock_max').select('*').eq('organization_id',ORG.id).eq('actif',true),
+    // On charge TOUS les stock_max (actifs ET désactivés) : l'onglet "Stock max" doit pouvoir voir
+    // et réactiver une ligne désactivée. Les flows opérationnels filtrent `m.actif!==false` eux-mêmes.
+    sb.from('stock_max').select('*').eq('organization_id',ORG.id),
   ]);
   S.snacks=r.data||[];S.produits=p.data||[];S.fournisseurs=f.data||[];S.stockMax=m.data||[];
   const sel=document.getElementById('snackSelect');
@@ -175,7 +177,7 @@ async function renderDashboard(el){
   const SL=saisies||[];
   const last={};SL.forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
   const aujourdhui=SL.filter(s=>s.date_saisie===today);
-  const stockMaxSnack=S.stockMax.filter(m=>m.restaurant_id===SNACK.id);
+  const stockMaxSnack=S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif!==false); // produits désactivés exclus du suivi
   const produitsManquants=stockMaxSnack.filter(m=>!last[m.produit_id]);
   const ruptures=Object.values(last).filter(s=>(Number(s.quantite)||0)===0);
   let valorisation=0;Object.values(last).forEach(s=>{const p=S.produits.find(x=>x.id===s.produit_id);if(p)valorisation+=Number(s.quantite||0)*Number(p.cout_unitaire||0);});
@@ -207,11 +209,14 @@ async function renderSaisie(el){
   const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today);
   const byProd={};(saisies||[]).forEach(s=>{byProd[s.produit_id]=s;});S.saisiesAujourdhui=byProd;
   const max={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>max[m.produit_id]=m);
-  const byCat={};S.produits.forEach(p=>{const c=p.categorie||'Divers';(byCat[c]=byCat[c]||[]).push(p);});
+  // Produits désactivés sur CE snack (seuil défini mais actif=false) : exclus de la saisie du jour.
+  const disabled=new Set(S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif===false).map(m=>m.produit_id));
+  const prodsSuivis=S.produits.filter(p=>!disabled.has(p.id));
+  const byCat={};prodsSuivis.forEach(p=>{const c=p.categorie||'Divers';(byCat[c]=byCat[c]||[]).push(p);});
   let html=`<div class="toolbar">
     <input id="saisie_search" placeholder="Filtrer produit…" oninput="filterSaisie()">
     <div style="flex:1"></div>
-    <span style="color:var(--muted);font-size:12.5px">${Object.keys(byProd).length} / ${S.produits.length} saisis aujourd'hui</span>
+    <span style="color:var(--muted);font-size:12.5px">${Object.keys(byProd).length} / ${prodsSuivis.length} saisis aujourd'hui</span>
   </div>`;
   Object.keys(byCat).sort().forEach(cat=>{
     html+=`<div class="section"><h3>${cat} (${byCat[cat].length})</h3>
@@ -267,7 +272,7 @@ async function renderBesoin(el){
   // Construire la liste des besoins (à plat)
   const besoin=[];
   const staleAtMax=[]; // produits "au max" (need≤0) MAIS sur une saisie ancienne → à recompter (peut être vide en vrai)
-  S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>{
+  S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif!==false).forEach(m=>{ // produits désactivés exclus de la commande
     const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
     const jamais=!last[m.produit_id]; // aucune saisie EN BASE (≠ compté à 0)
     const cur=jamais?0:Number(last[m.produit_id].quantite);
@@ -379,7 +384,7 @@ async function exportBesoinPDF(){
   const doc=new jsPDF({unit:'mm',format:'a4'});
   doc.setFontSize(18);doc.text(`Feuille de besoin — ${SNACK.nom}`,14,18);
   doc.setFontSize(10);doc.setTextColor(120);doc.text(`Généré le ${new Date().toLocaleString('fr-FR')} · ${ORG.nom||''}`,14,25);doc.setTextColor(0);
-  const byFourn={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>{
+  const byFourn={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif!==false).forEach(m=>{ // produits désactivés exclus du PDF
     const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
     const jamais=!last[m.produit_id];
     const cur=jamais?0:Number(last[m.produit_id].quantite);
@@ -485,18 +490,36 @@ async function delFourn(id){if(!confirm('Désactiver ce fournisseur ?'))return;a
 
 function renderMax(el){
   const max={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>max[m.produit_id]=m);
+  const nbActifs=Object.values(max).filter(m=>m.actif!==false).length;
+  const nbOff=Object.values(max).filter(m=>m.actif===false).length;
   let html=`<div class="toolbar">
     <input id="max_search" placeholder="Rechercher…" oninput="filterMax()">
     <div style="flex:1"></div>
-    <span style="color:var(--muted);font-size:12.5px">${Object.keys(max).length} / ${S.produits.length} produits avec un seuil</span>
+    <span style="color:var(--muted);font-size:12.5px">${nbActifs} produit${nbActifs>1?'s':''} suivi${nbActifs>1?'s':''}${nbOff?` · <span style="color:var(--warn)">${nbOff} désactivé${nbOff>1?'s':''}</span>`:''}</span>
   </div>
-  <table class="tbl"><thead><tr><th>Produit</th><th>Catégorie</th><th>Cond.</th><th>Stock max ${SNACK.nom}</th></tr></thead><tbody>`;
+  <div style="color:var(--muted);font-size:12px;margin-bottom:12px">« Désactiver » exclut le produit du suivi (dashboard, saisie, feuille de besoin) <b>sur ${SNACK.nom} uniquement</b>, sans perdre son seuil ni l'affecter sur les autres snacks.</div>
+  <table class="tbl"><thead><tr><th>Produit</th><th>Catégorie</th><th>Cond.</th><th>Stock max ${SNACK.nom}</th><th style="text-align:center">Désactiver</th></tr></thead><tbody>`;
   S.produits.forEach(p=>{
     const m=max[p.id];
-    html+=`<tr data-pname="${p.nom.toLowerCase()}"><td><b>${p.nom}</b></td><td style="color:var(--muted);font-size:12px">${p.categorie||''}</td><td style="color:var(--muted);font-size:12px">${p.conditionnement||''}</td><td><input type="number" step="0.5" value="${m?m.quantite_max:''}" placeholder="0" onblur="saveMax('${p.id}',this.value)" style="width:100px;padding:6px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px"></td></tr>`;
+    const off=!!(m&&m.actif===false);
+    const qInput=`<input type="number" step="0.5" value="${m?m.quantite_max:''}" placeholder="0" onblur="saveMax('${p.id}',this.value)" style="width:100px;padding:6px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;${off?'opacity:.4':''}">`;
+    // Checkbox désactivée tant qu'aucun seuil n'existe (rien à désactiver) ; cochée si actif=false.
+    const chk=`<input type="checkbox" ${off?'checked':''} ${m?'':'disabled'} onchange="toggleMaxActif('${p.id}',this.checked)" title="${m?'Exclure ce produit du suivi sur ce snack':'Définis d’abord un seuil'}" style="width:18px;height:18px;cursor:${m?'pointer':'not-allowed'}">`;
+    html+=`<tr data-pname="${p.nom.toLowerCase()}" style="${off?'opacity:.6':''}"><td><b>${p.nom}</b>${off?' <span style="color:var(--warn);font-size:10.5px;font-weight:700">DÉSACTIVÉ</span>':''}</td><td style="color:var(--muted);font-size:12px">${p.categorie||''}</td><td style="color:var(--muted);font-size:12px">${p.conditionnement||''}</td><td>${qInput}</td><td style="text-align:center">${chk}</td></tr>`;
   });
   html+='</tbody></table>';
   el.innerHTML=html;
+}
+async function toggleMaxActif(pid,checked){
+  // checked = case "Désactiver" cochée → le produit doit passer actif=false sur CE snack.
+  const existing=S.stockMax.find(m=>m.restaurant_id===SNACK.id && m.produit_id===pid);
+  if(!existing){toast('Définis d’abord un seuil');renderMax(document.getElementById('content'));return;}
+  const newActif=!checked;
+  const{error}=await sb.from('stock_max').update({actif:newActif}).eq('id',existing.id);
+  if(error){toast('⚠ Non enregistré : '+error.message);renderMax(document.getElementById('content'));return;}
+  existing.actif=newActif;
+  toast(checked?`${(S.produits.find(p=>p.id===pid)||{}).nom||'Produit'} désactivé sur ${SNACK.nom}`:'Produit réactivé');
+  renderMax(document.getElementById('content'));
 }
 function filterMax(){const q=val('max_search').toLowerCase();document.querySelectorAll('#content [data-pname]').forEach(tr=>{tr.style.display=tr.dataset.pname.includes(q)?'':'none';});}
 async function saveMax(pid,vTxt){
