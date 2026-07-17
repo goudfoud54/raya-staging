@@ -34,11 +34,23 @@
     }
     return k;
   }
+  // Timeout réseau côté client : sur une tablette associée au WiFi mais sans route réelle (portail
+  // captif, passerelle morte), un fetch peut PENDRE longtemps sans jamais rejeter — le kiosque
+  // gèlerait alors sans aucun feedback. AbortController borne l'attente et fait retomber l'erreur
+  // dans le même catch que l'offline franc ("Réseau indisponible"), déjà géré par tous les appelants.
+  const NET_TIMEOUT_MS = 12000;
+  async function fetchWithTimeout(url, opts) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), NET_TIMEOUT_MS);
+    try { return await fetch(url, Object.assign({}, opts, { signal: ctrl.signal })); }
+    finally { clearTimeout(t); }
+  }
+
   // Appelle l'edge function verify-pin. Renvoie {status, ok, salarie, error, retry}.
   async function verifyPin(supaUrl, anonKey, organization_id, restaurant_id, pin) {
     let r, j = {};
     try {
-      r = await fetch(supaUrl + '/functions/v1/verify-pin', {
+      r = await fetchWithTimeout(supaUrl + '/functions/v1/verify-pin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + anonKey, apikey: anonKey },
         body: JSON.stringify({ organization_id, restaurant_id, kiosk_id: kioskId(), pin }),
@@ -53,7 +65,7 @@
   async function createPointage(supaUrl, anonKey, organization_id, restaurant_id, salarie_id, type, pin) {
     let r, j = {};
     try {
-      r = await fetch(supaUrl + '/functions/v1/create-pointage', {
+      r = await fetchWithTimeout(supaUrl + '/functions/v1/create-pointage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + anonKey, apikey: anonKey },
         body: JSON.stringify({ organization_id, restaurant_id, salarie_id, type, pin, kiosk_id: kioskId() }),

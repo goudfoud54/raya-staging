@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#c8a035">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.1"></script>
+<script src="../utils.js?v=1.2"></script>
 <script src="../kiosk-shared.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
@@ -145,7 +145,7 @@ body.upd-open{padding-bottom:64px}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.7 · thème dark forcé (color-scheme) + bannière MAJ fiable (version réelle, ne bloque plus les boutons)';
+const VERSION='v0.8 · timeout réseau (plus de gel sur WiFi bancal) + message réseau distinct de "Code inconnu" + accord "enregistrée"';
 
 let SNACK={id:null,nom:null,organization_id:null};
 let curSal=null, curLast=null, pinBuf='';
@@ -235,6 +235,12 @@ async function checkPin(){
     flashErr('Trop de tentatives. Réessaie dans '+Math.ceil((res.retry||60)/60)+' min.');
     pinBuf='';renderDots();return;
   }
+  // status:0 = réseau indisponible/trop lent (offline franc OU tablette sans route). NE PAS afficher
+  // "Code inconnu" ici : le salarié croirait son PIN faux et retenterait jusqu'au rate-limit.
+  if(res.status===0){
+    flashErr('Réseau indisponible — réessaie');
+    pinBuf='';renderDots();return;
+  }
   if(!res.ok || !res.salarie){
     flashErr('Code inconnu'); // pas de distinction "PIN existe mais mauvais snack" vs "PIN inexistant" : aucune fuite d'info
     pinBuf='';renderDots();return;
@@ -281,7 +287,7 @@ async function doPoint(type,lbl){
     alert('⚠️ '+msg);curSal=null;curLast=null;return;
   }
   // Succès
-  document.getElementById('suc-msg').textContent=lbl+' enregistré';
+  document.getElementById('suc-msg').textContent=lbl+' enregistrée'; // Arrivée/Pause/Reprise/Sortie : toutes féminines
   document.getElementById('suc-who').textContent=who+' · '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
   document.getElementById('suc').classList.remove('hidden');
   setTimeout(()=>{document.getElementById('suc').classList.add('hidden');curSal=null;curLast=null;},2200);
