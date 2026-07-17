@@ -231,34 +231,71 @@ function filterSaisie(){const q=val('saisie_search').toLowerCase();document.quer
 async function saveSaisie(pid,vTxt){
   const v=parseFloat((vTxt||'').replace(',','.'));
   const d=new Date().toISOString().slice(0,10);
-  if(isNaN(v)){if(S.saisiesAujourdhui[pid]){await sb.from('stock_saisies').delete().eq('id',S.saisiesAujourdhui[pid].id);delete S.saisiesAujourdhui[pid];}return;}
+  // Chaque écriture est contrôlée : avant, UPDATE/DELETE avalaient l'erreur et le toast "✓ Saisi"
+  // s'affichait quand même → l'admin croyait une saisie enregistrée alors que la base n'avait rien reçu.
+  if(isNaN(v)){
+    if(S.saisiesAujourdhui[pid]){
+      const{error}=await sb.from('stock_saisies').delete().eq('id',S.saisiesAujourdhui[pid].id);
+      if(error){toast('⚠ Non enregistré : '+error.message);return;}
+      delete S.saisiesAujourdhui[pid];
+    }
+    return;
+  }
+  if(v<0){toast('⚠ Quantité négative impossible');return;}
   const existing=S.saisiesAujourdhui[pid];
-  if(existing){await sb.from('stock_saisies').update({quantite:v}).eq('id',existing.id);existing.quantite=v;}
-  else {const{data,error}=await sb.from('stock_saisies').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,date_saisie:d}).select().single();if(error){toast(error.message);return;}S.saisiesAujourdhui[pid]=data;}
+  if(existing){
+    const{error}=await sb.from('stock_saisies').update({quantite:v}).eq('id',existing.id);
+    if(error){toast('⚠ Non enregistré : '+error.message);return;}
+    existing.quantite=v;
+  } else {
+    const{data,error}=await sb.from('stock_saisies').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,date_saisie:d}).select().single();
+    if(error){toast('⚠ Non enregistré : '+error.message);return;}
+    S.saisiesAujourdhui[pid]=data;
+  }
   toast('✓ Saisi');
 }
 
+const BESOIN_STALE_DAYS=4; // au-delà, la dernière saisie est signalée "donnée ancienne" (stock probablement obsolète)
+function daysSince(dateStr){ if(!dateStr) return null; const d=new Date(dateStr+'T00:00:00'); const now=new Date(); now.setHours(0,0,0,0); return Math.round((now-d)/86400000); }
 async function renderBesoin(el){
   el.innerHTML='<div style="color:var(--muted)">Calcul…</div>';
-  const since=new Date();since.setDate(since.getDate()-7);
-  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',since.toISOString().slice(0,10)).order('date_saisie',{ascending:false});
+  // On récupère la VRAIE dernière saisie de chaque produit, quel que soit son âge (pas de fenêtre
+  // glissante : un produit compté il y a 40 jours doit afficher sa vraie valeur + un avertissement,
+  // pas apparaître à 0 comme s'il n'avait jamais été saisi). Colonnes minimales pour limiter le payload.
+  const{data:saisies}=await sb.from('stock_saisies').select('produit_id,quantite,date_saisie').eq('restaurant_id',SNACK.id).order('date_saisie',{ascending:false});
   const last={};(saisies||[]).forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
   // Construire la liste des besoins (à plat)
   const besoin=[];
+  const staleAtMax=[]; // produits "au max" (need≤0) MAIS sur une saisie ancienne → à recompter (peut être vide en vrai)
   S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>{
     const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
-    const cur=last[m.produit_id]?Number(last[m.produit_id].quantite):0;
+    const jamais=!last[m.produit_id]; // aucune saisie EN BASE (≠ compté à 0)
+    const cur=jamais?0:Number(last[m.produit_id].quantite);
     const need=Math.max(0,Number(m.quantite_max)-cur);
-    if(need<=0)return;
-    besoin.push({produit:p,cur,max:Number(m.quantite_max),need,date:last[m.produit_id]?.date_saisie});
+    const date=last[m.produit_id]?.date_saisie;const age=daysSince(date);
+    if(need<=0){
+      // Rien à commander SELON la dernière saisie — mais si elle est ancienne on ne la cache pas :
+      // le produit peut s'être vidé depuis, l'admin doit savoir qu'il faut recompter.
+      if(!jamais && age!==null && age>BESOIN_STALE_DAYS) staleAtMax.push({produit:p,cur,date,age});
+      return;
+    }
+    besoin.push({produit:p,cur,max:Number(m.quantite_max),need,date,jamais,age});
   });
   const totalEur=besoin.reduce((a,x)=>a+x.need*Number(x.produit.cout_unitaire||0),0);
+  // Encart "à recompter" : produits au max mais sur données anciennes → on ne les cache pas.
+  staleAtMax.sort((a,b)=>b.age-a.age);
+  const staleNote=staleAtMax.length?`<div class="section" style="border-color:var(--warn)">
+    <h3 style="color:var(--warn)">⚠️ ${staleAtMax.length} produit${staleAtMax.length>1?'s':''} au max mais sur données anciennes — à recompter</h3>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:8px">Dernière saisie ≥ ${BESOIN_STALE_DAYS} j : le stock a pu se vider depuis, ces produits n'apparaissent pas dans la commande ci-dessous.</div>
+    <table class="tbl"><thead><tr><th>Produit</th><th>Dernier compte</th><th>Dernière saisie</th></tr></thead><tbody>
+    ${staleAtMax.map(x=>`<tr><td><b>${x.produit.nom}</b></td><td>${x.cur}</td><td style="color:var(--warn);font-size:12px">${fmtD(x.date)} · ${x.age} j</td></tr>`).join('')}
+    </tbody></table></div>`:'';
   let html=`<div class="toolbar">
     <h2 style="font-size:18px;font-weight:700;flex:1">Feuille de besoin — ${SNACK.nom}</h2>
     <button class="btn ghost" onclick="copyBesoinAll()">📋 Copier toute la commande</button>
     <button class="btn" onclick="exportBesoinPDF()">📄 Export PDF</button>
   </div>`;
-  if(!besoin.length){html+='<div class="section" style="text-align:center;color:var(--ok)">✓ Aucun besoin — stocks au max partout</div>';el.innerHTML=html;return;}
+  if(!besoin.length){html+=(staleNote||'<div class="section" style="text-align:center;color:var(--ok)">✓ Aucun besoin — stocks au max partout</div>');el.innerHTML=html;return;}
   // Vue unifiée : 1 seul bloc, ordonné par catégorie puis nom
   besoin.sort((a,b)=>{
     const c=(a.produit.categorie||'Divers').localeCompare(b.produit.categorie||'Divers');
@@ -277,9 +314,15 @@ async function renderBesoin(el){
     const fnom=x.produit.fournisseur_principal_id?nameFourn(x.produit.fournisseur_principal_id):'<span style="color:var(--muted)">—</span>';
     const catCell=cat===prevCat?'':`<b style="color:var(--gold);font-size:12.5px;text-transform:uppercase;letter-spacing:.03em">${cat}</b>`;
     prevCat=cat;
-    html+=`<tr><td style="vertical-align:top">${catCell}</td><td><b>${x.produit.nom}</b><div style="color:var(--muted);font-size:11px">dernière saisie : ${fmtD(x.date)}</div></td><td style="font-size:12.5px">${fnom}</td><td>${x.cur}</td><td>${x.max}</td><td><b style="color:var(--gold);font-size:15px">${x.need}</b> ${x.produit.unite||''}</td><td style="color:var(--muted);font-size:11.5px">${cond}</td><td>${eur(x.need*Number(x.produit.cout_unitaire||0))}</td></tr>`;
+    // Statut de la dernière saisie : jamais / ancienne (>seuil) / récente
+    let saisieInfo;
+    if(x.jamais){ saisieInfo=`<span style="color:var(--warn)">⚠️ jamais saisi</span>`; }
+    else if(x.age!==null && x.age>BESOIN_STALE_DAYS){ saisieInfo=`<span style="color:var(--warn)">${fmtD(x.date)} · ⚠️ donnée ancienne (${x.age} j)</span>`; }
+    else { saisieInfo=`dernière saisie : ${fmtD(x.date)}`; }
+    html+=`<tr><td style="vertical-align:top">${catCell}</td><td><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div></td><td style="font-size:12.5px">${fnom}</td><td>${x.jamais?'<span style="color:var(--muted)">?</span>':x.cur}</td><td>${x.max}</td><td><b style="color:var(--gold);font-size:15px">${x.need}</b> ${x.produit.unite||''}</td><td style="color:var(--muted);font-size:11.5px">${cond}</td><td>${eur(x.need*Number(x.produit.cout_unitaire||0))}</td></tr>`;
   });
   html+='</tbody></table></div>';
+  html+=staleNote; // encart "à recompter" APRÈS la commande (ne pas noyer l'info principale)
   window._BESOIN_LIST=besoin;
   el.innerHTML=html;
 }
@@ -328,8 +371,9 @@ function fallbackCopy(txt){
 }
 async function exportBesoinPDF(){
   toast('Génération PDF…');
-  const since=new Date();since.setDate(since.getDate()-7);
-  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',since.toISOString().slice(0,10));
+  // Même logique que renderBesoin : VRAIE dernière saisie (pas de fenêtre 7j) pour que le PDF ne
+  // contredise pas l'écran (sinon un produit compté il y a 40 j ressortait à "Actuel 0" dans le PDF).
+  const{data:saisies}=await sb.from('stock_saisies').select('produit_id,quantite,date_saisie').eq('restaurant_id',SNACK.id).order('date_saisie',{ascending:false});
   const last={};(saisies||[]).forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:'mm',format:'a4'});
@@ -337,16 +381,18 @@ async function exportBesoinPDF(){
   doc.setFontSize(10);doc.setTextColor(120);doc.text(`Généré le ${new Date().toLocaleString('fr-FR')} · ${ORG.nom||''}`,14,25);doc.setTextColor(0);
   const byFourn={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>{
     const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
-    const cur=last[m.produit_id]?Number(last[m.produit_id].quantite):0;
+    const jamais=!last[m.produit_id];
+    const cur=jamais?0:Number(last[m.produit_id].quantite);
     const need=Math.max(0,Number(m.quantite_max)-cur);if(need<=0)return;
+    const date=last[m.produit_id]?.date_saisie;const age=daysSince(date);
     const fid=p.fournisseur_principal_id||'_sans';
-    (byFourn[fid]=byFourn[fid]||[]).push({p,cur,max:Number(m.quantite_max),need});
+    (byFourn[fid]=byFourn[fid]||[]).push({p,cur,max:Number(m.quantite_max),need,jamais,date,age});
   });
   let y=32;
   Object.entries(byFourn).forEach(([fid,arr])=>{
     if(y>250){doc.addPage();y=20;}
     doc.setFontSize(13);doc.text(fid==='_sans'?'(sans fournisseur)':nameFourn(fid),14,y);y+=2;
-    doc.autoTable({startY:y+2,head:[['Produit','Actuel','Max','À cmd.','Cond.','€ HT']],body:arr.map(x=>[x.p.nom,x.cur,x.max,x.need+' '+(x.p.unite||''),x.p.cond_fourn1||x.p.conditionnement||'',(x.need*Number(x.p.cout_unitaire||0)).toFixed(2)+' €']),theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[200,160,53]}});
+    doc.autoTable({startY:y+2,head:[['Produit','Actuel','Max','À cmd.','Cond.','Dernière saisie','€ HT']],body:arr.map(x=>[x.p.nom,x.jamais?'?':x.cur,x.max,x.need+' '+(x.p.unite||''),x.p.cond_fourn1||x.p.conditionnement||'',x.jamais?'jamais saisi':(fmtD(x.date)+(x.age>BESOIN_STALE_DAYS?` (ancien, ${x.age}j)`:'')),(x.need*Number(x.p.cout_unitaire||0)).toFixed(2)+' €']),theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[200,160,53]}});
     y=doc.lastAutoTable.finalY+8;
   });
   doc.save(`Besoin_${SNACK.nom.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`);

@@ -180,21 +180,46 @@ function renderProdList(){
   document.getElementById('prodList').innerHTML=html;
 }
 function cssId(s){return s.replace(/[^a-zA-Z0-9]/g,'_');}
+// Feedback d'erreur NON bloquant sur une cellule (pas d'alert() qui gèle la tablette) : bordure
+// rouge + petit message sous l'input. La cellule N'EST PAS marquée "done" tant que la base n'a pas
+// confirmé → le compteur reflète la réalité et l'obligation de saisie complète bloque la fin.
+function markSaisieError(pid,text){
+  const inp=document.querySelector(`input[data-pid="${pid}"]`);
+  if(!inp)return;
+  inp.classList.remove('done');
+  inp.style.borderColor='var(--bad)';inp.style.background='rgba(196,90,90,.12)';
+  let msg=inp.closest('.prod-row').querySelector('.saisie-err');
+  if(!msg){msg=document.createElement('div');msg.className='saisie-err';msg.style.cssText='grid-column:1/-1;color:var(--bad);font-size:11px;margin-top:4px';inp.closest('.prod-row').appendChild(msg);}
+  msg.textContent=text||'⚠ Non enregistré (réseau ?) — retape la valeur';
+}
+function clearSaisieError(pid){
+  const inp=document.querySelector(`input[data-pid="${pid}"]`);
+  if(!inp)return;
+  inp.style.borderColor='';inp.style.background='';
+  const row=inp.closest('.prod-row');const msg=row&&row.querySelector('.saisie-err');if(msg)msg.remove();
+}
 async function saveSaisie(pid,vTxt){
   const v=parseFloat((vTxt||'').replace(',','.'));
   if(isNaN(v)){
-    if(SAISIES_TODAY[pid]){await sb.from('stock_saisies').delete().eq('id',SAISIES_TODAY[pid].id);delete SAISIES_TODAY[pid];}
-    refreshCounters(pid);return;
+    // Vider une cellule = supprimer la saisie. On ne retire de la mémoire QUE si la base confirme.
+    if(SAISIES_TODAY[pid]){
+      const{error}=await sb.from('stock_saisies').delete().eq('id',SAISIES_TODAY[pid].id);
+      if(error){markSaisieError(pid);return;}
+      delete SAISIES_TODAY[pid];
+    }
+    clearSaisieError(pid);refreshCounters(pid);return;
   }
+  if(v<0){markSaisieError(pid,'⚠ Quantité négative impossible');return;} // saisie invalide
   if(SAISIES_TODAY[pid]){
-    await sb.from('stock_saisies').update({quantite:v}).eq('id',SAISIES_TODAY[pid].id);
+    const{error}=await sb.from('stock_saisies').update({quantite:v}).eq('id',SAISIES_TODAY[pid].id);
+    if(error){markSaisieError(pid);return;} // avant : erreur avalée → cellule "done" verte mais base non mise à jour
     SAISIES_TODAY[pid].quantite=v;
   } else {
     const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,date_saisie:new Date().toISOString().slice(0,10)}).select().single();
-    if(error){alert(error.message);return;}
+    if(error){markSaisieError(pid);return;}
     SAISIES_TODAY[pid]=data;
   }
-  refreshCounters(pid);
+  clearSaisieError(pid);refreshCounters(pid);
 }
 function refreshCounters(pid){
   // Compteurs par catégorie
