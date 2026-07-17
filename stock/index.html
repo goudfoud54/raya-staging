@@ -503,8 +503,8 @@ function renderMax(el){
     const m=max[p.id];
     const off=!!(m&&m.actif===false);
     const qInput=`<input type="number" step="0.5" value="${m?m.quantite_max:''}" placeholder="0" onblur="saveMax('${p.id}',this.value)" style="width:100px;padding:6px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;${off?'opacity:.4':''}">`;
-    // Checkbox désactivée tant qu'aucun seuil n'existe (rien à désactiver) ; cochée si actif=false.
-    const chk=`<input type="checkbox" ${off?'checked':''} ${m?'':'disabled'} onchange="toggleMaxActif('${p.id}',this.checked)" title="${m?'Exclure ce produit du suivi sur ce snack':'Définis d’abord un seuil'}" style="width:18px;height:18px;cursor:${m?'pointer':'not-allowed'}">`;
+    // Cochée si actif=false. Toujours cliquable : si aucun seuil n'existe encore, la case en crée un (quantite_max:0, actif:false).
+    const chk=`<input type="checkbox" ${off?'checked':''} onchange="toggleMaxActif('${p.id}',this.checked)" title="Exclure ce produit du suivi sur ce snack" style="width:18px;height:18px;cursor:pointer">`;
     html+=`<tr data-pname="${p.nom.toLowerCase()}" style="${off?'opacity:.6':''}"><td><b>${p.nom}</b>${off?' <span style="color:var(--warn);font-size:10.5px;font-weight:700">DÉSACTIVÉ</span>':''}</td><td style="color:var(--muted);font-size:12px">${p.categorie||''}</td><td style="color:var(--muted);font-size:12px">${p.conditionnement||''}</td><td>${qInput}</td><td style="text-align:center">${chk}</td></tr>`;
   });
   html+='</tbody></table>';
@@ -513,7 +513,16 @@ function renderMax(el){
 async function toggleMaxActif(pid,checked){
   // checked = case "Désactiver" cochée → le produit doit passer actif=false sur CE snack.
   const existing=S.stockMax.find(m=>m.restaurant_id===SNACK.id && m.produit_id===pid);
-  if(!existing){toast('Définis d’abord un seuil');renderMax(document.getElementById('content'));return;}
+  if(!existing){
+    if(!checked)return; // rien à faire : pas de ligne = déjà "non suivi/actif par défaut"
+    // Aucun seuil défini : on crée directement la ligne désactivée (pas besoin d'inventer un faux seuil avant).
+    const{data,error}=await sb.from('stock_max').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite_max:0,actif:false}).select().single();
+    if(error){toast('⚠ Non enregistré : '+error.message);renderMax(document.getElementById('content'));return;}
+    if(data)S.stockMax.push(data);
+    toast(`${(S.produits.find(p=>p.id===pid)||{}).nom||'Produit'} désactivé sur ${SNACK.nom}`);
+    renderMax(document.getElementById('content'));
+    return;
+  }
   const newActif=!checked;
   const{error}=await sb.from('stock_max').update({actif:newActif}).eq('id',existing.id);
   if(error){toast('⚠ Non enregistré : '+error.message);renderMax(document.getElementById('content'));return;}
