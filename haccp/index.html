@@ -357,12 +357,13 @@ async function renderReceptions(el){
   const{data}=await q;
   let list=data||[];
   if(search) list=list.filter(x=>((x.produit||'')+' '+(x.fournisseur||'')).toLowerCase().includes(search.toLowerCase()));
-  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Fournisseur</th><th>BL / Réf</th><th>Contrôles (🥩❄🧀)</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
-  if(!list.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px">Aucune réception</td></tr>';
+  let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Fournisseur</th><th>BL / Réf</th><th>Contrôles (🥩❄🧀)</th><th>Photo</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
+  if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucune réception</td></tr>';
   else list.forEach(x=>{
     const ctrls=x.haccp_reception_controles||[];
     const ctrlHtml=ctrls.length?ctrls.map(c=>{const emoji={viande:'🥩',surgele:'❄',fromage:'🧀',autre:'•'}[c.type_produit]||'•';return `<span class="badge ${c.conforme===false?'bad':'ok'}" title="${c.type_produit} · lot ${c.lot} · DLC ${fmtD(c.dluo)} · ${c.temperature}°C">${emoji} ${c.temperature}°</span>`;}).join(' '):'<span style="color:var(--muted);font-size:11px">—</span>';
-    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.fournisseur||'—'}</td><td><b>${x.produit||'—'}</b></td><td>${ctrlHtml}</td><td>${x.conforme===false?'<span class="badge bad">Refusé</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delReception('${x.id}')">✕</button></td></tr>`;
+    const photoHtml=x.photo_url?`<img src="${x.photo_url}" onclick="voirPhotoReception('${x.photo_url}')" style="width:40px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--line-2)">`:'<span style="color:var(--muted);font-size:11px">—</span>';
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.fournisseur||'—'}</td><td><b>${x.produit||'—'}</b></td><td>${ctrlHtml}</td><td>${photoHtml}</td><td>${x.conforme===false?'<span class="badge bad">Refusé</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delReception('${x.id}')">✕</button></td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('recList').innerHTML=html;
@@ -439,6 +440,15 @@ async function saveReception(){
   toast(`Réception enregistrée + ${controles.length} contrôles ✓`);closeModal();renderReceptions(document.getElementById('content'));
 }
 async function delReception(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('haccp_receptions').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderReceptions(document.getElementById('content'));}
+function voirPhotoReception(url){
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:90vw;text-align:center;padding:14px">
+    <img src="${url}" style="max-width:100%;max-height:80vh;border-radius:8px">
+    <div class="modal-actions" style="justify-content:center;margin-top:14px">
+      <a class="btn" href="${url}" target="_blank" rel="noopener">Voir en grand</a>
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+    </div>
+  </div></div>`;
+}
 
 // ────────────── NETTOYAGE ──────────────
 async function renderNettoyage(el){

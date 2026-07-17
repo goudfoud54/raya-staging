@@ -222,9 +222,74 @@ async function saveRecep(){
   // Trouver organization_id à partir du snack
   const{data:snack}=await sb.from('restaurants').select('organization_id').eq('id',SNACK_ID).maybeSingle();
   if(!snack){document.getElementById('r_err').textContent='Snack introuvable';return;}
-  const{error}=await sb.from('haccp_receptions').insert({organization_id:snack.organization_id,restaurant_id:SNACK_ID,fournisseur:document.getElementById('r_four').value||null,produit:prod,lot:document.getElementById('r_lot').value||null,dluo:document.getElementById('r_dluo').value||null,t_reception:parseFloat(document.getElementById('r_t').value)||null,conforme:document.getElementById('r_conf').value==='true',salarie_id:SALARIE.id,saisi_par_pin:PIN});
+  const{data:rec,error}=await sb.from('haccp_receptions').insert({organization_id:snack.organization_id,restaurant_id:SNACK_ID,fournisseur:document.getElementById('r_four').value||null,produit:prod,lot:document.getElementById('r_lot').value||null,dluo:document.getElementById('r_dluo').value||null,t_reception:parseFloat(document.getElementById('r_t').value)||null,conforme:document.getElementById('r_conf').value==='true',salarie_id:SALARIE.id,saisi_par_pin:PIN}).select().single();
   if(error){document.getElementById('r_err').textContent=error.message;return;}
-  successScreen('Réception enregistrée ✓');
+  recepPhotoScreen(rec.id,snack.organization_id,prod);
+}
+
+// ─────── PHOTO ÉTIQUETTE (réception) ───────
+let RECEP=null;
+function recepPhotoScreen(recId,orgId,prod){
+  RECEP={id:recId,orgId,prod,photoUrl:null};
+  document.getElementById('scr').innerHTML=`<div class="scr">
+    <h1>📦 Réception<small>${prod}</small></h1>
+    <div class="user">${SALARIE.prenom||''} ${SALARIE.nom}</div>
+    <div id="photoBox" style="margin:20px 0;text-align:center;padding:30px;border:2px dashed var(--line-2);border-radius:12px;color:var(--muted)">Aucune photo</div>
+    <button class="btn" id="photoBtn" onclick="document.getElementById('photoInput').click()">📷 Photo étiquette (lot + DLC)</button>
+    <div class="hint" style="margin-top:8px">Cadre bien le n° de lot ET la DLC sur la même photo</div>
+    <div id="photoStatus" style="text-align:center;margin-top:10px;font-size:13px;min-height:18px"></div>
+    <input type="file" accept="image/*" capture="environment" id="photoInput" class="hidden" onchange="handlePhotoCapture(event)">
+    <button class="btn" style="margin-top:24px" onclick="successScreen('Réception enregistrée ✓')">Valider</button>
+  </div>`;
+}
+async function compressImage(file,maxW,quality){
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url;});
+    const scale=Math.min(1,maxW/img.width);
+    const w=Math.round(img.width*scale),h=Math.round(img.height*scale);
+    const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+    canvas.getContext('2d').drawImage(img,0,0,w,h);
+    return await new Promise(res=>canvas.toBlob(res,'image/jpeg',quality));
+  }finally{URL.revokeObjectURL(url);}
+}
+function handlePhotoCapture(e){
+  const file=e.target.files[0];
+  if(!file)return;
+  const localUrl=URL.createObjectURL(file);
+  document.getElementById('photoBox').innerHTML=`<img src="${localUrl}" style="max-width:100%;border-radius:10px;cursor:pointer" onclick="enlargePhoto('${localUrl}')">`;
+  document.getElementById('photoBtn').textContent='📷 Reprendre la photo';
+  document.getElementById('photoStatus').style.color='var(--muted)';
+  document.getElementById('photoStatus').textContent='Envoi en cours…';
+  compressImage(file,1600,0.7).then(blob=>uploadPhotoWithRetry(blob));
+}
+async function uploadPhotoWithRetry(blob){
+  const recep=RECEP;
+  const path=`${recep.orgId}/${SNACK_ID}/${recep.id}.jpg`;
+  for(let i=0;i<3;i++){
+    const{error}=await sb.storage.from('haccp-photos').upload(path,blob,{contentType:'image/jpeg',upsert:true});
+    if(!error){
+      const{data}=sb.storage.from('haccp-photos').getPublicUrl(path);
+      const publicUrl=data.publicUrl+'?v='+Date.now();
+      const{error:updErr}=await sb.from('haccp_receptions').update({photo_url:publicUrl}).eq('id',recep.id);
+      if(!updErr){
+        recep.photoUrl=publicUrl;
+        const st=RECEP===recep?document.getElementById('photoStatus'):null;
+        if(st){st.style.color='var(--ok)';st.textContent='Photo enregistrée ✓';}
+        return;
+      }
+    }
+    await new Promise(r=>setTimeout(r,800*(i+1)));
+  }
+  const st=RECEP===recep?document.getElementById('photoStatus'):null;
+  if(st){st.style.color='var(--bad)';st.textContent='Photo non enregistrée, tu peux valider quand même';}
+}
+function enlargePhoto(url){
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:500;display:flex;align-items:center;justify-content:center';
+  ov.innerHTML=`<img src="${url}" style="max-width:95%;max-height:95%;border-radius:8px">`;
+  ov.onclick=()=>ov.remove();
+  document.body.appendChild(ov);
 }
 
 // ─────── NETTOYAGE ───────
