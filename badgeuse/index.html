@@ -145,10 +145,11 @@ body.upd-open{padding-bottom:64px}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.8 · timeout réseau (plus de gel sur WiFi bancal) + message réseau distinct de "Code inconnu" + accord "enregistrée"';
+const VERSION='v0.9 · option "badgeage libre" (Paramètres > Organisation) pour badger sur n\'importe quel snack';
 
 let SNACK={id:null,nom:null,organization_id:null};
 let curSal=null, curLast=null, pinBuf='';
+let BADGEUSE_LIBRE=false; // org.badgeuse_libre : si true, un salarié peut badger sur n'importe quel snack de l'org
 
 // ===== INIT =====
 // Config + reconfig ne vivent plus ici : le SEUL point d'entrée pour tout ça est désormais le hub
@@ -162,6 +163,12 @@ async function init(){
     const{data:r}=await sb.from('restaurants').select('organization_id').eq('id',SNACK.id).maybeSingle();
     if(r&&r.organization_id){SNACK.organization_id=r.organization_id;EatimeKiosk.setSnackConfig({id:SNACK.id,nom:SNACK.nom,organization_id:r.organization_id});}
   }
+  // Paramètre org : badgeage libre (n'importe quel snack) ou restreint au snack d'affectation.
+  // Best-effort : si la lecture échoue (réseau), on reste sur le comportement restreint par défaut.
+  try{
+    const{data:orgCfg}=await sb.from('organizations').select('badgeuse_libre').eq('id',SNACK.organization_id).maybeSingle();
+    BADGEUSE_LIBRE=!!(orgCfg&&orgCfg.badgeuse_libre);
+  }catch(e){BADGEUSE_LIBRE=false;}
   document.getElementById('k-snack-name').textContent=SNACK.nom||'?';
   document.getElementById('kiosk').classList.remove('hidden');
   startClock();
@@ -247,10 +254,14 @@ async function checkPin(){
   }
   // Vérification d'affectation snack : verify-pin cherche sur toute l'organisation, donc on reproduit
   // ici le filtre qu'assurait auparavant la grille (salarié affecté à CE snack, ou multi-snack).
-  const{data:sinfo}=await sb.from('salaries').select('snack_origine_id,est_multi').eq('id',res.salarie.id).maybeSingle();
-  if(!sinfo || (sinfo.snack_origine_id!==SNACK.id && !sinfo.est_multi)){
-    flashErr('Code inconnu');
-    pinBuf='';renderDots();return;
+  // Sauf si l'org a activé "badgeage libre" (Paramètres > Organisation) : l'affectation snack ne sert
+  // alors plus qu'au planning, pas à restreindre où le salarié peut badger (ex: dépannage entre snacks).
+  if(!BADGEUSE_LIBRE){
+    const{data:sinfo}=await sb.from('salaries').select('snack_origine_id,est_multi').eq('id',res.salarie.id).maybeSingle();
+    if(!sinfo || (sinfo.snack_origine_id!==SNACK.id && !sinfo.est_multi)){
+      flashErr('Code inconnu');
+      pinBuf='';renderDots();return;
+    }
   }
   curSal=res.salarie;
   curLast=await fetchLastPointage(curSal.id);
