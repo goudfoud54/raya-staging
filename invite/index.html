@@ -84,7 +84,7 @@ async function accept(){
         document.getElementById('err').innerHTML='Un compte existe déjà avec cet email, mais ce mot de passe ne correspond pas au compte existant.<br><br>Connecte-toi avec ton mot de passe existant depuis <a href="../" style="color:var(--gold)">la page de connexion</a> (utilise "mot de passe oublié" si besoin), puis redemande l\'invitation à ton admin si l\'accès n\'apparaît pas.';
         return;
       }
-      const{data:linkRes,error:linkErr}=await sb.rpc('accept_invitation_existing_user',{p_token:INVITE.token});
+      const{data:linkRes,error:linkErr}=await sb.rpc('accept_invitation_existing_user',{p_token:INVITE.token,p_full_name:name});
       if(linkErr||!linkRes||!linkRes.ok){
         document.getElementById('err').textContent=(linkErr&&linkErr.message)||(linkRes&&linkRes.error)||'Erreur de rattachement du compte';
         return;
