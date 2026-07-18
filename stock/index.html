@@ -49,6 +49,7 @@ button{cursor:pointer;border:none;background:none}
 table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 table.tbl th,table.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
 table.tbl th{font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;background:var(--surface)}
+td.besoin-mobile{display:none} /* carte compacte : cachée en desktop (vue tableau), montrée sous 640px */
 table.tbl tr:last-child td{border-bottom:none}
 table.tbl tr:hover{background:rgba(127,127,127,.04)}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase}
@@ -88,19 +89,23 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
   .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px}
   .tbl-scroll table.tbl{border:none;border-radius:0;white-space:nowrap;min-width:max-content}
 
-  /* Feuille de besoin → CARTES empilées (1 produit = 1 carte, lisible en cuisine). */
+  /* Feuille de besoin → CARTES COMPACTES (2-3 lignes/produit). On masque les 8 <td> classiques et
+     on n'affiche que la cellule .besoin-mobile. Header de catégorie une seule fois par groupe. */
   table.tbl-besoin{border:none;background:transparent}
   table.tbl-besoin thead{display:none}
   table.tbl-besoin,table.tbl-besoin tbody{display:block;width:100%}
-  table.tbl-besoin tr{display:block;background:var(--surface);border:1px solid var(--line-2);border-radius:12px;padding:12px 14px;margin-bottom:10px}
-  table.tbl-besoin tr::before{content:attr(data-cat);display:block;color:var(--gold);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
-  table.tbl-besoin td{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:5px 0;border:none;text-align:right;white-space:normal}
-  table.tbl-besoin td::before{content:attr(data-label);color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;text-align:left;flex-shrink:0}
-  table.tbl-besoin td[data-label="Catégorie"]{display:none}
-  table.tbl-besoin td[data-label="Produit"]{display:block;text-align:left;padding:0 0 8px;margin-bottom:6px;border-bottom:1px solid var(--line)}
-  table.tbl-besoin td[data-label="Produit"]::before{display:none}
-  table.tbl-besoin td[data-label="Produit"] b{font-size:15px}
-  table.tbl-besoin td[data-label="À commander"]{background:rgba(200,160,53,.12);margin:5px -8px;padding:8px;border-radius:8px}
+  table.tbl-besoin tr{display:block;background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:10px 12px;margin-bottom:7px}
+  table.tbl-besoin tr td{display:none}                      /* on cache la vue tableau… */
+  table.tbl-besoin tr td.besoin-mobile{display:block;padding:0;border:none} /* …on garde la carte */
+  /* Header catégorie : dans la 1re carte du groupe seulement (séparateur de section, +espace au-dessus). */
+  table.tbl-besoin tr.bcat-first{margin-top:16px}
+  table.tbl-besoin tbody tr.bcat-first:first-child{margin-top:0}
+  table.tbl-besoin tr.bcat-first::before{content:attr(data-cat);display:block;color:var(--gold);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+  .bm-name{font-size:14px;line-height:1.25;margin-bottom:4px}
+  .bm-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:2px}
+  .bm-cmd{font-weight:800;color:var(--gold);font-size:15px;white-space:nowrap}
+  .bm-sub{font-size:12px;color:var(--muted)}
+  .bm-foot{font-size:11px;color:var(--muted)}
 }
 </style>
 </head>
@@ -351,14 +356,16 @@ async function renderBesoin(el){
     return c!==0?c:a.produit.nom.localeCompare(b.produit.nom);
   });
   html+=`<div class="section">
+    <input id="besoin_search" placeholder="🔍 Rechercher un produit…" oninput="filterBesoin()" style="width:100%;margin-bottom:12px;padding:9px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;outline:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <div style="color:var(--muted);font-size:13px">${besoin.length} produit${besoin.length>1?'s':''} à commander</div>
+      <div style="color:var(--muted);font-size:13px" id="besoin_count">${besoin.length} produit${besoin.length>1?'s':''} à commander</div>
       <div style="font-weight:700;font-size:15px">${eur(totalEur)} HT estimé</div>
     </div>
     <table class="tbl tbl-besoin"><thead><tr><th>Catégorie</th><th>Produit</th><th>Fournisseur</th><th>Actuel</th><th>Max</th><th>À commander</th><th>Cond.</th><th>€ HT</th></tr></thead><tbody>`;
   let prevCat=null;
   besoin.forEach(x=>{
     const cat=x.produit.categorie||'Divers';
+    const isFirstOfCat=cat!==prevCat; // en cartes mobile : header catégorie affiché seulement ici
     const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
     const fnom=x.produit.fournisseur_principal_id?nameFourn(x.produit.fournisseur_principal_id):'<span style="color:var(--muted)">—</span>';
     const catCell=cat===prevCat?'':`<b style="color:var(--gold);font-size:12.5px;text-transform:uppercase;letter-spacing:.03em">${cat}</b>`;
@@ -368,12 +375,34 @@ async function renderBesoin(el){
     if(x.jamais){ saisieInfo=`<span style="color:var(--warn)">⚠️ jamais saisi</span>`; }
     else if(x.age!==null && x.age>BESOIN_STALE_DAYS){ saisieInfo=`<span style="color:var(--warn)">${fmtD(x.date)} · ⚠️ donnée ancienne (${x.age} j)</span>`; }
     else { saisieInfo=`dernière saisie : ${fmtD(x.date)}`; }
-    html+=`<tr data-cat="${cat}"><td data-label="Catégorie" style="vertical-align:top">${catCell}</td><td data-label="Produit"><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div></td><td data-label="Fournisseur" style="font-size:12.5px">${fnom}</td><td data-label="Actuel">${x.jamais?'<span style="color:var(--muted)">?</span>':x.cur}</td><td data-label="Max">${x.max}</td><td data-label="À commander"><b style="color:var(--gold);font-size:15px">${x.need}</b> ${x.produit.unite||''}</td><td data-label="Cond." style="color:var(--muted);font-size:11.5px">${cond}</td><td data-label="€ HT">${eur(x.need*Number(x.produit.cout_unitaire||0))}</td></tr>`;
+    // Éléments réutilisés par la carte mobile compacte
+    const fournName=x.produit.fournisseur_principal_id?nameFourn(x.produit.fournisseur_principal_id):'—';
+    const curTxt=x.jamais?'?':x.cur;
+    const unite=x.produit.unite||'';
+    const eurHT=eur(x.need*Number(x.produit.cout_unitaire||0));
+    const warnIcon=x.jamais?'<span style="color:var(--warn)" title="Jamais saisi">⚠️</span>'
+      :(x.age!==null&&x.age>BESOIN_STALE_DAYS?`<span style="color:var(--warn)" title="Donnée ancienne (${x.age} j)">⚠️</span>`:'');
+    // data-pname pour la recherche (produit + fournisseur). Cellule .besoin-mobile = carte compacte
+    // (visible seulement sous 640px ; les 8 <td> classiques restent la vue tableau desktop).
+    html+=`<tr class="${isFirstOfCat?'bcat-first':''}" data-cat="${cat}" data-pname="${(x.produit.nom+' '+fournName).toLowerCase().replace(/"/g,'')}"><td data-label="Catégorie" style="vertical-align:top">${catCell}</td><td data-label="Produit"><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div></td><td data-label="Fournisseur" style="font-size:12.5px">${fnom}</td><td data-label="Actuel">${x.jamais?'<span style="color:var(--muted)">?</span>':x.cur}</td><td data-label="Max">${x.max}</td><td data-label="À commander"><b style="color:var(--gold);font-size:15px">${x.need}</b> ${unite}</td><td data-label="Cond." style="color:var(--muted);font-size:11.5px">${cond}</td><td data-label="€ HT">${eurHT}</td><td class="besoin-mobile"><div class="bm-name"><b>${x.produit.nom}</b> ${warnIcon}</div><div class="bm-line"><span class="bm-cmd">→ ${x.need} ${unite}</span><span class="bm-sub">stock ${curTxt}/${x.max}${cond?' · '+cond:''}</span></div><div class="bm-foot">${fournName}${x.need?' · '+eurHT:''}</div></td></tr>`;
   });
   html+='</tbody></table></div>';
   html+=staleNote; // encart "à recompter" APRÈS la commande (ne pas noyer l'info principale)
   window._BESOIN_LIST=besoin;
   el.innerHTML=html;
+}
+// Recherche produit/fournisseur dans la feuille de besoin. Toggle les <tr> — marche en vue tableau
+// (desktop) ET en cartes (mobile), c'est le même <tr> caché via display:none.
+function filterBesoin(){
+  const q=(val('besoin_search')||'').toLowerCase();
+  let visibles=0;
+  document.querySelectorAll('.tbl-besoin tbody tr').forEach(tr=>{
+    const show=!q||(tr.dataset.pname||'').includes(q);
+    tr.style.display=show?'':'none';
+    if(show)visibles++;
+  });
+  const c=document.getElementById('besoin_count');
+  if(c)c.textContent=q?`${visibles} résultat${visibles>1?'s':''}`:`${(window._BESOIN_LIST||[]).length} produit${(window._BESOIN_LIST||[]).length>1?'s':''} à commander`;
 }
 function copyBesoinAll(){
   const besoin=window._BESOIN_LIST||[];
@@ -438,10 +467,14 @@ async function exportBesoinPDF(){
     (byFourn[fid]=byFourn[fid]||[]).push({p,cur,max:Number(m.quantite_max),need,jamais,date,age});
   });
   let y=32;
+  // Largeurs de colonnes FIXES (mm), identiques pour CHAQUE tableau fournisseur → les colonnes
+  // tombent à la même position d'un tableau à l'autre (total 180mm ≤ largeur utile A4). Sans ça,
+  // autoTable recalcule les largeurs par tableau selon son contenu → colonnes décalées.
+  const besoinCols={0:{cellWidth:52},1:{cellWidth:15,halign:'center'},2:{cellWidth:14,halign:'center'},3:{cellWidth:22,halign:'center',fontStyle:'bold'},4:{cellWidth:28},5:{cellWidth:30},6:{cellWidth:19,halign:'right'}};
   Object.entries(byFourn).forEach(([fid,arr])=>{
     if(y>250){doc.addPage();y=20;}
     doc.setFontSize(13);doc.text(fid==='_sans'?'(sans fournisseur)':nameFourn(fid),14,y);y+=2;
-    doc.autoTable({startY:y+2,head:[['Produit','Actuel','Max','À cmd.','Cond.','Dernière saisie','€ HT']],body:arr.map(x=>[x.p.nom,x.jamais?'?':x.cur,x.max,x.need+' '+(x.p.unite||''),x.p.cond_fourn1||x.p.conditionnement||'',x.jamais?'jamais saisi':(fmtD(x.date)+(x.age>BESOIN_STALE_DAYS?` (ancien, ${x.age}j)`:'')),(x.need*Number(x.p.cout_unitaire||0)).toFixed(2)+' €']),theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[200,160,53]}});
+    doc.autoTable({startY:y+2,head:[['Produit','Actuel','Max','À cmd.','Cond.','Dernière saisie','€ HT']],body:arr.map(x=>[x.p.nom,x.jamais?'?':x.cur,x.max,x.need+' '+(x.p.unite||''),x.p.cond_fourn1||x.p.conditionnement||'',x.jamais?'jamais saisi':(fmtD(x.date)+(x.age>BESOIN_STALE_DAYS?` (ancien, ${x.age}j)`:'')),(x.need*Number(x.p.cout_unitaire||0)).toFixed(2)+' €']),theme:'grid',styles:{fontSize:8,overflow:'linebreak'},columnStyles:besoinCols,margin:{left:14,right:16},tableWidth:'wrap',headStyles:{fillColor:[200,160,53]}});
     y=doc.lastAutoTable.finalY+8;
   });
   doc.save(`Besoin_${SNACK.nom.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`);
