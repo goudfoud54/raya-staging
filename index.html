@@ -7,6 +7,7 @@
 <script src="../theme.js"></script>
 <script>(function(){var t=localStorage.getItem('eatime_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="access.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--bad:#c45a5a}
@@ -86,7 +87,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
   <div class="modules" id="modules"></div>
-  <div class="footer">Eatime360 · v9.1 · Fix suppression utilisateur (policy RLS) + envoi réel de l'email d'invitation</div>
+  <div class="footer">Eatime360 · v9.2 · Permissions par module unifiées (portail + pages via access.js) + calendrier/avertissements/pilotage configurables</div>
 </div>
 
 <script>
@@ -113,8 +114,8 @@ const MODULES=[
   {id:'parametres',ic:'⚙',nm:'Paramètres',ds:'Identité, couleurs, accès, permissions'}
 ];
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
-// Defaults si org.permissions absent
-const DEFAULT_PERMS={moi:['*'],'import-contrats':['admin','manager'],salaries:['admin'],calendrier:['admin','manager'],avertissements:['admin'],pilotage:['admin','manager'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],haccp:['admin','manager'],'haccp-kiosk':['*'],finance:['admin'],stock:['admin','manager'],'stock-kiosk':['*'],facturation:['admin'],parametres:['admin']};
+// Defaults + logique d'accès : source de vérité unique dans access.js (EatimeAccess).
+const DEFAULT_PERMS=EatimeAccess.DEFAULT_PERMS;
 
 function showSignup(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('forgotBlock').classList.add('hidden');document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Créer un compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
 function showLogin(){document.getElementById('signupBlock').classList.add('hidden');document.getElementById('forgotBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
@@ -204,14 +205,8 @@ function showApp(){
   const avEl=document.getElementById('userAv');
   if(ORG.logo_url){avEl.innerHTML=`<img src="${ORG.logo_url}" style="max-width:32px;max-height:32px;object-fit:contain">`;avEl.style.background='transparent';}
   else{avEl.style.background='';}
-  // Permissions depuis l'org (ou defaults)
-  const perms=ORG.permissions||DEFAULT_PERMS;
-  const isSuper=ME.role==='super_admin';
-  const allowed=MODULES.filter(m=>{
-    if(isSuper)return true;
-    const rs=perms[m.id]||[];
-    return rs.includes('*')||rs.includes(ME.role);
-  });
+  // Cartes affichées = mêmes règles que le contrôle d'accès des pages (access.js).
+  const allowed=MODULES.filter(m=>EatimeAccess.canAccessModule(m.id, ME.role, ORG.permissions));
   document.getElementById('modules').innerHTML=allowed.map(m=>{
     const mt=MAINT[m.id];
     const blocked=mt && mt.en_maintenance && !isSuper;

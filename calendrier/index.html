@@ -6,6 +6,7 @@
 <title>Calendrier · Eatime360</title>
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
 <style>
 :root{
   --bg:#0b0e14;--panel:#11151c;--panel2:#161a23;--border:#1f2530;--border2:#2a3140;
@@ -260,9 +261,10 @@ async function init(){
   // Auth
   const { data: { session } } = await sb.auth.getSession();
   if (!session) { location.href = '../auth/index.html'; return; }
-  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire)').eq('id', session.user.id).maybeSingle();
+  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire, permissions)').eq('id', session.user.id).maybeSingle();
   if (!profile) { alert('Profil introuvable'); return; }
-  if (!['admin','manager','super_admin'].includes(profile.role)) { document.body.innerHTML='<div class="empty">Accès réservé aux administrateurs et managers.</div>'; return; }
+  // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
+  if (!EatimeAccess.canAccessModule('calendrier', profile.role, profile.organizations?.permissions)) { document.body.innerHTML = EatimeAccess.renderAccessDenied('Calendrier RH'); return; }
   S.profile = profile;
   document.getElementById('orgBadge').textContent = profile.organizations?.nom || 'org';
   if (profile.organizations?.couleur_primaire) {

@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Eatime360 — HACCP</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -146,6 +147,8 @@ async function loadProfileAndShow(){
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
   ORG=org||{};
+  // Accès contrôlé par la config org (access.js) — ce module n'avait AUCUNE vérification de rôle avant.
+  if(!EatimeAccess.canAccessModule('haccp', profile.role, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('HACCP');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   if(ORG.suspended && ME.role!=='super_admin'){
     document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue. Contacter le service client.</div>';

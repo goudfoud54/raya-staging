@@ -6,6 +6,7 @@
 <title>Eatime360 — Paramètres</title>
 <script>(function(){var t=localStorage.getItem('eatime_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -399,8 +400,10 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 let ME=null,ORG=null;
-const MODULES_LIST=['moi','import-contrats','salaries','planning','badgeuse','dispos','haccp','haccp-kiosk','finance','stock','stock-kiosk','facturation','parametres'];
-const MODULES_LBL={moi:'Mon Espace (salarié)','import-contrats':'Import IA contrats',salaries:'Gestion Salariés',planning:'Planning',badgeuse:'Badgeuse',dispos:'Mes indispos',haccp:'HACCP','haccp-kiosk':'HACCP Kiosque',finance:'Finance',stock:'Stock (admin)','stock-kiosk':'Stock Kiosque',facturation:'Facturation',parametres:'Paramètres'};
+// Modules configurables dans la matrice. calendrier/avertissements/pilotage ajoutés (v9.2) : ils
+// existaient et étaient dans le portail mais restaient absents de cette liste → non configurables.
+const MODULES_LIST=['moi','import-contrats','salaries','calendrier','avertissements','pilotage','planning','badgeuse','dispos','haccp','haccp-kiosk','finance','stock','stock-kiosk','facturation','parametres'];
+const MODULES_LBL={moi:'Mon Espace (salarié)','import-contrats':'Import IA contrats',salaries:'Gestion Salariés',calendrier:'Calendrier RH',avertissements:'Avertissements',pilotage:'Pilotage d’équipe',planning:'Planning',badgeuse:'Badgeuse',dispos:'Mes indispos',haccp:'HACCP','haccp-kiosk':'HACCP Kiosque',finance:'Finance',stock:'Stock (admin)','stock-kiosk':'Stock Kiosque',facturation:'Facturation',parametres:'Paramètres'};
 const ROLES=['admin','manager','salarie'];
 const ROLES_LBL={admin:'Admin',manager:'Manager',salarie:'Salarié'};
 
@@ -557,7 +560,9 @@ function renderForm(){
   ROLES.forEach(r=>html+=`<th>${ROLES_LBL[r]}</th>`);
   html+='</tr></thead><tbody>';
   MODULES_LIST.forEach(m=>{
-    const allowed=perms[m]||[];
+    // Pré-remplissage = permissions EFFECTIVES : un module absent de la config org retombe sur
+    // son défaut (access.js), pour refléter ce que le contrôle d'accès applique réellement.
+    const allowed=(perms[m]!==undefined)?perms[m]:(EatimeAccess.DEFAULT_PERMS[m]||[]);
     const isStar=allowed.includes('*');
     html+=`<tr><td>${MODULES_LBL[m]}</td>`;
     ROLES.forEach(r=>{

@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Eatime360 — Finance</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -160,10 +161,12 @@ async function login(){
 async function loadProfileAndShow(){
   const{data:{session}}=await sb.auth.getSession();if(!session)return;
   const{data:profile}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
-  if(!profile||!['admin','super_admin','manager'].includes(profile.role)){document.getElementById('err').textContent='Accès refusé.';await sb.auth.signOut();return;}
+  if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
   ORG=org||{};
+  // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
+  if(!EatimeAccess.canAccessModule('finance', profile.role, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Finance');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   if(ORG.suspended && ME.role!=='super_admin'){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue. Contacter le service client.</div>';return;}
   document.getElementById('lock').classList.add('hidden');

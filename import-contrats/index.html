@@ -6,6 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Import IA contrats — Eatime360</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root,[data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--blue:#5b9cff}
@@ -183,11 +184,7 @@ async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){document.getElementById('lock').classList.remove('hidden');return;}
   const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id').eq('id',session.user.id).maybeSingle();
-  if(!profile||!['admin','super_admin','manager'].includes(profile.role)){
-    document.getElementById('lock').classList.remove('hidden');
-    document.getElementById('loginErr').textContent='Accès refusé (admin/manager requis)';
-    await sb.auth.signOut();return;
-  }
+  if(!profile){document.getElementById('lock').classList.remove('hidden');document.getElementById('loginErr').textContent='Profil introuvable';await sb.auth.signOut();return;}
   ME=profile;
   const[orgRes,salRes,snRes]=await Promise.all([
     sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle(),
@@ -195,6 +192,8 @@ async function init(){
     sb.from('restaurants').select('id,nom').eq('organization_id',profile.organization_id).eq('actif',true),
   ]);
   ORG=orgRes.data; SALARIES=salRes.data||[]; SNACKS=snRes.data||[];
+  // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
+  if(!EatimeAccess.canAccessModule('import-contrats', profile.role, ORG?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Import IA contrats');return;}
   document.getElementById('lock').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('userInfo').textContent='Connecté : '+(profile.full_name||profile.email)+' · '+profile.role+' · '+ORG.nom;

@@ -9,6 +9,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Raya — Gestion Salariés</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
@@ -297,9 +298,10 @@ async function loadProfileAndShow(){
   if(!session)return;
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('loginErr').textContent='Profil introuvable. Réessaye dans 2 secondes (création en cours).';await sb.auth.signOut();return;}
-  if(!['admin','super_admin'].includes(profile.role)){document.getElementById('loginErr').textContent='Accès refusé. Ce module est réservé aux admins (ton rôle : '+profile.role+').';await sb.auth.signOut();return;}
   ME=profile;
-  const{data:org}=await sb.from('organizations').select('couleur_primaire,logo_url').eq('id',profile.organization_id).maybeSingle();
+  const{data:org}=await sb.from('organizations').select('couleur_primaire,logo_url,permissions').eq('id',profile.organization_id).maybeSingle();
+  // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
+  if(!EatimeAccess.canAccessModule('salaries', profile.role, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Gestion Salariés');return;}
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
   showApp();
 }
