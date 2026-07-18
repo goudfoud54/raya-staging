@@ -118,7 +118,10 @@
   /* ─── DROP OVERLAY ─── */
   .eai-dropping{position:absolute;inset:0;background:var(--eai-primary-soft);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:3px dashed var(--eai-primary);border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--eai-primary);z-index:10;pointer-events:none}
 
-  @media(max-width:600px){.eai-panel{bottom:0;right:0;left:0;width:100%;height:calc(100vh - 50px);max-height:none;border-radius:18px 18px 0 0}.eai-fab{bottom:16px;right:16px;width:54px;height:54px}.eai-fab svg{width:24px;height:24px}}
+  @media(max-width:600px){.eai-panel{bottom:0;right:0;left:0;width:100%;height:calc(100vh - 50px);max-height:none;border-radius:18px 18px 0 0}.eai-fab{bottom:calc(16px + env(safe-area-inset-bottom,0px));right:16px;width:54px;height:54px}.eai-fab svg{width:24px;height:24px}
+  /* Réserve un espace en bas de page UNIQUEMENT sur mobile quand le bouton IA est présent, pour
+     qu'il ne recouvre jamais le dernier contenu (barre Safari + home indicator iOS inclus). */
+  body.eai-has-fab{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px)) !important}}
   `;
   document.head.appendChild(style);
 
@@ -214,8 +217,9 @@
       fab.style.display = 'none';
       return false;
     }
-    // OK — on affiche le fab
+    // OK — on affiche le fab (+ réserve l'espace bas de page sur mobile, cf. body.eai-has-fab)
     fab.style.display = 'flex';
+    document.body.classList.add('eai-has-fab');
     CTX.user = { ...profile, id: profile.id || session.user.id };
     // Récupère la couleur primaire de l'org et applique au widget
     try {

@@ -73,6 +73,35 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 .prog-bar{height:100%;background:var(--ok);transition:width .2s}
 .prog-bar.warn{background:var(--warn)}
 .prog-bar.bad{background:var(--bad)}
+
+/* ─────────────── MOBILE (≤640px) ─────────────── */
+@media(max-width:640px){
+  .wrap{padding:16px 12px 40px}
+  .header{padding:12px 14px}
+  .brand{font-size:15px}
+  .modal-bg{padding:10px}
+  .modal{padding:18px 16px}
+  .toolbar{gap:8px}
+  .toolbar input,.toolbar select{flex:1 1 auto;min-width:0}
+  /* Tables tabulaires : le wrapper .tbl-scroll (injecté par wrapTables) scrolle horizontalement
+     le tableau SANS jamais faire déborder la page. La feuille de besoin (.tbl-besoin) est en cartes. */
+  .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px}
+  .tbl-scroll table.tbl{border:none;border-radius:0;white-space:nowrap;min-width:max-content}
+
+  /* Feuille de besoin → CARTES empilées (1 produit = 1 carte, lisible en cuisine). */
+  table.tbl-besoin{border:none;background:transparent}
+  table.tbl-besoin thead{display:none}
+  table.tbl-besoin,table.tbl-besoin tbody{display:block;width:100%}
+  table.tbl-besoin tr{display:block;background:var(--surface);border:1px solid var(--line-2);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  table.tbl-besoin tr::before{content:attr(data-cat);display:block;color:var(--gold);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+  table.tbl-besoin td{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:5px 0;border:none;text-align:right;white-space:normal}
+  table.tbl-besoin td::before{content:attr(data-label);color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;text-align:left;flex-shrink:0}
+  table.tbl-besoin td[data-label="Catégorie"]{display:none}
+  table.tbl-besoin td[data-label="Produit"]{display:block;text-align:left;padding:0 0 8px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+  table.tbl-besoin td[data-label="Produit"]::before{display:none}
+  table.tbl-besoin td[data-label="Produit"] b{font-size:15px}
+  table.tbl-besoin td[data-label="À commander"]{background:rgba(200,160,53,.12);margin:5px -8px;padding:8px;border-radius:8px}
+}
 </style>
 </head>
 <body>
@@ -171,6 +200,18 @@ function render(){
   if(TAB==='max') return renderMax(el);
   if(TAB==='historique') return renderHistorique(el);
 }
+
+// Enveloppe chaque tableau tabulaire dans un conteneur .tbl-scroll (scroll horizontal LOCAL au
+// tableau sur mobile, jamais toute la page). La feuille de besoin (.tbl-besoin) est exclue : elle
+// passe en cartes via CSS. Idempotent + branché sur un MutationObserver car les renders sont async.
+function wrapTables(){
+  document.querySelectorAll('#content table.tbl:not(.tbl-besoin)').forEach(t=>{
+    if(t.parentElement&&t.parentElement.classList.contains('tbl-scroll'))return;
+    const w=document.createElement('div');w.className='tbl-scroll';
+    t.parentNode.insertBefore(w,t);w.appendChild(t);
+  });
+}
+(function(){const c=document.getElementById('content');if(c)new MutationObserver(wrapTables).observe(c,{childList:true,subtree:true});})();
 
 async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
@@ -314,7 +355,7 @@ async function renderBesoin(el){
       <div style="color:var(--muted);font-size:13px">${besoin.length} produit${besoin.length>1?'s':''} à commander</div>
       <div style="font-weight:700;font-size:15px">${eur(totalEur)} HT estimé</div>
     </div>
-    <table class="tbl"><thead><tr><th>Catégorie</th><th>Produit</th><th>Fournisseur</th><th>Actuel</th><th>Max</th><th>À commander</th><th>Cond.</th><th>€ HT</th></tr></thead><tbody>`;
+    <table class="tbl tbl-besoin"><thead><tr><th>Catégorie</th><th>Produit</th><th>Fournisseur</th><th>Actuel</th><th>Max</th><th>À commander</th><th>Cond.</th><th>€ HT</th></tr></thead><tbody>`;
   let prevCat=null;
   besoin.forEach(x=>{
     const cat=x.produit.categorie||'Divers';
@@ -327,7 +368,7 @@ async function renderBesoin(el){
     if(x.jamais){ saisieInfo=`<span style="color:var(--warn)">⚠️ jamais saisi</span>`; }
     else if(x.age!==null && x.age>BESOIN_STALE_DAYS){ saisieInfo=`<span style="color:var(--warn)">${fmtD(x.date)} · ⚠️ donnée ancienne (${x.age} j)</span>`; }
     else { saisieInfo=`dernière saisie : ${fmtD(x.date)}`; }
-    html+=`<tr><td style="vertical-align:top">${catCell}</td><td><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div></td><td style="font-size:12.5px">${fnom}</td><td>${x.jamais?'<span style="color:var(--muted)">?</span>':x.cur}</td><td>${x.max}</td><td><b style="color:var(--gold);font-size:15px">${x.need}</b> ${x.produit.unite||''}</td><td style="color:var(--muted);font-size:11.5px">${cond}</td><td>${eur(x.need*Number(x.produit.cout_unitaire||0))}</td></tr>`;
+    html+=`<tr data-cat="${cat}"><td data-label="Catégorie" style="vertical-align:top">${catCell}</td><td data-label="Produit"><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div></td><td data-label="Fournisseur" style="font-size:12.5px">${fnom}</td><td data-label="Actuel">${x.jamais?'<span style="color:var(--muted)">?</span>':x.cur}</td><td data-label="Max">${x.max}</td><td data-label="À commander"><b style="color:var(--gold);font-size:15px">${x.need}</b> ${x.produit.unite||''}</td><td data-label="Cond." style="color:var(--muted);font-size:11.5px">${cond}</td><td data-label="€ HT">${eur(x.need*Number(x.produit.cout_unitaire||0))}</td></tr>`;
   });
   html+='</tbody></table></div>';
   html+=staleNote; // encart "à recompter" APRÈS la commande (ne pas noyer l'info principale)
@@ -581,6 +622,6 @@ async function genererSnapshotMensuel(){
 
 function closeModal(){document.getElementById('modalHost').innerHTML='';}
 </script>
-<script defer src="../assistant-widget.js?v=4.8"></script>
+<script defer src="../assistant-widget.js?v=4.9"></script>
 </body>
 </html>
