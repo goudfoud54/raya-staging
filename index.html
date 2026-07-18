@@ -206,6 +206,7 @@ function showApp(){
   if(ORG.logo_url){avEl.innerHTML=`<img src="${ORG.logo_url}" style="max-width:32px;max-height:32px;object-fit:contain">`;avEl.style.background='transparent';}
   else{avEl.style.background='';}
   // Cartes affichées = mêmes règles que le contrôle d'accès des pages (access.js).
+  const isSuper=ME.role==='super_admin';
   const allowed=MODULES.filter(m=>EatimeAccess.canAccessModule(m.id, ME.role, ORG.permissions));
   document.getElementById('modules').innerHTML=allowed.map(m=>{
     const mt=MAINT[m.id];
