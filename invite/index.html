@@ -72,7 +72,29 @@ async function accept(){
     password:pw,
     options:{data:{full_name:name,invite_token:INVITE.token}}
   });
-  if(error){document.getElementById('err').textContent=error.message;return;}
+  if(error){
+    // Cas fréquent : un compte auth existe déjà pour cet email (ancien test, ou salarié
+    // retiré puis réinvité — removeUser() ne supprime que profiles, pas auth.users).
+    // On tente de se connecter avec le mot de passe saisi pour rattacher l'invitation
+    // à ce compte existant plutôt que d'afficher l'erreur brute de Supabase.
+    if(/already registered|already exists/i.test(error.message)){
+      document.getElementById('err').textContent='Un compte existe déjà pour cet email — connexion…';
+      const{error:loginErr}=await sb.auth.signInWithPassword({email:INVITE.email,password:pw});
+      if(loginErr){
+        document.getElementById('err').innerHTML='Un compte existe déjà avec cet email, mais ce mot de passe ne correspond pas au compte existant.<br><br>Connecte-toi avec ton mot de passe existant depuis <a href="../" style="color:var(--gold)">la page de connexion</a> (utilise "mot de passe oublié" si besoin), puis redemande l\'invitation à ton admin si l\'accès n\'apparaît pas.';
+        return;
+      }
+      const{data:linkRes,error:linkErr}=await sb.rpc('accept_invitation_existing_user',{p_token:INVITE.token});
+      if(linkErr||!linkRes||!linkRes.ok){
+        document.getElementById('err').textContent=(linkErr&&linkErr.message)||(linkRes&&linkRes.error)||'Erreur de rattachement du compte';
+        return;
+      }
+      show(`<div class="ok">✓ Compte existant rattaché !<br><br>Bienvenue dans <b>${INVITE.org_nom}</b>.<br><br><a href="../" style="color:var(--gold);font-weight:700">Accéder au tableau de bord →</a></div>`);
+      return;
+    }
+    document.getElementById('err').textContent=error.message;
+    return;
+  }
   // Auto-login + redirection
   await sb.auth.signInWithPassword({email:INVITE.email,password:pw});
   show(`<div class="ok">✓ Compte créé !<br><br>Bienvenue dans <b>${INVITE.org_nom}</b>.<br><br><a href="../" style="color:var(--gold);font-weight:700">Accéder au tableau de bord →</a></div>`);
