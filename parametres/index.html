@@ -675,10 +675,22 @@ async function sendInvite(){
   }).select().single();
   if(error){document.getElementById('inv_result').innerHTML='<span style="color:var(--bad)">'+error.message+'</span>';return;}
   const link=buildInviteLink(data.token);
+  // Envoi effectif de l'email (avant : seul le lien était généré, l'admin devait le copier/coller
+  // lui-même — d'où le bug "je ne reçois rien", il n'y avait jamais eu d'email envoyé du tout).
+  let emailStatus='<span style="color:var(--muted)">Envoi de l\'email…</span>';
+  document.getElementById('inv_result').innerHTML=`<div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:12px">${emailStatus}</div>`;
+  let emailOk=false, emailErr='';
+  try{
+    const{data:{session}}=await sb.auth.getSession();
+    const r=await fetch(`${SUPA_URL}/functions/v1/send-invite-email`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`,apikey:SUPA_KEY},body:JSON.stringify({invitation_id:data.id,origin:new URL('..',location.href).href.replace(/\/$/,'')})});
+    const j=await r.json();
+    emailOk=r.ok && j.ok===true;
+    if(!emailOk) emailErr=j.error||'Erreur inconnue';
+  }catch(e){emailErr=e.message||'Erreur réseau';}
   document.getElementById('inv_result').innerHTML=`
     <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:12px">
-      <div style="color:var(--ok);font-weight:600;margin-bottom:8px">✓ Invitation créée pour ${email}</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Envoie-lui ce lien (valable 14 jours) :</div>
+      <div style="color:${emailOk?'var(--ok)':'var(--bad)'};font-weight:600;margin-bottom:8px">${emailOk?'✓ Email envoyé à '+email:'⚠ Invitation créée mais email non envoyé ('+emailErr+')'}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">${emailOk?'Tu peux aussi lui envoyer ce lien directement (WhatsApp, etc.) :':'Envoie-lui ce lien manuellement (valable 14 jours) :'}</div>
       <div style="display:flex;gap:8px;align-items:center">
         <input value="${link}" readonly style="flex:1;background:#0b0b15;border:1px solid var(--line-2);color:var(--text);padding:8px 10px;border-radius:6px;font-size:12px">
         <button class="btn sm" onclick="copyLink('${link}')">Copier</button>
