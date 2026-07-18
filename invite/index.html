@@ -67,37 +67,23 @@ async function accept(){
   const pw=document.getElementById('pw').value;
   if(!pw||pw.length<8){document.getElementById('err').textContent='Mot de passe 8 caractères min';return;}
   document.getElementById('err').textContent='Création du compte…';
-  const{error}=await sb.auth.signUp({
-    email:INVITE.email,
-    password:pw,
-    options:{data:{full_name:name,invite_token:INVITE.token}}
-  });
-  if(error){
-    // Cas fréquent : un compte auth existe déjà pour cet email (ancien test, ou salarié
-    // retiré puis réinvité — removeUser() ne supprime que profiles, pas auth.users).
-    // On tente de se connecter avec le mot de passe saisi pour rattacher l'invitation
-    // à ce compte existant plutôt que d'afficher l'erreur brute de Supabase.
-    if(/already registered|already exists/i.test(error.message)){
-      document.getElementById('err').textContent='Un compte existe déjà pour cet email — connexion…';
-      const{error:loginErr}=await sb.auth.signInWithPassword({email:INVITE.email,password:pw});
-      if(loginErr){
-        document.getElementById('err').innerHTML='Un compte existe déjà avec cet email, mais ce mot de passe ne correspond pas au compte existant.<br><br>Connecte-toi avec ton mot de passe existant depuis <a href="../" style="color:var(--gold)">la page de connexion</a> (utilise "mot de passe oublié" si besoin), puis redemande l\'invitation à ton admin si l\'accès n\'apparaît pas.';
-        return;
-      }
-      const{data:linkRes,error:linkErr}=await sb.rpc('accept_invitation_existing_user',{p_token:INVITE.token,p_full_name:name});
-      if(linkErr||!linkRes||!linkRes.ok){
-        document.getElementById('err').textContent=(linkErr&&linkErr.message)||(linkRes&&linkRes.error)||'Erreur de rattachement du compte';
-        return;
-      }
-      show(`<div class="ok">✓ Compte existant rattaché !<br><br>Bienvenue dans <b>${INVITE.org_nom}</b>.<br><br><a href="../" style="color:var(--gold);font-weight:700">Accéder au tableau de bord →</a></div>`);
-      return;
-    }
-    document.getElementById('err').textContent=error.message;
-    return;
-  }
-  // Auto-login + redirection
-  await sb.auth.signInWithPassword({email:INVITE.email,password:pw});
-  show(`<div class="ok">✓ Compte créé !<br><br>Bienvenue dans <b>${INVITE.org_nom}</b>.<br><br><a href="../" style="color:var(--gold);font-weight:700">Accéder au tableau de bord →</a></div>`);
+  // Passe systématiquement par l'edge function accept-invitation, qu'un compte existe déjà
+  // pour cet email ou non : le token d'invitation (reçu par email, à usage unique, temporaire)
+  // vaut preuve d'identité au même titre qu'un lien de réinitialisation de mot de passe, donc
+  // on peut forcer le nouveau mot de passe sans jamais avoir besoin de l'ancien.
+  let j;
+  try{
+    const r=await fetch(`${SUPA_URL}/functions/v1/accept-invitation`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json',apikey:SUPA_KEY},
+      body:JSON.stringify({token:INVITE.token,password:pw,full_name:name})
+    });
+    j=await r.json();
+    if(!r.ok||!j.ok){document.getElementById('err').textContent=j.error||'Erreur lors de la création du compte';return;}
+  }catch(e){document.getElementById('err').textContent='Erreur réseau : '+e.message;return;}
+  const{error:loginErr}=await sb.auth.signInWithPassword({email:INVITE.email,password:pw});
+  if(loginErr){document.getElementById('err').textContent='Compte prêt mais connexion auto échouée : '+loginErr.message;return;}
+  show(`<div class="ok">✓ Compte ${j.action==='linked_existing'?'rattaché':'créé'} !<br><br>Bienvenue dans <b>${INVITE.org_nom}</b>.<br><br><a href="../" style="color:var(--gold);font-weight:700">Accéder au tableau de bord →</a></div>`);
 }
 init();
 </script>
