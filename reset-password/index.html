@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<title>Nouveau mot de passe — Eatime360</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--bad:#c45a5a;--ok:#3fb87f}
+[data-theme="light"]{--gold:#c8a035;--bg:#f5f5f7;--card:#ffffff;--surface:#f0f0f3;--line:rgba(0,0,0,.06);--line-2:rgba(0,0,0,.12);--text:#1a1a1f;--muted:#6b6b78;--ok:#2a8f5f;--bad:#b04444}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:30px;max-width:400px;width:100%}
+.logo{color:var(--gold);font-size:24px;font-weight:800;text-align:center;margin-bottom:6px}
+.logo small{display:block;color:var(--muted);font-weight:400;font-size:12px;margin-top:4px}
+.fld{margin-bottom:12px}
+.fld label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;font-weight:500}
+.fld input{width:100%;padding:11px 14px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;outline:none}
+.fld input:focus{border-color:var(--gold)}
+.btn{width:100%;padding:13px;border-radius:10px;background:var(--gold);color:#1a1a1a;font-weight:700;font-size:14px;border:none;cursor:pointer}
+.err{color:var(--bad);font-size:13px;text-align:center;min-height:18px;margin-top:10px}
+.ok{color:var(--ok);font-weight:600;font-size:14px;text-align:center;padding:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Eatime360<small>Nouveau mot de passe</small></div>
+  <div id="content"><div style="text-align:center;color:var(--muted);padding:20px">Vérification du lien…</div></div>
+</div>
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+
+function show(html){document.getElementById('content').innerHTML=html;}
+
+function showForm(){
+  show(`
+    <div class="fld"><label>Nouveau mot de passe (8 caractères min)</label><input type="password" id="pw" autocomplete="new-password" onkeydown="if(event.key==='Enter')save()"></div>
+    <div class="fld"><label>Confirme le mot de passe</label><input type="password" id="pw2" autocomplete="new-password" onkeydown="if(event.key==='Enter')save()"></div>
+    <button class="btn" onclick="save()">Enregistrer</button>
+    <div class="err" id="err"></div>
+  `);
+}
+
+async function save(){
+  const pw=document.getElementById('pw').value;
+  const pw2=document.getElementById('pw2').value;
+  if(!pw||pw.length<8){document.getElementById('err').textContent='Mot de passe 8 caractères min';return;}
+  if(pw!==pw2){document.getElementById('err').textContent='Les deux mots de passe ne correspondent pas';return;}
+  document.getElementById('err').textContent='Enregistrement…';
+  const{error}=await sb.auth.updateUser({password:pw});
+  if(error){document.getElementById('err').textContent=error.message;return;}
+  await sb.auth.signOut();
+  show('<div class="ok">✓ Mot de passe mis à jour !<br><br><a href="../" style="color:var(--gold);font-weight:700">Se connecter →</a></div>');
+}
+
+// Le lien de réinitialisation envoyé par Supabase contient un token dans le hash (#access_token=…&type=recovery).
+// supabase-js le détecte automatiquement (detectSessionInUrl, activé par défaut) et déclenche
+// l'événement PASSWORD_RECOVERY une fois la session établie — on affiche alors le formulaire.
+let handled=false;
+sb.auth.onAuthStateChange((event,session)=>{
+  if(event==='PASSWORD_RECOVERY'){handled=true;showForm();}
+});
+// Filet de sécurité : si l'événement n'est pas capté à temps mais qu'une session existe déjà
+// (ex: rechargement de page après coup), on affiche quand même le formulaire.
+setTimeout(async()=>{
+  if(handled)return;
+  const{data:{session}}=await sb.auth.getSession();
+  if(session)showForm();
+  else show('<div class="err">Lien invalide ou expiré.<br><br><a href="../" style="color:var(--gold)">Retour à la connexion</a></div>');
+},2500);
+</script>
+</body>
+</html>
