@@ -45,6 +45,17 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 .card .nm{font-weight:700;font-size:15px}
 .card .ds{color:var(--muted);font-size:12px;margin-top:4px}
 .footer{margin-top:30px;color:var(--muted);font-size:11px;text-align:center}
+
+/* ── Section "Kiosques terrain" : visuellement distincte + plus discrète (ce ne sont pas des
+   outils que l'admin utilise pour lui-même, juste des pages à installer sur les tablettes). ── */
+.kiosk-head{color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;text-align:center;margin-bottom:16px;padding-top:18px;border-top:1px solid var(--line)}
+.kiosk-head span{font-weight:400;text-transform:none;letter-spacing:0;font-size:11.5px;opacity:.8}
+.kiosk-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.card.kiosk{padding:16px 14px;background:transparent;border-style:dashed;opacity:.85}
+.card.kiosk:hover{opacity:1;border-style:solid;transform:translateY(-2px)}
+.card.kiosk .ic{font-size:22px;margin-bottom:6px}
+.card.kiosk .nm{font-size:13px}
+.card.kiosk .ds{font-size:11px}
 </style>
 </head>
 <body>
@@ -87,7 +98,11 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
   <div class="modules" id="modules"></div>
-  <div class="footer">Eatime360 · v9.4 · Feuille de besoin : recherche produit, cartes mobile compactes, colonnes PDF alignées</div>
+  <div id="kioskSection" class="hidden" style="width:100%;max-width:740px;margin-top:38px">
+    <div class="kiosk-head">📟 Kiosques terrain <span>· tablette PIN, à installer en salle</span></div>
+    <div class="modules kiosk-grid" id="kioskModules"></div>
+  </div>
+  <div class="footer">Eatime360 · v9.5 · Portail réorganisé : hubs Équipe & Finance (onglets) + section Kiosques terrain</div>
 </div>
 
 <script>
@@ -96,23 +111,37 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 let ME=null,MAINT={};
 
+// Modules de travail (1er niveau). Les hubs (`hub:[...]`) regroupent plusieurs modules réels sous
+// une seule carte : la carte s'affiche si AU MOINS un sous-module est accessible, et l'URL pointe
+// vers la coquille d'onglets (chaque onglet reste un module autonome, permissions inchangées).
+// Les kiosques tablette PIN (`kiosk:true`) sont rangés dans une section séparée, plus discrète.
 const MODULES=[
-  {id:'salaries',ic:'👥',nm:'Gestion Salariés',ds:'Fiches, dispos, contraintes, docs'},
-  {id:'calendrier',ic:'📅',nm:'Calendrier RH',ds:'Fins essai/CDD, visites med, RDV, sanctions'},
-  {id:'avertissements',ic:'⚠️',nm:'Avertissements',ds:'Sanctions, procédure légale, lettres PDF', adminOnly:true},
-  {id:'pilotage',ic:'📋',nm:'Pilotage d\'équipe',ds:'Kanban tâches assignées aux salariés'},
-  {id:'planning',ic:'📅',nm:'Planning',ds:'Grille hebdo, auto-fill, vérifs'},
-  {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Kiosk de pointage (1 par snack)'},
-  {id:'dispos',ic:'📆',nm:'Mes indispos',ds:'Espace salarié — demandes'},
-  {id:'moi',ic:'👤',nm:'Mon Espace',ds:'Planning, indispos, pointages perso'},
+  {id:'equipe',ic:'👥',nm:'Équipe',ds:'Salariés, calendrier, avertissements, pilotage, planning',url:'equipe/',hub:['salaries','calendrier','avertissements','pilotage','planning']},
+  {id:'finance',ic:'📈',nm:'Finance',ds:'CA, dépenses, trésorerie, facturation',url:'finance-hub/',hub:['finance','facturation']},
+  {id:'stock',ic:'📦',nm:'Stock',ds:'Référentiel, dashboard, feuille de besoin'},
   {id:'haccp',ic:'🌡',nm:'HACCP',ds:'T°, huiles, réception, nettoyage'},
-  {id:'haccp-kiosk',ic:'📱',nm:'HACCP Kiosque',ds:'Saisie terrain par PIN salarié'},
-  {id:'finance',ic:'📈',nm:'Finance',ds:'CA, dépenses, trésorerie, marge'},
-  {id:'stock',ic:'📦',nm:'Stock (admin)',ds:'Référentiel, dashboard, feuille de besoin'},
-  {id:'stock-kiosk',ic:'📱',nm:'Stock Kiosque',ds:'Inventaire terrain par PIN salarié'},
-  {id:'facturation',ic:'🧾',nm:'Facturation',ds:'BL, factures, suivi des paiements'},
-  {id:'parametres',ic:'⚙',nm:'Paramètres',ds:'Identité, couleurs, accès, permissions'}
+  {id:'moi',ic:'👤',nm:'Mon Espace',ds:'Planning, indispos, pointages perso'},
+  {id:'parametres',ic:'⚙',nm:'Paramètres',ds:'Identité, couleurs, accès, permissions'},
+  // ─── Kiosques terrain (tablette PIN) — section séparée ───
+  {id:'badgeuse',ic:'⏱',nm:'Badgeuse',ds:'Pointage (1 par snack)',kiosk:true},
+  {id:'stock-kiosk',ic:'📱',nm:'Stock Kiosque',ds:'Inventaire terrain par PIN',kiosk:true},
+  {id:'haccp-kiosk',ic:'📱',nm:'HACCP Kiosque',ds:'Saisie terrain par PIN',kiosk:true},
+  {id:'dispos',ic:'📆',nm:'Indispos',ds:'Déclaration par PIN',kiosk:true}
 ];
+// Un sous-module est "utilisable" s'il est accessible ET pas en maintenance (sauf super_admin).
+function subUsable(sub){
+  if(!EatimeAccess.canAccessModule(sub, ME.role, ORG.permissions)) return false;
+  const mt=MAINT[sub];
+  return !(mt && mt.en_maintenance && ME.role!=='super_admin');
+}
+// Une carte est visible si : (hub) au moins un sous-module utilisable ; (sinon) le module accessible.
+// Pour un hub, la maintenance se gère au niveau onglet (dans le hub) — la carte ne se bloque QUE si
+// aucun sous-module n'est utilisable, pour ne pas rendre inaccessible un onglet sain (ex: Facturation
+// quand Finance est en maintenance).
+function cardVisible(m){
+  if(m.hub) return m.hub.some(subUsable);
+  return EatimeAccess.canAccessModule(m.id, ME.role, ORG.permissions);
+}
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
 // Defaults + logique d'accès : source de vérité unique dans access.js (EatimeAccess).
 const DEFAULT_PERMS=EatimeAccess.DEFAULT_PERMS;
@@ -207,16 +236,24 @@ function showApp(){
   else{avEl.style.background='';}
   // Cartes affichées = mêmes règles que le contrôle d'accès des pages (access.js).
   const isSuper=ME.role==='super_admin';
-  const allowed=MODULES.filter(m=>EatimeAccess.canAccessModule(m.id, ME.role, ORG.permissions));
-  document.getElementById('modules').innerHTML=allowed.map(m=>{
-    const mt=MAINT[m.id];
+  const cardHtml=(m)=>{
+    const href=m.url||(m.id+'/');
+    // Les hubs ne portent pas de flag maintenance (l'id 'finance' du hub entrerait sinon en collision
+    // avec le module 'finance') : leur maintenance est gérée onglet par onglet dans le hub lui-même.
+    const mt=m.hub?null:MAINT[m.id];
     const blocked=mt && mt.en_maintenance && !isSuper;
     if(blocked){
       return `<div class="card" style="opacity:.5;cursor:not-allowed;position:relative" title="${(mt.message||'Module en maintenance').replace(/"/g,'&quot;')}"><div style="position:absolute;top:8px;right:8px;background:var(--bad);color:#fff;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em">🔧 Maintenance</div><div class="ic" style="filter:grayscale(1)">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds" style="color:var(--bad);font-size:11px">${mt.message||'Indisponible'}</div></div>`;
     }
     const badgeSuper=mt && mt.en_maintenance && isSuper ? '<div style="position:absolute;top:8px;right:8px;background:var(--warn);color:#111;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em">🔧 Maint (super)</div>' : '';
-    return `<a class="card" href="${m.id}/" style="position:relative">${badgeSuper}<div class="ic">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds">${m.ds}</div></a>`;
-  }).join('')||'<div style="color:var(--muted);text-align:center;padding:30px">Aucun module accessible avec ton rôle.</div>';
+    return `<a class="card${m.kiosk?' kiosk':''}" href="${href}" style="position:relative">${badgeSuper}<div class="ic">${m.ic}</div><div class="nm">${m.nm}</div><div class="ds">${m.ds}</div></a>`;
+  };
+  const mainCards=MODULES.filter(m=>!m.kiosk && cardVisible(m));
+  const kioskCards=MODULES.filter(m=>m.kiosk && cardVisible(m));
+  document.getElementById('modules').innerHTML=mainCards.map(cardHtml).join('')||'<div style="color:var(--muted);text-align:center;padding:30px">Aucun module accessible avec ton rôle.</div>';
+  // Section kiosques terrain : affichée seulement s'il y en a d'accessibles.
+  document.getElementById('kioskSection').classList.toggle('hidden', kioskCards.length===0);
+  document.getElementById('kioskModules').innerHTML=kioskCards.map(cardHtml).join('');
 }
 
 sb.auth.getSession().then(({data})=>{

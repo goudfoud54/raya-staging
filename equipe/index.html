@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
+<title>Équipe — Eatime360</title>
+<link rel="icon" href="data:,">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root,[data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.08);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a}
+[data-theme="light"]{--gold:#c8a035;--bg:#f5f5f7;--card:#fff;--surface:#f0f0f3;--line:rgba(0,0,0,.08);--line-2:rgba(0,0,0,.12);--text:#1a1a1f;--muted:#6b6b78}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.hub-bar{display:flex;align-items:center;gap:4px;padding:0 8px;background:var(--card);border-bottom:1px solid var(--line);flex-shrink:0;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.hub-home{display:flex;align-items:center;gap:7px;padding:11px 14px;color:var(--gold);font-weight:800;font-size:15px;text-decoration:none;white-space:nowrap;flex-shrink:0}
+.hub-home small{color:var(--muted);font-weight:400;font-size:11px}
+.hub-tab{padding:13px 16px;border:none;background:none;color:var(--muted);font-weight:600;font-size:13.5px;cursor:pointer;border-bottom:2.5px solid transparent;white-space:nowrap;font-family:inherit;flex-shrink:0}
+.hub-tab:hover{color:var(--text)}
+.hub-tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+.hub-body{flex:1;position:relative;background:var(--bg)}
+.hub-body iframe{position:absolute;inset:0;width:100%;height:100%;border:none;background:var(--bg)}
+.hub-body iframe.hidden{display:none}
+.hub-msg{display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:14px;padding:30px;text-align:center}
+</style>
+</head>
+<body>
+<div class="hub-bar" id="hubBar">
+  <a href="../" class="hub-home" title="Retour au portail">👥 Équipe <small>· Eatime360</small></a>
+</div>
+<div class="hub-body" id="hubBody">
+  <div class="hub-msg" id="hubMsg">Chargement…</div>
+</div>
+<script>
+const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
+const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+
+// Onglets du hub Équipe. Chaque onglet = un module existant chargé TEL QUEL en iframe (même origine
+// → la session Supabase du navigateur est réutilisée, pas de re-login). Le contrôle d'accès se fait
+// par module (canAccessModule avec l'id réel), exactement comme avant : un onglet non autorisé
+// n'apparaît simplement pas. Ordre = ordre de priorité pour l'onglet par défaut.
+const TABS=[
+  {id:'salaries',      label:'Salariés',       url:'../salaries/'},
+  {id:'calendrier',    label:'Calendrier',     url:'../calendrier/'},
+  {id:'avertissements',label:'Avertissements', url:'../avertissements/'},
+  {id:'pilotage',      label:'Pilotage',       url:'../pilotage/'},
+  {id:'planning',      label:'Planning',       url:'../planning/'},
+];
+
+const frames={}; // id -> iframe (créés paresseusement)
+let ACCESS=[];    // onglets accessibles
+
+function showTab(id){
+  const body=document.getElementById('hubBody');
+  // Lazy : ne créer l'iframe qu'au premier affichage de l'onglet.
+  if(!frames[id]){
+    const tab=TABS.find(t=>t.id===id);
+    const f=document.createElement('iframe');
+    f.src=tab.url; f.id='frame-'+id;
+    // Si l'iframe quitte le dossier de son module (clic "Portail" du module, lien cross-module…),
+    // on sort du hub et on charge cette URL en pleine page : évite le portail imbriqué et préserve
+    // les liens internes existants (ils pointent vers des URLs toujours valides).
+    f.addEventListener('load',function(){
+      try{ const loc=f.contentWindow.location; if(loc.pathname.indexOf('/'+tab.id+'/')===-1) window.top.location.href=loc.href; }catch(e){}
+    });
+    body.appendChild(f);
+    frames[id]=f;
+  }
+  Object.entries(frames).forEach(([fid,f])=>f.classList.toggle('hidden',fid!==id));
+  document.querySelectorAll('.hub-tab').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
+  try{ history.replaceState(null,'','#'+id); }catch(e){}
+}
+
+async function init(){
+  const{data:{session}}=await sb.auth.getSession();
+  if(!session){ location.href='../'; return; }
+  const{data:profile}=await sb.from('profiles').select('role,organization_id').eq('id',session.user.id).maybeSingle();
+  if(!profile){ location.href='../'; return; }
+  const[{data:org},{data:mods}]=await Promise.all([
+    sb.from('organizations').select('permissions,couleur_primaire').eq('id',profile.organization_id).maybeSingle(),
+    sb.from('system_modules').select('module_id,en_maintenance'),
+  ]);
+  const perms=org&&org.permissions;
+  if(org&&org.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
+  const isSuper=profile.role==='super_admin';
+  const maint={};(mods||[]).forEach(m=>{maint[m.module_id]=m.en_maintenance;});
+
+  // Onglets accessibles = accessibles (access.js) ET pas en maintenance (sauf super_admin), un id
+  // par onglet — même granularité que le portail/les pages, la fusion en hub ne change pas les droits.
+  ACCESS=TABS.filter(t=>EatimeAccess.canAccessModule(t.id,profile.role,perms) && (isSuper || !maint[t.id]));
+  if(!ACCESS.length){ location.href='../'; return; } // aucun sous-module utilisable → retour portail
+
+  const bar=document.getElementById('hubBar');
+  ACCESS.forEach(t=>{
+    const b=document.createElement('button');
+    b.className='hub-tab'; b.dataset.id=t.id; b.textContent=t.label;
+    b.onclick=()=>showTab(t.id);
+    bar.appendChild(b);
+  });
+  document.getElementById('hubMsg').remove();
+  // Onglet initial : hash si valide et accessible, sinon 1er accessible.
+  const hash=(location.hash||'').replace('#','');
+  const start=ACCESS.find(t=>t.id===hash)?hash:ACCESS[0].id;
+  showTab(start);
+}
+init();
+</script>
+</body>
+</html>
