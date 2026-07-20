@@ -231,7 +231,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.29 · auto-fill : répartition selon heures_min perso (manque relatif) + multi-snack + alerte effectifs non configurés';
+const VERSION='v0.30 · plafond unifié (heures_max prioritaire, bloquant partout) + phase 2 réparation triée comme la phase 1';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -554,7 +554,7 @@ function renderTable(){
     const _dur2=(d,f)=>{let a=_toMin2(d),b=_toMin2(f);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
     const totMin=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_dur2(c.heure_debut,c.heure_fin),0);
     const totH=totMin/60;
-    const minH=s.heures_min||0, maxH=s.heures_max||s.plafond_heures||48;
+    const minH=s.heures_min||0, maxH=plafondOf(s);
     let recapCls='',recapColor='var(--text)';
     if(maxH && totH>maxH){recapCls='over';recapColor='var(--bad)';}
     else if(minH && totH<minH){recapCls='under';recapColor='var(--warn)';}
@@ -621,7 +621,7 @@ function recomputeAggregates(){
   // Lignes : heures + coût par salarié
   tbl.querySelectorAll('td.rowHours').forEach(td=>{
     const sid=td.dataset.sid, s=salById(sid); if(!s) return;
-    const totH=minOf(sid)/60, minH=s.heures_min||0, maxH=s.heures_max||s.plafond_heures||48;
+    const totH=minOf(sid)/60, minH=s.heures_min||0, maxH=plafondOf(s);
     let color='var(--text)'; if(maxH&&totH>maxH)color='var(--bad)'; else if(minH&&totH<minH)color='var(--warn)'; else if(totH>0)color='var(--ok)';
     const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
     td.style.color=color; td.innerHTML=`${totH.toFixed(1)}h${range}`;
@@ -884,10 +884,11 @@ function renderChecks(){
   list.forEach(s=>{const d=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));const off=7-d.size;if(d.size>0 && off<offMin)noOff.push(`${nameOf(s.id)} : ${d.size} jours travaillés (${off} repos < ${offMin})`);});
   CHECKS.push({lbl:`≥ ${offMin} jour(s) off`,ok:noOff.length===0,details:noOff});
 
-  // 5. Plafond heures (propriété salarié SINON règle plafond_hebdo — même logique que checkPlacement)
+  // 5. Plafond heures — plafond UNIFIÉ (plafondOf : heures_max → plafond_heures → plafond_hebdo → 48),
+  //    exactement le même que le blocage dur de checkPlacement.
   const over=[];
   list.forEach(s=>{
-    const plaf=(s.plafond_heures||_rc.num('plafond_hebdo',48))*60;
+    const plaf=plafondOf(s,_rc)*60;
     const total=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+dur(c.heure_debut,c.heure_fin),0);
     if(total>plaf) over.push(`${nameOf(s.id)} : ${(total/60).toFixed(1)}h > ${plaf/60}h`);
   });
@@ -1827,6 +1828,31 @@ const _pdur=(d,f)=>{let a=_pmin(d),b=_pmin(f);if(a==null||b==null)return 0;if(b<
 // Lit toujours l'état À JOUR (rappelé à chaque candFor, après chaque pose).
 function isMultiSnack(s){ const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:null; return (a&&a.length>1)||!!(s&&s.est_multi); }
 function weekHoursOf(sid){ const s=salById(sid); const src=(s&&isMultiSnack(s))?S.allCreneauxWeek:S.creneaux; return src.filter(c=>c.salarie_id===sid&&c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60; }
+// Plafond d'heures hebdo UNIFIÉ (en heures), source unique pour TOUS les calculs de plafond
+// (blocage checkPlacement, tri candFor via checkPlacement, vérifications, récap coûts/heures).
+// Priorité : heures_max (champ « Heures max / semaine » de la fiche) → plafond_heures → règle
+// globale plafond_hebdo → 48h. heures_max doit RÉELLEMENT plafonner partout, pas seulement s'afficher.
+function plafondOf(sal, rg){
+  const hm=Number(sal&&sal.heures_max); if(hm>0) return hm;
+  const ph=Number(sal&&sal.plafond_heures); if(ph>0) return ph;
+  return (rg&&rg.num)?rg.num('plafond_hebdo',48):_ruleCtx().num('plafond_hebdo',48);
+}
+// Tri des candidats pour un poste h (h.shift.{exp,role}) — PARTAGÉ par la phase 1 (candFor) et la
+// phase 2 (réparation kick-chain) pour qu'elles priorisent à l'identique et ne divergent jamais :
+//  (a) plus grand MANQUE vs heures_min d'abord ; (b) à manque comparable, mono-snack avant multi ;
+//  (c) expérience (poste exp) → équilibrage fin par heures → priorité snack déclarée.
+// Le plafond est déjà garanti par checkPlacement (qui a filtré la liste) → pas re-testé ici.
+function sortCandidates(ids, h){
+  const hw={}, lack={};
+  ids.forEach(id=>{ const s=salById(id); const w=weekHoursOf(id); hw[id]=w; lack[id]=Math.max(0,((s&&s.heures_min)||0)-w); });
+  return ids.slice().sort((a,b)=>{
+    if(Math.abs(lack[a]-lack[b])>0.01) return lack[b]-lack[a];
+    const mA=isMultiSnack(salById(a))?1:0, mB=isMultiSnack(salById(b))?1:0; if(mA!==mB) return mA-mB;
+    if(h.shift.exp){const ae=isExp(a,h.shift.role)?0:1,be=isExp(b,h.shift.role)?0:1;if(ae!==be)return ae-be;}
+    if(Math.abs(hw[a]-hw[b])>1.5) return hw[a]-hw[b];
+    return snackPrioriteOf(salById(a),SNACK.id)-snackPrioriteOf(salById(b),SNACK.id);
+  });
+}
 const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé' };
 // Heure de fin max autorisée pour un shift selon le jour (di 0=lun … 6=dim), en minutes
 // depuis le début de la journée de service (les fins après minuit comptent +1440).
@@ -1920,8 +1946,8 @@ function checkPlacement(sid, shift, date, svc, di, opt){
       if(nm && _pmin(nm.heure_debut)<15*60) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin};
     }
   }
-  // plafond hebdo : propriété salarié SINON règle globale plafond_hebdo (défaut 48h)
-  const plaf=(sal.plafond_heures || R.num('plafond_hebdo',48))*60;
+  // plafond hebdo UNIFIÉ (heures_max → plafond_heures → règle plafond_hebdo → 48h) — plafond DUR
+  const plaf=plafondOf(sal, R)*60;
   const wk=mine.reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0);
   if(wk + _pdur(shift.deb,shift.fin) > plaf+1e-6) return {cle:'plafond',label:`${PLACE_RULES.plafond} (>${(plaf/60)}h)`};
   return null; // ✅ aucune règle active violée
@@ -1977,28 +2003,10 @@ async function autoFillCore(dayIndices){
     if(error)return null; S.creneaux.push(data); S.allCreneauxWeek.push(data); if(_txn)_txn.push({before:null,after:data}); return data;
   };
   const removeCre=async(row)=>{ await sb.from('planning_creneaux').delete().eq('id',row.id); S.creneaux=S.creneaux.filter(c=>c.id!==row.id); S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==row.id); if(_txn)_txn.push({before:row,after:null}); };
-  // Candidats conformes (chaque candidat passe checkPlacement — validité inchangée), triés par :
-  //   (a) MANQUE vs minimum PERSONNEL (heures_min) le plus grand d'abord — celui le plus loin sous
-  //       son propre plancher passe devant (et non plus par heures absolues, cause du sous-remplissage
-  //       d'un salarié à heures_min élevé). Manque calculé tous-snacks-confondus pour les multi-snack.
-  //   (b) à manque comparable : mono-snack prioritaire sur multi-snack (le mono ne peut rattraper que
-  //       sur CE snack ; le multi pourra ailleurs).
-  //   (c) reste (inchangé) : expérience si poste exp → équilibrage fin par heures → priorité snack.
-  // Le plafond dur (plafond_heures/plafond_hebdo) reste géré par checkPlacement : ce tri ne change
-  // QUE l'ordre des candidats déjà valides, jamais leur validité.
-  const candFor=h=>{
-    const cands=S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null);
-    // Mémo par appel → reflète l'état À JOUR de S.creneaux/allCreneauxWeek (candFor rappelé après chaque pose).
-    const hw={}, lack={};
-    cands.forEach(s=>{ const w=weekHoursOf(s.id); hw[s.id]=w; lack[s.id]=Math.max(0,(s.heures_min||0)-w); });
-    return cands.map(s=>s.id).sort((a,b)=>{
-      if(Math.abs(lack[a]-lack[b])>0.01) return lack[b]-lack[a];                         // (a) plus grand manque d'abord
-      const mA=isMultiSnack(salById(a))?1:0, mB=isMultiSnack(salById(b))?1:0; if(mA!==mB) return mA-mB; // (b) mono avant multi
-      if(h.shift.exp){const ae=isExp(a,h.shift.role)?0:1,be=isExp(b,h.shift.role)?0:1;if(ae!==be)return ae-be;} // (c)
-      if(Math.abs(hw[a]-hw[b])>1.5) return hw[a]-hw[b];
-      return snackPrioriteOf(salById(a),SNACK.id)-snackPrioriteOf(salById(b),SNACK.id);
-    });
-  };
+  // Candidats conformes (chaque candidat passe checkPlacement — validité/plafond inchangés), triés par
+  // sortCandidates (logique PARTAGÉE avec la phase 2 : manque vs heures_min, mono>multi, etc.).
+  // sortCandidates lit weekHoursOf en direct → reflète l'état À JOUR de S.creneaux à chaque appel.
+  const candFor=h=>sortCandidates(S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null).map(s=>s.id), h);
   // ── Trous = vagues non couvertes (même cascade jour→service→rôle→vagues, créneaux hors-vague consomment un poste) ──
   const holes=[];
   for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
@@ -2037,7 +2045,15 @@ async function autoFillCore(dayIndices){
   for(const h of open){
     if(!USE_REPAIR || overTime()){ report.push(diag(h)); continue; }
     let repaired=false;
-    for(const moved of placed.slice()){
+    // Ordre d'essai des salariés à déplacer : d'abord ceux déjà À/AU-DESSUS de leur minimum (manque le
+    // plus faible), en dernier ceux encore SOUS leur minimum → on évite de perturber quelqu'un qui a
+    // lui-même encore besoin d'heures. Snapshot trié à l'entrée de ce trou (état courant de placed).
+    const movedList=placed.slice().sort((m1,m2)=>{
+      const l1=Math.max(0,((salById(m1.salarie_id)||{}).heures_min||0)-weekHoursOf(m1.salarie_id));
+      const l2=Math.max(0,((salById(m2.salarie_id)||{}).heures_min||0)-weekHoursOf(m2.salarie_id));
+      return l1-l2;
+    });
+    for(const moved of movedList){
       if(overTime()||repaired)break;
       const X=moved.salarie_id;
       if(!rolesOf(X).includes(h.role))continue;
@@ -2046,10 +2062,13 @@ async function autoFillCore(dayIndices){
       if(checkPlacement(X,h.shift,h.date,h.svc,h.di,{rg})===null){
         const pVag=getShifts(dayJourType(dayIdxOfDate(moved.date)),moved.service,moved.role).find(v=>v.deb===(moved.heure_debut||'').slice(0,5));
         const pSh={deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role,exp:!!(pVag&&pVag.exp)};
-        const Y=S.salaries.find(s=>s.id!==X && checkPlacement(s.id,pSh,moved.date,moved.service,dayIdxOfDate(moved.date),{rg})===null);
-        if(Y){
+        // Remplaçant Y : MÊME priorité que la phase 1 (sortCandidates : manque vs heures_min d'abord,
+        // mono>multi…) au lieu du 1er salarié valide trouvé dans S.salaries.
+        const yIds=S.salaries.filter(s=>s.id!==X && checkPlacement(s.id,pSh,moved.date,moved.service,dayIdxOfDate(moved.date),{rg})===null).map(s=>s.id);
+        const Yid=sortCandidates(yIds,{shift:pSh})[0]||null;
+        if(Yid){
           const rH=await placeCre(X,h.shift,h.date,h.svc);
-          const rP=await placeCre(Y.id,pSh,moved.date,moved.service);
+          const rP=await placeCre(Yid,pSh,moved.date,moved.service);
           if(rH&&rP){ const i=placed.indexOf(moved); if(i>=0)placed.splice(i,1); placed.push(rH,rP); added++; repaired=true; break; }
           if(rH)await removeCre(rH); if(rP)await removeCre(rP);
         }
