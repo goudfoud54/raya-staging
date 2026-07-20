@@ -219,7 +219,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.24 · rapport pointages : oublis de sortie + correction manuelle (admin)';
+const VERSION='v0.25 · règles complètes (repos 11h légal, fins tardives, 35h hebdo) + saisie manuelle bloquante & dérogations';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -621,27 +621,14 @@ async function saveCell(sid,date,svc,which,el){
   if(v===null){setSS('err','Format invalide (HH:MM)');el.value=el.dataset.saved||'';return;}
   el.value=v;
   if(v===(el.dataset.saved||'')) return;
-  // Vérif indispo : si valeur ajoutée (non vide) ET salarié indispo ce jour-là → alerte
-  if(v && POPUP_ALERTS){
-    const ind=hasIndispo(sid,date);
-    if(ind){
-      const sal=S.salaries.find(s=>s.id===sid);
-      const nm=[sal?.prenom,sal?.nom].filter(Boolean).join(' ')||sal?.nom||'?';
-      const motif=ind.motif?` (motif : ${ind.motif})`:'';
-      const plage=(ind.heure_debut||ind.heure_fin)?` de ${(ind.heure_debut||'').slice(0,5)} à ${(ind.heure_fin||'').slice(0,5)}`:'';
-      if(!confirm(`⚠ Indisponibilité déclarée\n\n${nm} a déclaré être INDISPONIBLE ce jour${plage}${motif}.\n\nLe planifier quand même ?`)){
-        el.value=el.dataset.saved||'';return;
-      }
-    }
-  }
-  el.dataset.saved=v;
-  setSS('busy','Enregistrement…');
   const existing=getCreneau(sid,date,svc);
   const before=existing?{...existing}:null;
   const cr=existing?{...existing}:{salarie_id:sid,restaurant_id:SNACK.id,date,service:svc,role:roleMain(sid)||'cuisine'};
   if(which==='deb') cr.heure_debut=v||null; else cr.heure_fin=v||null;
-  // Si vide des 2 côtés → suppression
+  // Si vide des 2 côtés → suppression (aucune validation à faire)
   if(!cr.heure_debut && !cr.heure_fin){
+    el.dataset.saved=v;
+    setSS('busy','Enregistrement…');
     if(cr.id){
       const{error}=await sb.from('planning_creneaux').delete().eq('id',cr.id);
       if(error){setSS('err','Erreur: '+error.message);return;}
@@ -651,6 +638,28 @@ async function saveCell(sid,date,svc,which,el){
     recordAction(before,null);
     setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();recomputeAggregates();return;
   }
+  // ── Validation BLOQUANTE — même source de vérité que l'auto-fill (checkPlacement, mode manuel).
+  //    Ne s'exécute que sur un créneau COMPLET (début ET fin). Une règle active enfreinte bloque
+  //    la saisie ; le manager peut FORCER en dérogation (remplacement d'urgence) via une double
+  //    confirmation + motif obligatoire, journalisée dans planning_derogations. Remplace l'ancien
+  //    simple avertissement d'indispo (désormais capté par checkPlacement → cle 'indispo').
+  let derog=null;
+  if(cr.heure_debut && cr.heure_fin){
+    const di=(new Date(date).getDay()+6)%7;
+    const shift={deb:(cr.heure_debut||'').slice(0,5),fin:(cr.heure_fin||'').slice(0,5),role:cr.role,exp:false};
+    const viol=checkPlacement(sid,shift,date,svc,di,{manual:true,excludeSelf:true});
+    if(viol){
+      const sal=S.salaries.find(s=>s.id===sid); const nm=[sal?.prenom,sal?.nom].filter(Boolean).join(' ')||sal?.nom||'?';
+      if(!confirm(`⛔ Règle enfreinte : ${viol.label}\n\n${nm} · ${JOURS[di]} ${svc} ${shift.deb}→${shift.fin}\n\nCette saisie n'est pas conforme.\nForcer quand même en DÉROGATION (remplacement d'urgence) ?`)){
+        el.value=el.dataset.saved||''; setSS('',''); return;
+      }
+      const motif=(prompt('Dérogation — motif obligatoire (ex. remplacement urgent) :','')||'').trim();
+      if(!motif){ el.value=el.dataset.saved||''; setSS('err','Dérogation annulée : motif requis'); return; }
+      derog={viol,motif};
+    }
+  }
+  el.dataset.saved=v;
+  setSS('busy','Enregistrement…');
   // upsert
   const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin};
   const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
@@ -658,7 +667,8 @@ async function saveCell(sid,date,svc,which,el){
   S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));S.creneaux.push(data);
   S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
   recordAction(before,data);
-  setSS('ok','Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();recomputeAggregates();
+  if(derog) logDerogation(sid,date,svc,derog.viol,derog.motif);
+  setSS('ok',derog?'Enregistré — dérogation ⚠':'Enregistré ✓');renderEffectifs();renderChecks();updateConflictsUI();recomputeAggregates();
   // Alerte si conflit avec un autre snack (sauf si popups désactivés)
   if(POPUP_ALERTS && CONFLICTS.has(`${sid}|${date}|${svc}`)){
     const sal=S.salaries.find(x=>x.id===sid);
@@ -666,16 +676,26 @@ async function saveCell(sid,date,svc,which,el){
     alert(`⚠ Conflit inter-snack\n\n${[sal?.prenom,sal?.nom].filter(Boolean).join(' ')} est déjà sur :\n${det}\n\nLes cellules en conflit sont marquées en rouge.`);
   }
 }
+// Journalise une dérogation manuelle. forced_by = utilisateur courant (imposé aussi par la RLS
+// WITH CHECK). Best-effort : un échec de log ne bloque jamais l'enregistrement du créneau.
+async function logDerogation(sid,date,svc,viol,motif){
+  try{
+    await sb.from('planning_derogations').insert({restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,regle_cle:viol.cle,regle_label:viol.label,motif,forced_by:ME&&ME.id});
+  }catch(e){ console.warn('[planning] journalisation dérogation échouée', e); }
+}
 
 let CHECKS=[];
 function renderChecks(){
   CHECKS=[];
+  const _rc=_ruleCtx();
   const toMin=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
   const dur=(deb,fin)=>{let a=toMin(deb),b=toMin(fin);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
   const dayIdxOfDate=d=>(new Date(d).getDay()+6)%7;
   const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
 
-  // 1. Effectifs cibles
+  // 1. Effectifs cibles — effectifs_exacts ON : tout écart (sous OU sur-effectif) est signalé ;
+  //    OFF : seul le SOUS-effectif l'est (le sur-effectif est toléré).
+  const _exact=_rc.on('effectifs_exacts',true);
   const eff=[], expMiss=[];
   for(let i=0;i<7;i++)for(const svc of ['midi','soir']){
     const t=targetFor(i,svc);const date=fmtDate(dateOfDay(i));
@@ -683,7 +703,7 @@ function renderChecks(){
       const tgt=t[r.cle]||{cible:0};
       const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
       const n=assigned.length;
-      if(n!==tgt.cible) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${n}/${tgt.cible}`);
+      if(_exact ? (n!==tgt.cible) : (n<tgt.cible)) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${n}/${tgt.cible}`);
       // Expérimenté requis : groupé PAR HORAIRE de début (plusieurs postes peuvent commencer à la même heure,
       // certains exp d'autres non → on compare le nombre d'expérimentés PRÉSENTS au nombre REQUIS à cet horaire).
       const expByDeb={};
@@ -711,33 +731,47 @@ function renderChecks(){
   }
   CHECKS.push({lbl:'Pas de doublon inter-snack',ok:conf.length===0,details:conf});
 
-  // 3. Coupure ≥ 3h
+  // 3. Coupure minimale (valeur de la règle coupure_min, comme checkPlacement — plus de 3h codé en dur)
+  const coupMin=_rc.num('coupure_min',3);
   const coup=[];
   const bySD={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD[k]=bySD[k]||{};bySD[k][c.service]=c;});
   Object.entries(bySD).forEach(([k,svcs])=>{
     if(svcs.midi?.heure_fin && svcs.soir?.heure_debut){
       const diff=(toMin(svcs.soir.heure_debut)-toMin(svcs.midi.heure_fin))/60;
-      if(diff>0 && diff<3){const[sid,date]=k.split('|');coup.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${diff.toFixed(1)}h entre midi et soir`);}
+      if(diff>0 && diff<coupMin){const[sid,date]=k.split('|');coup.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${diff.toFixed(1)}h entre midi et soir`);}
     }
   });
-  CHECKS.push({lbl:'Coupure ≥ 3h',ok:coup.length===0,details:coup});
+  CHECKS.push({lbl:`Coupure ≥ ${coupMin}h`,ok:coup.length===0,details:coup});
 
-  // 4. ≥ 1 jour off
+  // 4. Jours de repos mini / semaine (valeur jour_off_min, comme checkPlacement — plus de « 7/7 » codé en dur)
+  const offMin=_rc.num('jour_off_min',1);
   const noOff=[];
   const list=S.salaries.filter(s=>worksAt(s,SNACK.id));
-  list.forEach(s=>{const d=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));if(d.size>=7)noOff.push(nameOf(s.id)+' : 7 jours travaillés');});
-  CHECKS.push({lbl:'≥ 1 jour off',ok:noOff.length===0,details:noOff});
+  list.forEach(s=>{const d=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));const off=7-d.size;if(d.size>0 && off<offMin)noOff.push(`${nameOf(s.id)} : ${d.size} jours travaillés (${off} repos < ${offMin})`);});
+  CHECKS.push({lbl:`≥ ${offMin} jour(s) off`,ok:noOff.length===0,details:noOff});
 
-  // 5. Plafond heures
+  // 5. Plafond heures (propriété salarié SINON règle plafond_hebdo — même logique que checkPlacement)
   const over=[];
   list.forEach(s=>{
-    const plaf=(s.plafond_heures||48)*60;
+    const plaf=(s.plafond_heures||_rc.num('plafond_hebdo',48))*60;
     const total=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+dur(c.heure_debut,c.heure_fin),0);
     if(total>plaf) over.push(`${nameOf(s.id)} : ${(total/60).toFixed(1)}h > ${plaf/60}h`);
   });
   CHECKS.push({lbl:'Plafond heures hebdo',ok:over.length===0,details:over});
 
-  // 6. Amplitude ≤ 12h (par bloc consécutif — la coupure ≥ 30 min sépare les blocs)
+  // 5b. Heure de fin max (fin_semaine lun→jeu / fin_weekend ven+sam) — miroir a posteriori des
+  //     plafonds durs de checkPlacement, pour que toute règle dure apparaisse aussi dans ce panneau.
+  const finCap=[];
+  S.creneaux.forEach(c=>{
+    if(!c.heure_fin || !c.heure_debut) return;
+    const cap=_endCapMin(_rc, dayIdxOfDate(c.date)); if(!cap) return;
+    let endM=toMin(c.heure_fin), debM=toMin(c.heure_debut); if(endM==null||debM==null)return; if(endM<=debM)endM+=1440;
+    if(endM>cap.capM) finCap.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} ${c.service} : fin ${(c.heure_fin||'').slice(0,5)} (au-delà du plafond ${cap.cle==='fin_semaine'?'lun→jeu':'ven & sam'})`);
+  });
+  CHECKS.push({lbl:'Heure de fin max (jour)',ok:finCap.length===0,details:finCap});
+
+  // 6. Amplitude max consécutive (valeur amplitude_max, comme checkPlacement — plus de 12h codé en dur)
+  const ampMax=_rc.num('amplitude_max',12);
   const amp=[];
   const bySD2={};S.creneaux.forEach(c=>{const k=c.salarie_id+'|'+c.date;bySD2[k]=bySD2[k]||{};bySD2[k][c.service]=c;});
   Object.entries(bySD2).forEach(([k,svcs])=>{
@@ -754,10 +788,10 @@ function renderChecks(){
     else if(s) blocs.push(s);
     for(const b of blocs){
       const a=b.f-b.d;
-      if(a>12*60){const[sid,date]=k.split('|');amp.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${(a/60).toFixed(1)}h consécutives`);}
+      if(a>ampMax*60){const[sid,date]=k.split('|');amp.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]} : ${(a/60).toFixed(1)}h consécutives`);}
     }
   });
-  CHECKS.push({lbl:'Amplitude ≤ 12h consécutives',ok:amp.length===0,details:amp});
+  CHECKS.push({lbl:`Amplitude ≤ ${ampMax}h consécutives`,ok:amp.length===0,details:amp});
 
   // 7. Fin 2h → pas matin
   const fin2=[];
@@ -772,18 +806,43 @@ function renderChecks(){
   });
   CHECKS.push({lbl:'Fin 2h → pas matin J+1',ok:fin2.length===0,details:fin2});
 
-  // 8. Repos quotidien (fin soir J → matin J+1) — seulement si la règle est activée
-  const _rcReg=_ruleCtx();
-  if(_rcReg.on('repos_quotidien',false)){
-    const reposMin=_rcReg.num('repos_quotidien_h',11)*60, reposBad=[];
+  // 8. Repos quotidien (fin soir J → matin J+1) — TOUJOURS contrôlé (obligation légale 11h).
+  //    Fin de soir en absolu (≤ début ⇒ +24h) pour ne pas sous-estimer le repos quand le soir
+  //    finit après minuit (ex. 00:30) — même correction que dans checkPlacement.
+  {
+    const reposMin=_rc.num('repos_quotidien_h',11)*60, reposBad=[];
+    const finAbs=(deb,fin)=>{let a=toMin(deb),b=toMin(fin);if(a==null||b==null)return null;if(b<=a)b+=1440;return b;};
     Object.entries(bySD2).forEach(([k,svcs])=>{
       const soir=svcs.soir; if(!soir||!soir.heure_fin)return;
       const[sid,date]=k.split('|'); const nd=fmtDate(new Date(new Date(date).getTime()+86400000));
       const nm=S.creneaux.find(c=>c.salarie_id===sid && c.date===nd && c.service==='midi' && c.heure_debut);
-      if(nm){ const g=(toMin(nm.heure_debut)+1440)-toMin(soir.heure_fin); if(g<reposMin) reposBad.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]}→${JOURS[dayIdxOfDate(nd)]} : ${(g/60).toFixed(1)}h de repos (min ${reposMin/60}h)`); }
+      if(nm){ const se=finAbs(soir.heure_debut,soir.heure_fin); if(se==null)return; const g=(toMin(nm.heure_debut)+1440)-se; if(g<reposMin) reposBad.push(`${nameOf(sid)} · ${JOURS[dayIdxOfDate(date)]}→${JOURS[dayIdxOfDate(nd)]} : ${(g/60).toFixed(1)}h de repos (min ${reposMin/60}h)`); }
     });
-    CHECKS.push({lbl:`Repos quotidien ≥ ${reposMin/60}h`,ok:reposBad.length===0,details:reposBad});
+    CHECKS.push({lbl:`Repos quotidien ≥ ${reposMin/60}h (légal)`,ok:reposBad.length===0,details:reposBad});
   }
+
+  // 8b. Repos HEBDOMADAIRE ≥ 35h consécutives (24h hebdo + 11h quotidien accolés).
+  //     Vérif réelle : on cherche le plus grand créneau de repos continu sur la semaine
+  //     affichée (segments de travail fusionnés, en minutes depuis lundi 00:00, plus les
+  //     bords de semaine). Un simple « 1 jour off » ne garantit pas toujours 35h.
+  const repos35=[];
+  const listW=S.salaries.filter(s=>onRoster(s) && worksAt(s,SNACK.id));
+  listW.forEach(s=>{
+    const segs=[];
+    S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut && c.heure_fin).forEach(c=>{
+      const di=dayIdxOfDate(c.date); let a=di*1440+toMin(c.heure_debut), b=di*1440+toMin(c.heure_fin);
+      if(b<=a)b+=1440; segs.push([a,b]);
+    });
+    if(!segs.length) return; // aucun créneau → semaine entièrement de repos, conforme
+    segs.sort((x,y)=>x[0]-y[0]);
+    const merged=[segs[0].slice()];
+    for(let i=1;i<segs.length;i++){ const last=merged[merged.length-1]; if(segs[i][0]<=last[1]) last[1]=Math.max(last[1],segs[i][1]); else merged.push(segs[i].slice()); }
+    let maxGap=merged[0][0];                       // repos du lundi 00:00 au 1er créneau
+    maxGap=Math.max(maxGap, 10080-merged[merged.length-1][1]); // du dernier créneau au dimanche 24:00
+    for(let i=1;i<merged.length;i++) maxGap=Math.max(maxGap, merged[i][0]-merged[i-1][1]);
+    if(maxGap < 35*60) repos35.push(`${nameOf(s.id)} : plus long repos continu ${(maxGap/60).toFixed(1)}h (min 35h)`);
+  });
+  CHECKS.push({lbl:'Repos hebdomadaire ≥ 35h',ok:repos35.length===0,details:repos35});
 
   // 9. Alternance / CFA — aucun service sur jour école/examen + veille protégée
   if(S.altJours && Object.keys(S.altJours).length){
@@ -794,13 +853,58 @@ function renderChecks(){
       if(ad==='ecole'||ad==='examen'){ cfaViol.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} : placé un jour ${ad==='examen'?'d\'EXAMEN':'d\'ÉCOLE'} CFA`); return; }
       const nd=fmtDate(new Date(new Date(c.date).getTime()+86400000)); const nextAd=altDayType(c.salarie_id,nd);
       if(nextAd==='ecole'||nextAd==='examen'){
-        const r=_rcReg.raw(nextAd==='examen'?'fin_veille_examen':'fin_veille_ecole');
+        const r=_rc.raw(nextAd==='examen'?'fin_veille_examen':'fin_veille_ecole');
         const seuil=(r&&r.active===false)?null:((r&&r.valeur)||(nextAd==='examen'?'19:00':'22:00'));
         if(seuil){ const fm=toMin(c.heure_fin),dm=toMin(c.heure_debut); const late=(fm!=null&&dm!=null&&fm<=dm)||(fm!=null&&fm>toMin(seuil));
           if(late) cfaViol.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} : fin ${(c.heure_fin||'').slice(0,5)} la veille d'un ${nextAd==='examen'?'examen':'jour d\'école'} (seuil ${seuil})`); }
       }
     });
     CHECKS.push({lbl:'Alternance (école / veille)',ok:cfaViol.length===0,details:cfaViol});
+  }
+
+  // 10. Couverture continue (soft, activable) — pour chaque jour/service/rôle requis, les
+  //     créneaux de ce rôle doivent couvrir sans trou la plage travaillée (≥15 min sans
+  //     personne du rôle = trou). On suit la fin MAX courante pour tolérer les chevauchements.
+  if(_rc.on('couverture_continue',false)){
+    const gaps=[];
+    for(let i=0;i<7;i++)for(const svc of ['midi','soir']){
+      const date=fmtDate(dateOfDay(i)); const t=targetFor(i,svc);
+      S.orgRoles.forEach(r=>{
+        if(!((t[r.cle]||{}).cible)) return;
+        const cre=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&c.heure_fin&&onRoster(salById(c.salarie_id)))
+          .map(c=>{let a=toMin(c.heure_debut),b=toMin(c.heure_fin);if(b<=a)b+=1440;return [a,b];}).sort((x,y)=>x[0]-y[0]);
+        if(cre.length<2) return;
+        let end=cre[0][1];
+        for(let j=1;j<cre.length;j++){ if(cre[j][0]-end>=15){ gaps.push(`${JOURS[i]} ${svc} · ${r.nom} : trou de ${((cre[j][0]-end)/60).toFixed(1)}h dans la couverture`); break; } end=Math.max(end,cre[j][1]); }
+      });
+    }
+    CHECKS.push({lbl:'Couverture continue',ok:gaps.length===0,details:gaps});
+  }
+
+  // 11. Départs échelonnés (soft, activable) — signale les « pics » de départ : ≥3 personnes
+  //     qui finissent exactement à la même heure sur un même service.
+  if(_rc.on('departs_echelonnes',false)){
+    const pics=[];
+    for(let i=0;i<7;i++)for(const svc of ['midi','soir']){
+      const date=fmtDate(dateOfDay(i)); const byFin={};
+      S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.heure_fin&&onRoster(salById(c.salarie_id))).forEach(c=>{const f=(c.heure_fin||'').slice(0,5);byFin[f]=(byFin[f]||0)+1;});
+      Object.entries(byFin).forEach(([f,n])=>{ if(n>=3) pics.push(`${JOURS[i]} ${svc} : ${n} départs simultanés à ${f}`); });
+    }
+    CHECKS.push({lbl:'Départs échelonnés',ok:pics.length===0,details:pics});
+  }
+
+  // 12. Temps partiel — heures complémentaires plafonnées (soft, activable). Proxy « temps
+  //     partiel » = heures_max renseigné et < 35h (aucun champ dédié en base). Cap = heures_max
+  //     × pct/100. Signalement seulement : heures_max n'est saisi que sur une partie des fiches.
+  if(_rc.on('temps_partiel_max',false)){
+    const pct=_rc.num('temps_partiel_max',140)/100, tp=[];
+    listW.forEach(s=>{
+      const base=Number(s.heures_max); if(!(base>0 && base<35)) return;
+      const cap=base*pct;
+      const h=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+dur(c.heure_debut,c.heure_fin),0)/60;
+      if(h>cap+1e-6) tp.push(`${nameOf(s.id)} : ${h.toFixed(1)}h > ${cap.toFixed(1)}h (contrat ${base}h × ${(pct*100).toFixed(0)}%)`);
+    });
+    CHECKS.push({lbl:'Heures compl. temps partiel',ok:tp.length===0,details:tp});
   }
 
   document.getElementById('checks').innerHTML=CHECKS.map((c,i)=>{
@@ -1050,7 +1154,16 @@ function openReglages(){
         valueInput=`<input type="text" value="${r.valeur||''}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:120px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px">`;
       }
 
-      if(isBool){
+      if(isBool && r.cle==='repos_quotidien'){
+        // Obligation légale (repos quotidien 11h) : toujours appliquée, non désactivable.
+        // Case verrouillée cochée + mention explicite — un admin ne doit jamais pouvoir la contourner.
+        html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line)">
+          <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:not-allowed;opacity:.9">
+            <input type="checkbox" checked disabled style="width:18px;height:18px;cursor:not-allowed">
+            <span style="font-size:13.5px">${meta.lbl} <span style="color:var(--gold);font-size:11px;font-weight:600;border:1px solid var(--gold);border-radius:4px;padding:1px 6px;margin-left:6px">🔒 obligation légale</span></span>
+          </label>
+        </div>`;
+      } else if(isBool){
         html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line)">
           <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
             <input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${r.id}','active',this.checked)" style="width:18px;height:18px;cursor:pointer">
@@ -1500,14 +1613,31 @@ function _ruleCtx(){
 }
 const _pmin=t=>{if(!t)return null;const[h,mi]=t.slice(0,5).split(':').map(Number);return h*60+mi;};
 const _pdur=(d,f)=>{let a=_pmin(d),b=_pmin(f);if(a==null||b==null)return 0;if(b<=a)b+=1440;return b-a;};
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien insuffisant', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé' };
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé' };
+// Heure de fin max autorisée pour un shift selon le jour (di 0=lun … 6=dim), en minutes
+// depuis le début de la journée de service (les fins après minuit comptent +1440).
+// Lun→jeu : règle fin_semaine · ven+sam : règle fin_weekend · dim : non plafonné (aucune
+// des deux règles ne le mentionne). Une valeur vide ou '00:00' = sentinelle « pas de plafond ».
+function _endCapMin(R,di){
+  const row = (di<=3)?R.raw('fin_semaine') : ((di===4||di===5)?R.raw('fin_weekend') : null);
+  if(!row || row.active===false) return null;
+  const val=row.valeur; if(!val || val==='00:00') return null;
+  let capM=_pmin(val); if(capM==null) return null;
+  if(capM<=360) capM+=1440;   // 00:30–06:00 → fermeture d'après-minuit
+  return {capM, cle:(di<=3?'fin_semaine':'fin_weekend')};
+}
 // sid: salarié testé · shift={deb,fin,role,exp} · date 'YYYY-MM-DD' · svc · di=0..6 · opt.{rg,excludeSelf}
 function checkPlacement(sid, shift, date, svc, di, opt){
   opt=opt||{}; const R=opt.rg||_ruleCtx(); const sal=salById(sid);
   if(!sal || !onRoster(sal))               return {cle:'roster', label:PLACE_RULES.roster};
   if(!worksAt(sal, SNACK.id))               return {cle:'resto',  label:PLACE_RULES.resto};
-  if(!rolesOf(sid).includes(shift.role))    return {cle:'role',   label:PLACE_RULES.role};
-  if(shift.exp && !isExp(sid, shift.role))  return {cle:'exp',    label:PLACE_RULES.exp};
+  // En saisie MANUELLE (opt.manual) on saute les contrôles propres au remplissage d'une
+  // vague précise : « rôle exact du poste » et « expérimenté requis ». Ils n'ont de sens
+  // que pour l'auto-fill (choisir QUI comble un poste donné) ; un manager qui pose un
+  // créneau à la main ne doit pas être bloqué là-dessus. Tous les contrôles portant sur la
+  // PERSONNE et le droit du travail (indispo, CFA, repos, coupure, amplitude, plafond…) restent.
+  if(!opt.manual && !rolesOf(sid).includes(shift.role))    return {cle:'role',   label:PLACE_RULES.role};
+  if(!opt.manual && shift.exp && !isExp(sid, shift.role))  return {cle:'exp',    label:PLACE_RULES.exp};
   const mine=S.creneaux.filter(c=>c.salarie_id===sid && c.heure_debut && !(opt.excludeSelf && c.date===date && c.service===svc));
   const dayCre=mine.filter(c=>c.date===date);
   if(dayCre.some(c=>c.service===svc))       return {cle:'dbl_svc', label:PLACE_RULES.dbl_svc};
@@ -1543,11 +1673,23 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   else            { if(midi) add(midi.heure_debut,midi.heure_fin); add(shift.deb,shift.fin); }
   segs.sort((x,y)=>x[0]-y[0]); let cur=null;
   for(const[a,b]of segs){ if(cur&&a-cur[1]<30)cur[1]=Math.max(cur[1],b); else cur=[a,b]; if(cur[1]-cur[0]>amp) return {cle:'amplitude_max',label:PLACE_RULES.amplitude_max}; }
-  // repos quotidien J soir → J+1 midi (opt-in : seulement si la règle est activée)
-  if(R.on('repos_quotidien',false)){
+  // heure de fin max selon le jour (fin_semaine lun→jeu / fin_weekend ven+sam) — dur
+  const _cap=_endCapMin(R,di);
+  if(_cap){ let endM=_pmin(shift.fin), debM=_pmin(shift.deb);
+    if(endM!=null && debM!=null){ if(endM<=debM) endM+=1440; if(endM>_cap.capM) return {cle:_cap.cle,label:PLACE_RULES[_cap.cle]}; } }
+  // repos quotidien fin soir → matin J+1 (11h, obligation légale — TOUJOURS appliqué, non désactivable).
+  // fin de shift calculée en absolu (une fin ≤ début = shift à cheval sur minuit → +24h), sinon un soir
+  // finissant à 00:30 serait faussement lu comme 00:30 « le matin même » et sous-estimerait le repos.
+  {
     const repos=R.num('repos_quotidien_h',11)*60;
-    if(svc==='midi'){ const prev=fmtDate(new Date(new Date(date).getTime()-86400000)); const ps=mine.find(c=>c.date===prev&&c.service==='soir'&&c.heure_fin); if(ps){ const g=(_pmin(shift.deb)+1440)-_pmin(ps.heure_fin); if(g<repos) return {cle:'repos_quot',label:PLACE_RULES.repos_quot}; } }
-    else { const next=fmtDate(new Date(new Date(date).getTime()+86400000)); const ns=mine.find(c=>c.date===next&&c.service==='midi'&&c.heure_debut); if(ns){ const g=(_pmin(ns.heure_debut)+1440)-_pmin(shift.fin); if(g<repos) return {cle:'repos_quot',label:PLACE_RULES.repos_quot}; } }
+    const _finAbs=(deb,fin)=>{let a=_pmin(deb),b=_pmin(fin);if(a==null||b==null)return null;if(b<=a)b+=1440;return b;};
+    if(svc==='midi'){ // ce midi : la veille au soir laisse-t-elle 11h ?
+      const prev=fmtDate(new Date(new Date(date).getTime()-86400000)); const ps=mine.find(c=>c.date===prev&&c.service==='soir'&&c.heure_fin);
+      if(ps){ const pe=_finAbs(ps.heure_debut,ps.heure_fin); if(pe!=null){ const g=(_pmin(shift.deb)+1440)-pe; if(g<repos) return {cle:'repos_quot',label:PLACE_RULES.repos_quot}; } }
+    } else { // ce soir : laisse-t-il 11h avant le midi du lendemain ?
+      const next=fmtDate(new Date(new Date(date).getTime()+86400000)); const ns=mine.find(c=>c.date===next&&c.service==='midi'&&c.heure_debut);
+      if(ns){ const se=_finAbs(shift.deb,shift.fin); if(se!=null){ const g=(_pmin(ns.heure_debut)+1440)-se; if(g<repos) return {cle:'repos_quot',label:PLACE_RULES.repos_quot}; } }
+    }
   }
   // jours de repos mini / semaine (défaut 1 → max 6 jours travaillés)
   const offMin=R.num('jour_off_min',1);
