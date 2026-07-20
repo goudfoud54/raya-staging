@@ -1044,6 +1044,13 @@ async function saveSalarie(){
   payload.snacks_priorites=_spArr;
   payload.snack_origine_id=_spArr.length?_spArr[0].restaurant_id:null;
   payload.est_multi=_spArr.length>1;
+  // organization_id manquait ici (bug) : le payload de création n'incluait jamais l'org de
+  // l'admin connecté, contrairement à tous les autres inserts de ce fichier (org_roles,
+  // alternance, cfa_color_mappings) — résultat : un salarié fraîchement créé avait
+  // organization_id=NULL, invisible pour verify-pin/create-pointage (filtrées par org),
+  // d'où "code inconnu" alors que le PIN était bien enregistré. Ne s'applique qu'à la
+  // création : ne jamais réécrire l'org d'une fiche existante lors d'une simple édition.
+  if(!currentFiche.id) payload.organization_id=ME.organization_id;
 
   // Création : besoin du nom au minimum
   if(!currentFiche.id){
