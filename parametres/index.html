@@ -278,6 +278,18 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
           <div class="fld"><label>Nom</label><input id="resto_nom" placeholder="Snack Raya Centre"></div>
           <div class="fld"><label>Code PIN (4 chiffres, optionnel — kiosques)</label><input id="resto_pin" maxlength="6" inputmode="numeric"></div>
         </div>
+        <div style="background:linear-gradient(135deg,rgba(200,160,53,.07),rgba(200,160,53,.02));border:1px solid var(--line-2);border-radius:9px;padding:12px 14px;margin:4px 0 14px">
+          <div style="font-size:12.5px;font-weight:600;margin-bottom:3px">🕒 Heures d'ouverture <span style="color:var(--muted);font-weight:400">· recommandé</span></div>
+          <div style="color:var(--muted);font-size:11px;margin-bottom:10px;line-height:1.5">Sert à calibrer automatiquement les plafonds de fin de service du planning. Deux plages : semaine (lun→jeu) et week-end (ven &amp; sam). Modifiable plus tard.</div>
+          <div class="grid2">
+            <div class="fld"><label>Ouverture semaine (lun→jeu)</label><input type="time" id="resto_ouv_sem"></div>
+            <div class="fld"><label>Fermeture semaine (lun→jeu)</label><input type="time" id="resto_ferm_sem"></div>
+          </div>
+          <div class="grid2">
+            <div class="fld"><label>Ouverture week-end (ven &amp; sam)</label><input type="time" id="resto_ouv_we"></div>
+            <div class="fld"><label>Fermeture week-end (ven &amp; sam)</label><input type="time" id="resto_ferm_we"></div>
+          </div>
+        </div>
         <button class="btn" onclick="createResto()">+ Créer le restaurant</button>
         <div id="resto_err" style="color:var(--bad);font-size:13px;margin-top:8px"></div>
       </div>
@@ -459,8 +471,10 @@ async function loadProfileAndShow(){
     link.href=link.href+encodeURIComponent(ORG.nom||'');
     loadWaUserStatus();
   }
-  // Onglet par défaut : la dernière vue ouverte (localStorage) ou Apparence
-  const last=localStorage.getItem('parametres_tab')||'apparence';
+  // Onglet par défaut : lien direct #onglet (ex. depuis le planning) > dernière vue > Apparence
+  const validTabs=['apparence','organisation','societe','utilisateurs','restaurants','permissions','integrations','superadmin'];
+  const hashTab=(location.hash||'').replace('#','');
+  const last=validTabs.includes(hashTab)?hashTab:(localStorage.getItem('parametres_tab')||'apparence');
   setTab(last);
 }
 function setTab(name){
@@ -722,7 +736,7 @@ async function removeUser(id,name){
 // ────────────────────────────────  RESTAURANTS / SNACKS  ────────────────────────────────
 let RESTOS_CACHE=[];
 async function loadRestos(){
-  const{data,error}=await sb.from('restaurants').select('id,nom,code_pin,actif,created_at,adresse,code_postal,ville').eq('organization_id',ORG.id).order('nom');
+  const{data,error}=await sb.from('restaurants').select('id,nom,code_pin,actif,created_at,adresse,code_postal,ville,ouverture_semaine,fermeture_semaine,ouverture_weekend,fermeture_weekend').eq('organization_id',ORG.id).order('nom');
   if(error){document.getElementById('restosList').innerHTML='<div style="color:var(--bad)">'+error.message+'</div>';return;}
   RESTOS_CACHE=data||[];
   if(!RESTOS_CACHE.length){document.getElementById('restosList').innerHTML='<div style="color:var(--muted);padding:8px">Aucun restaurant. Crée le premier ci-dessous.</div>';return;}
@@ -733,7 +747,7 @@ async function loadRestos(){
       <div style="width:30px;height:30px;border-radius:8px;background:${bg}33;color:${bg};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">🏪</div>
       <div style="flex:1;min-width:0">
         <div style="font-weight:600">${r.nom} ${r.actif?'':'<span style="color:var(--muted);font-weight:400;font-size:11px">(inactif)</span>'}</div>
-        <div style="color:var(--muted);font-size:11.5px">PIN : <code style="background:var(--surface);padding:1px 6px;border-radius:4px">${r.code_pin||'—'}</code> · créé le ${new Date(r.created_at).toLocaleDateString('fr-FR')}</div>
+        <div style="color:var(--muted);font-size:11.5px">PIN : <code style="background:var(--surface);padding:1px 6px;border-radius:4px">${r.code_pin||'—'}</code> · créé le ${new Date(r.created_at).toLocaleDateString('fr-FR')}${(r.fermeture_semaine||r.fermeture_weekend)?` · 🕒 sem. ${(r.ouverture_semaine||'?').slice(0,5)}–${(r.fermeture_semaine||'?').slice(0,5)} / w-e ${(r.ouverture_weekend||'?').slice(0,5)}–${(r.fermeture_weekend||'?').slice(0,5)}`:''}</div>
       </div>
       <button class="btn ghost sm" onclick="openEditResto('${r.id}')">✎</button>
       <button class="btn ghost sm" onclick="toggleResto('${r.id}',${!r.actif})" title="${r.actif?'Désactiver':'Réactiver'}">${r.actif?'⏸':'▶'}</button>
@@ -750,10 +764,12 @@ async function createResto(){
   const err=document.getElementById('resto_err');err.textContent='';
   if(!nom){err.textContent='Nom requis';return;}
   if(pin && !/^\d{3,6}$/.test(pin)){err.textContent='PIN : 3 à 6 chiffres';return;}
-  const{error}=await sb.from('restaurants').insert({organization_id:ORG.id,nom,code_pin:pin,actif:true});
+  const hv=id=>{const e=document.getElementById(id);return e&&e.value?e.value:null;};
+  const{error}=await sb.from('restaurants').insert({organization_id:ORG.id,nom,code_pin:pin,actif:true,
+    ouverture_semaine:hv('resto_ouv_sem'),fermeture_semaine:hv('resto_ferm_sem'),
+    ouverture_weekend:hv('resto_ouv_we'),fermeture_weekend:hv('resto_ferm_we')});
   if(error){err.textContent=error.message;return;}
-  document.getElementById('resto_nom').value='';
-  document.getElementById('resto_pin').value='';
+  ['resto_nom','resto_pin','resto_ouv_sem','resto_ferm_sem','resto_ouv_we','resto_ferm_we'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   toast('✓ Restaurant créé');
   loadRestos();
 }
@@ -791,6 +807,17 @@ async function openEditResto(id){
     <div class="grid2">
       <div class="fld"><label>Code postal</label><input id="er_cp" value="${(r.code_postal||'').replace(/"/g,'&quot;')}"></div>
       <div class="fld"><label>Ville</label><input id="er_ville" value="${(r.ville||'').replace(/"/g,'&quot;')}"></div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">🕒 Heures d'ouverture</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Utilisées pour proposer automatiquement les plafonds de fin de service dans le planning (règles fin_semaine / fin_weekend). Deux plages : semaine (lun→jeu) et week-end (ven &amp; sam).</div>
+    <div class="grid2">
+      <div class="fld"><label>Ouverture semaine (lun→jeu)</label><input type="time" id="er_ouv_sem" value="${(r.ouverture_semaine||'').slice(0,5)}"></div>
+      <div class="fld"><label>Fermeture semaine (lun→jeu)</label><input type="time" id="er_ferm_sem" value="${(r.fermeture_semaine||'').slice(0,5)}"></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Ouverture week-end (ven &amp; sam)</label><input type="time" id="er_ouv_we" value="${(r.ouverture_weekend||'').slice(0,5)}"></div>
+      <div class="fld"><label>Fermeture week-end (ven &amp; sam)</label><input type="time" id="er_ferm_we" value="${(r.fermeture_weekend||'').slice(0,5)}"></div>
     </div>
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">🔔 Alertes feuille de stock</div>
@@ -887,7 +914,8 @@ async function saveEditResto(id){
   if(pin && !/^\d{3,6}$/.test(pin)){err.textContent='PIN : 3 à 6 chiffres';return;}
   // 1. update restaurant
   const v=id2=>{const e=document.getElementById(id2);return e&&e.value.trim()?e.value.trim():null;};
-  const{error}=await sb.from('restaurants').update({nom,code_pin:pin,actif,adresse:v('er_adresse'),code_postal:v('er_cp'),ville:v('er_ville')}).eq('id',id);
+  const{error}=await sb.from('restaurants').update({nom,code_pin:pin,actif,adresse:v('er_adresse'),code_postal:v('er_cp'),ville:v('er_ville'),
+    ouverture_semaine:v('er_ouv_sem'),fermeture_semaine:v('er_ferm_sem'),ouverture_weekend:v('er_ouv_we'),fermeture_weekend:v('er_ferm_we')}).eq('id',id);
   if(error){err.textContent=error.message;return;}
   // 2. upsert config alertes
   const cfg={

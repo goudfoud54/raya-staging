@@ -219,7 +219,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.25 · règles complètes (repos 11h légal, fins tardives, 35h hebdo) + saisie manuelle bloquante & dérogations';
+const VERSION='v0.26 · plafonds de fin suggérés depuis les heures d\'ouverture du restaurant';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1148,6 +1148,8 @@ function openReglages(){
       let valueInput='';
       if(meta.type==='number'){
         valueInput=`<input type="number" ${meta.min!=null?`min="${meta.min}"`:''} ${meta.max!=null?`max="${meta.max}"`:''} value="${r.valeur||0}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:80px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;text-align:center;font-weight:600">${meta.unit?`<span style="color:var(--muted);font-size:12px;margin-left:6px">${meta.unit}</span>`:''}`;
+      } else if(meta.type==='time' && (r.cle==='fin_semaine'||r.cle==='fin_weekend')){
+        valueInput=finRuleInput(r);
       } else if(meta.type==='time'){
         valueInput=`<input type="time" value="${r.valeur||'00:00'}" onblur="saveRegle('${r.id}','valeur',this.value)" style="padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">`;
       } else if(!isBool) {
@@ -1244,6 +1246,48 @@ async function saveRegle(id,field,val){
   if(error){alert('Erreur: '+error.message);return;}
   const r=S.regles.find(x=>x.id===id);if(r)r[field]=val;
   setSS('ok','Règle sauvegardée');
+}
+// Suggestion d'heure de fin (plafond) à partir de la fermeture du restaurant + marge (rangement/service).
+const FIN_MARGE_MIN=30;
+function suggestionFin(cle){
+  const ferm = cle==='fin_weekend' ? SNACK.fermeture_weekend : SNACK.fermeture_semaine;
+  if(!ferm) return null;
+  const[h,m]=String(ferm).slice(0,5).split(':').map(Number);
+  if(!isFinite(h)||!isFinite(m)) return null;
+  let tot=(h*60+m+FIN_MARGE_MIN)%1440; if(tot<0)tot+=1440;
+  return {ferm:String(ferm).slice(0,5), sug:String(Math.floor(tot/60)).padStart(2,'0')+':'+String(tot%60).padStart(2,'0')};
+}
+// Rendu des règles fin_semaine / fin_weekend dans Réglages.
+// - Déjà configurée (valeur ≠ 00:00) : champ éditable normal (sauvegarde onblur, comme avant).
+// - Jamais configurée (00:00/vide) + horaires du resto connus : champ PRÉ-REMPLI avec la suggestion,
+//   mais SANS écriture auto — un bouton « Enregistrer » explicite est requis (jamais de save silencieux).
+// - Jamais configurée + horaires inconnus : champ manuel + message renvoyant vers Paramètres > Restaurants.
+function finRuleInput(r){
+  const configured = r.valeur && r.valeur!=='00:00';
+  const inpSt='padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600';
+  if(configured){
+    return `<input type="time" value="${r.valeur}" onblur="saveRegle('${r.id}','valeur',this.value)" style="${inpSt}">`;
+  }
+  const inpId='finrule_'+r.id;
+  const s=suggestionFin(r.cle);
+  const saveBtn=`<button class="btn sm" onclick="saveFinRegle('${r.id}','${inpId}')" style="padding:6px 10px">Enregistrer</button>`;
+  if(s){
+    return `<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+      <div style="display:flex;gap:6px;align-items:center"><input type="time" id="${inpId}" value="${s.sug}" style="${inpSt};border-color:var(--gold)">${saveBtn}</div>
+      <div style="color:var(--gold);font-size:10.5px;text-align:right">💡 Suggéré d'après la fermeture ${s.ferm} (+${FIN_MARGE_MIN} min) — <b>non enregistré</b></div>
+    </div>`;
+  }
+  return `<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+    <div style="display:flex;gap:6px;align-items:center"><input type="time" id="${inpId}" value="" style="${inpSt}">${saveBtn}</div>
+    <div style="color:var(--muted);font-size:10.5px;max-width:240px;text-align:right;line-height:1.5">Renseigne les heures d'ouverture de <b>${escP(SNACK.nom||'ce restaurant')}</b> dans <a href="../parametres/#restaurants" style="color:var(--gold)">Paramètres › Restaurants</a> pour obtenir une suggestion automatique.</div>
+  </div>`;
+}
+// Enregistre explicitement la valeur (éventuellement ajustée) d'une règle fin_semaine/fin_weekend,
+// puis re-rend Réglages pour refléter l'état « configuré ».
+async function saveFinRegle(id,inpId){
+  const el=document.getElementById(inpId); if(!el) return;
+  await saveRegle(id,'valeur', el.value||'00:00');
+  openReglages();
 }
 function setPopupAlerts(v){POPUP_ALERTS=v;localStorage.setItem('pl_popups',v?'1':'0');}
 
