@@ -93,6 +93,10 @@ table.plan td.soir{background:var(--soir)}
 table.plan td input{width:calc(56px * var(--zoom));min-width:42px;padding:2px 2px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text);font-size:max(calc(11px * var(--zoom)),9px);font-family:monospace;text-align:center;outline:none;letter-spacing:-.3px}
 table.plan td.selected{box-shadow:inset 0 0 0 2px var(--gold);background-color:rgba(200,160,53,.18)!important}
 table.plan td.alt-block{background:repeating-linear-gradient(45deg,rgba(91,156,255,.10),rgba(91,156,255,.10) 6px,rgba(91,156,255,.18) 6px,rgba(91,156,255,.18) 12px);color:#5b9cff;font-weight:700;font-size:max(calc(10px * var(--zoom)),8px);cursor:not-allowed;user-select:none;letter-spacing:.02em}
+/* Indisponibilité validée (absence / indispo salarié) — même esprit que le bloc CFA mais teinte
+   NEUTRE (gris) pour distinguer « salarié absent » de « alternant à l'école » d'un coup d'œil.
+   Défini après .alt-block → gagne sur le fond/la couleur quand les 2 classes sont combinées. */
+table.plan td.indispo-block{background:repeating-linear-gradient(45deg,rgba(150,150,162,.13),rgba(150,150,162,.13) 6px,rgba(150,150,162,.24) 6px,rgba(150,150,162,.24) 12px);color:var(--muted)}
 table.plan td.salname{background:color-mix(in srgb, var(--scol,#15151f) 14%, var(--card));border-left:4px solid var(--scol,#444)}
 table.plan td.midi{background:color-mix(in srgb, var(--scol,transparent) 10%, var(--midi))}
 table.plan td.soir{background:color-mix(in srgb, var(--scol,transparent) 10%, var(--soir))}
@@ -227,7 +231,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.27 · menu au clic sur un nom : fiche · absence (bloque le planning) · avertissement';
+const VERSION='v0.28 · jours d\'indisponibilité grisés dans la grille (journée entière ou service partiel)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -512,7 +516,29 @@ function renderTable(){
         tbody+=`<td colspan="4" class="alt-block" title="${lbl} CFA — alternant indisponible">${ic} ${lbl}</td>`;
         colIdx+=4; return;
       }
+      // Indisponibilité validée (absence ajoutée OU indispo déclarée par le salarié) → signalée
+      // visuellement (AFFICHAGE UNIQUEMENT — checkPlacement bloque déjà, hasIndispo() est réutilisée
+      // telle quelle). Journée entière (pas d'heures) → toute la ligne du jour ; indispo partielle
+      // (heures renseignées) → seuls le(s) service(s) chevauché(s) sont grisés, le reste reste éditable.
+      const ind=hasIndispo(s.id,date);
+      let indBad=null, indObj=null;
+      if(ind){
+        indBad=indispoBadge(ind);
+        if(!(ind.heure_debut||ind.heure_fin)){
+          tbody+=`<td colspan="4" class="alt-block indispo-block" title="${escP(indBad.full)}">${indBad.ic} ${escP(indBad.lbl)}</td>`;
+          colIdx+=4; return;
+        }
+        indObj={heure_debut:ind.heure_debut, heure_fin:ind.heure_fin};
+      }
       ['midi','soir'].forEach(svc=>{
+        // Service chevauché par une indispo partielle → cellule grisée (2 colonnes) au lieu des inputs
+        if(indObj){
+          const dt=DEF_TIME(svc);
+          if(_overlap(indObj,{heure_debut:dt[0],heure_fin:dt[1]})){
+            tbody+=`<td colspan="2" class="alt-block indispo-block" title="${escP(indBad.full+' · '+(ind.heure_debut||'').slice(0,5)+'→'+(ind.heure_fin||'').slice(0,5))}">${indBad.ic}</td>`;
+            colIdx+=2; return;
+          }
+        }
         const cr=getCreneau(s.id,date,svc)||{};
         const cls=svc;
         const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
@@ -1536,6 +1562,17 @@ async function decideDispo(id,decision){
 }
 
 // Vérifie si un salarié a une indispo validée pour cette date
+// Icône + libellé courts pour l'affichage d'une indispo dans la grille, dérivés du champ motif.
+// full = motif complet (tooltip). Mapping sur les libellés produits par « Ajouter une absence »
+// (+ fallback générique pour "Autre" ou une indispo salarié classique sans motif structuré).
+const INDISPO_ICONS=[['arrêt maladie','🤒'],['arret maladie','🤒'],['congé payé','🌴'],['conge paye','🌴'],['congé sans solde','🚫'],['conge sans solde','🚫'],['absence injustifiée','❌'],['absence injustifiee','❌']];
+function indispoBadge(ind){
+  const raw=((ind&&ind.motif)||'').trim();
+  const low=raw.toLowerCase();
+  for(const [key,ic] of INDISPO_ICONS){ if(low.startsWith(key)) return {ic, lbl:raw.slice(0,key.length), full:raw}; }
+  if(raw){ const short=raw.replace(/^autre\s*—?\s*/i,'').trim()||raw; return {ic:'🚫', lbl:(short.length>18?short.slice(0,17)+'…':short), full:raw}; }
+  return {ic:'🚫', lbl:'Indisponible', full:'Indisponible'};
+}
 function hasIndispo(sid,date){
   const di=(new Date(date).getDay()+6)%7;
   return S.dispos.find(d=>{
