@@ -104,6 +104,14 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 .role-c{color:#e8a06a;font-size:9px;margin-left:5px;font-weight:700}
 .role-k{color:#e0c46a;font-size:9px;margin-left:5px;font-weight:700}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.sal-clic{cursor:pointer;border-bottom:1px dotted transparent}
+.sal-clic:hover{border-bottom-color:var(--gold);color:var(--gold)}
+/* Menu contextuel léger ancré près du clic sur un nom de salarié */
+.sal-pop{position:fixed;z-index:400;background:var(--card);border:1px solid var(--line-2);border-radius:10px;box-shadow:0 12px 34px rgba(0,0,0,.45);padding:5px;min-width:210px;font-size:13px}
+.sal-pop .pop-head{padding:7px 10px 6px;font-weight:700;color:var(--gold);border-bottom:1px solid var(--line);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
+.sal-pop button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border-radius:7px;background:none;color:var(--text);font-size:13px;font-family:inherit;cursor:pointer}
+.sal-pop button:hover{background:rgba(255,255,255,.06)}
+.sal-pop button .ico{width:18px;text-align:center}
 
 /* CHECKS */
 .checks{padding:10px 24px;border-top:1px solid var(--line);background:var(--card)}
@@ -219,7 +227,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.26 · plafonds de fin suggérés depuis les heures d\'ouverture du restaurant';
+const VERSION='v0.27 · menu au clic sur un nom : fiche · absence (bloque le planning) · avertissement';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -493,7 +501,7 @@ function renderTable(){
   list.forEach((s,rowIdx)=>{
     const roleTag=rolesOf(s.id).map(cle=>`<span title="${escP(roleNom(cle))} · ${isExp(s.id,cle)?'expérimenté':'nouveau'}" style="background:${roleCol(cle)}22;color:${roleCol(cle)};border:1px solid ${roleCol(cle)}55;border-radius:5px;padding:0 4px;font-size:9.5px;font-weight:700;margin-left:3px;white-space:nowrap">${escP((roleNom(cle).charAt(0)||'').toUpperCase())}${isExp(s.id,cle)?'★':'🔰'}</span>`).join('');
     const col=s.couleur||'#666';
-    tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span>${fullName(s)}${roleTag}</td>`;
+    tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span><span class="sal-clic" onclick="openSalMenu(event,'${s.id}')" title="Actions">${fullName(s)}</span>${roleTag}</td>`;
     let colIdx=0;
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
@@ -682,6 +690,106 @@ async function logDerogation(sid,date,svc,viol,motif){
   try{
     await sb.from('planning_derogations').insert({restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,regle_cle:viol.cle,regle_label:viol.label,motif,forced_by:ME&&ME.id});
   }catch(e){ console.warn('[planning] journalisation dérogation échouée', e); }
+}
+
+// ═══════════════ MENU CONTEXTUEL AU CLIC SUR UN NOM ═══════════════
+// Détecte si le planning tourne dans une iframe (hub Équipe) pour naviguer proprement.
+function _inHub(){ try{ return window.self!==window.top; }catch(e){ return true; } }
+// Navigation inter-module : dans le hub → bascule d'onglet via postMessage (préserve les onglets) ;
+// hors hub (page ouverte seule) → navigation classique en fallback.
+function navToModule(tab, sid){
+  const deep = sid ? ('#sid='+sid) : '';
+  if(_inHub()){
+    try{ window.parent.postMessage({type:'eatime-hub-nav', tab:tab, deep:deep}, location.origin); return; }catch(e){}
+  }
+  location.href='../'+tab+'/'+deep;
+}
+function closeSalMenu(){ const p=document.getElementById('salPop'); if(p) p.remove(); document.removeEventListener('mousedown',_salMenuOutside,true); }
+function _salMenuOutside(e){ const p=document.getElementById('salPop'); if(p && !p.contains(e.target)) closeSalMenu(); }
+function openSalMenu(ev, sid){
+  ev.stopPropagation();
+  closeSalMenu();
+  const s=salById(sid); if(!s) return;
+  const pop=document.createElement('div');
+  pop.className='sal-pop'; pop.id='salPop';
+  pop.innerHTML=`<div class="pop-head">${escP(fullName(s))}</div>
+    <button onclick="closeSalMenu();navToModule('salaries','${sid}')"><span class="ico">👤</span> Voir la fiche</button>
+    <button onclick="closeSalMenu();openAbsenceForm('${sid}')"><span class="ico">🌴</span> Ajouter une absence</button>
+    <button onclick="closeSalMenu();navToModule('avertissements','${sid}')"><span class="ico">⚠️</span> Créer un avertissement / mise à pied →</button>`;
+  document.body.appendChild(pop);
+  // Ancrage près du clic, en restant dans l'écran
+  const pw=pop.offsetWidth, ph=pop.offsetHeight, vw=innerWidth, vh=innerHeight;
+  let x=ev.clientX, y=ev.clientY+6;
+  if(x+pw>vw-8) x=vw-pw-8; if(y+ph>vh-8) y=Math.max(8,ev.clientY-ph-6);
+  pop.style.left=Math.max(8,x)+'px'; pop.style.top=Math.max(8,y)+'px';
+  setTimeout(()=>document.addEventListener('mousedown',_salMenuOutside,true),0);
+}
+
+// ═══════════════ AJOUTER UNE ABSENCE (→ salarie_dispos, bloque le planning) ═══════════════
+// Types proposés. PAS de « mise à pied disciplinaire » : elle a son module légal dédié
+// (Avertissements) → on renvoie vers lui via la 3e action du menu.
+const ABSENCE_TYPES=['Arrêt maladie','Congé payé','Congé sans solde','Absence injustifiée','Autre'];
+function openAbsenceForm(sid){
+  const s=salById(sid); if(!s) return;
+  const today=fmtDate(new Date());
+  const opts=ABSENCE_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('');
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''">
+    <div class="pdf-modal" style="max-width:440px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h3 style="margin:0;font-size:16px">🌴 Ajouter une absence</h3>
+        <button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕</button>
+      </div>
+      <div style="color:var(--muted);font-size:12.5px;margin-bottom:14px">${escP(fullName(s))} sera marqué <b>indisponible</b> sur la période — le planning le bloquera automatiquement (auto-fill & saisie).</div>
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <label style="font-size:12.5px">Type d'absence
+          <select id="abs_type" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px">${opts}</select>
+        </label>
+        <div style="display:flex;gap:10px">
+          <label style="flex:1;font-size:12.5px">Du<input type="date" id="abs_debut" value="${today}" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px"></label>
+          <label style="flex:1;font-size:12.5px">Au<input type="date" id="abs_fin" value="${today}" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px"></label>
+        </div>
+        <label style="font-size:12.5px">Commentaire (optionnel)
+          <textarea id="abs_motif" rows="2" placeholder="Précision facultative…" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;resize:vertical;font-family:inherit"></textarea>
+        </label>
+        <div id="abs_err" style="color:var(--bad);font-size:12px;min-height:14px"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn ghost" onclick="document.getElementById('pdfModal').innerHTML=''">Annuler</button>
+          <button class="btn" id="abs_save" onclick="submitAbsence('${sid}')">Enregistrer l'absence</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+async function submitAbsence(sid){
+  const type=document.getElementById('abs_type').value;
+  const debut=document.getElementById('abs_debut').value;
+  const fin=document.getElementById('abs_fin').value;
+  const comment=(document.getElementById('abs_motif').value||'').trim();
+  const err=document.getElementById('abs_err');
+  if(!debut||!fin){ err.textContent='Dates requises.'; return; }
+  if(fin<debut){ err.textContent='La date de fin est avant la date de début.'; return; }
+  // Liste des jours (bornes incluses)
+  const days=[]; let d=new Date(debut+'T00:00:00'), end=new Date(fin+'T00:00:00');
+  for(let g=0; d<=end && g<400; d.setDate(d.getDate()+1), g++) days.push(fmtDate(d));
+  const btn=document.getElementById('abs_save'); if(btn){ btn.disabled=true; }
+  err.textContent='';
+  // Créneaux déjà planifiés sur la période (tous restos) → proposer de les supprimer
+  const{data:existing,error:exErr}=await sb.from('planning_creneaux').select('id,date').eq('salarie_id',sid).gte('date',debut).lte('date',fin);
+  if(exErr){ err.textContent='Erreur: '+exErr.message; if(btn)btn.disabled=false; return; }
+  if(existing && existing.length){
+    if(confirm(`⚠ ${existing.length} créneau(x) déjà planifié(s) pour ce salarié sur la période.\n\nOK = les supprimer et marquer l'absence.\nAnnuler = garder les créneaux (ils apparaîtront en conflit avec l'absence).`)){
+      const{error:delErr}=await sb.from('planning_creneaux').delete().eq('salarie_id',sid).gte('date',debut).lte('date',fin);
+      if(delErr){ err.textContent='Suppression impossible: '+delErr.message; if(btn)btn.disabled=false; return; }
+    }
+  }
+  // Une ligne d'indispo validée par jour (checkPlacement bloque déjà sur ce mécanisme — pas de duplication)
+  const motif=type+(comment?(' — '+comment):'');
+  const rows=days.map(day=>({salarie_id:sid, type:'ponctuelle', statut:'indispo', statut_demande:'validee', date_specifique:day, motif, decided_at:new Date().toISOString()}));
+  const{error:insErr}=await sb.from('salarie_dispos').insert(rows);
+  if(insErr){ err.textContent='Erreur: '+insErr.message; if(btn)btn.disabled=false; return; }
+  document.getElementById('pdfModal').innerHTML='';
+  setSS('ok',`✓ Absence enregistrée (${days.length} jour${days.length>1?'s':''})`);
+  await loadWeek(); // recharge S.dispos + créneaux → grille et blocages à jour
 }
 
 let CHECKS=[];

@@ -346,7 +346,20 @@ async function loadAll(){
   const fS=document.getElementById('fSnack');
   fS.innerHTML='<option value="">Tous les snacks</option>'+S.restos.map(x=>`<option value="${x.id}">${x.nom}</option>`).join('')+'<option value="MULTI">MULTI</option>';
   render();
+  applyDeepLink();
 }
+// Deep-link #sid=<id> (ex. depuis le Planning via le hub Équipe) → ouvre directement la fiche.
+// On nettoie le hash après ouverture pour qu'un re-render ne rouvre pas la fiche, et pour qu'un
+// nouveau lien vers le MÊME salarié redéclenche bien un hashchange.
+function applyDeepLink(){
+  const m=(location.hash||'').match(/sid=([0-9a-fA-F-]+)/);
+  if(!m) return;
+  const sid=m[1];
+  if(!S.salaries || !S.salaries.find(x=>x.id===sid)) return;
+  openFiche(sid);
+  try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
+}
+window.addEventListener('hashchange',applyDeepLink);
 const snackName=id=>{const r=S.restos.find(x=>x.id===id);return r?r.nom.replace('Raya ',''):'—';};
 const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.role))];
 const rolesFullOf=sid=>S.roles.filter(x=>x.salarie_id===sid);

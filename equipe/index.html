@@ -53,13 +53,16 @@ const TABS=[
 const frames={}; // id -> iframe (créés paresseusement)
 let ACCESS=[];    // onglets accessibles
 
-function showTab(id){
+// deep : suffixe optionnel (ex. '#sid=<uuid>') passé à l'iframe cible pour un lien inter-module
+// (voir handler message ci-dessous). Sur un onglet déjà chargé, on force la nav vers le deep-link.
+function showTab(id, deep){
   const body=document.getElementById('hubBody');
+  const tab=TABS.find(t=>t.id===id); if(!tab) return;
+  const url=tab.url+(deep||'');
   // Lazy : ne créer l'iframe qu'au premier affichage de l'onglet.
   if(!frames[id]){
-    const tab=TABS.find(t=>t.id===id);
     const f=document.createElement('iframe');
-    f.src=tab.url; f.id='frame-'+id;
+    f.src=url; f.id='frame-'+id;
     // Si l'iframe quitte le dossier de son module (clic "Portail" du module, lien cross-module…),
     // on sort du hub et on charge cette URL en pleine page : évite le portail imbriqué et préserve
     // les liens internes existants (ils pointent vers des URLs toujours valides).
@@ -68,11 +71,25 @@ function showTab(id){
     });
     body.appendChild(f);
     frames[id]=f;
+  } else if(deep){
+    // Onglet déjà chargé : on navigue vers le deep-link. Path identique + hash → hashchange dans
+    // l'iframe (pas de rechargement), le module réagit via son listener hashchange.
+    try{ frames[id].contentWindow.location.hash=deep.replace(/^#/,''); }catch(e){ frames[id].src=url; }
   }
   Object.entries(frames).forEach(([fid,f])=>f.classList.toggle('hidden',fid!==id));
   document.querySelectorAll('.hub-tab').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
   try{ history.replaceState(null,'','#'+id); }catch(e){}
 }
+
+// Navigation inter-module DEPUIS une iframe enfant (ex. clic "Voir la fiche" dans le Planning) :
+// l'enfant poste {type:'eatime-hub-nav', tab, deep}. On bascule proprement l'onglet du hub avec le
+// deep-link, au lieu de laisser l'iframe naviguer (ce qui déclencherait la sortie plein écran).
+window.addEventListener('message',function(e){
+  if(e.origin!==location.origin) return;                 // même origine uniquement
+  const d=e.data; if(!d || d.type!=='eatime-hub-nav') return;
+  if(!ACCESS.find(t=>t.id===d.tab)) return;              // onglet non accessible → on ignore
+  showTab(d.tab, typeof d.deep==='string'?d.deep:'');
+});
 
 async function init(){
   const{data:{session}}=await sb.auth.getSession();

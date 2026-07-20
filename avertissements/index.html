@@ -464,7 +464,22 @@ async function loadAll(){
   const sel = document.getElementById('ed_salarie'); sel.innerHTML = opts; EatimeAutocomplete.enhance(sel, { placeholder:'Tape un nom de salarié…' });
   const wsel = document.getElementById('wiz_salarie'); wsel.innerHTML = opts; EatimeAutocomplete.enhance(wsel, { placeholder:'Tape un nom de salarié…' });
   populateFilters();
+  applyDeepLink();
 }
+// Deep-link #sid=<id> (ex. depuis le Planning « Créer un avertissement » via le hub) → ouvre le
+// wizard de création avec ce salarié pré-sélectionné, directement à l'étape 2 (choix du type).
+// On nettoie le hash après pour qu'un nouveau lien vers le même salarié redéclenche un hashchange.
+function applyDeepLink(){
+  const m=(location.hash||'').match(/sid=([0-9a-fA-F-]+)/);
+  if(!m) return;
+  const sid=m[1];
+  if(!S.salaries || !S.salaries.find(x=>x.id===sid)) return;
+  openNew();
+  const sel=document.getElementById('wiz_salarie'); if(sel){ sel.value=sid; } // le setter override synchronise l'autocomplete
+  wizardNext();
+  try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
+}
+window.addEventListener('hashchange',applyDeepLink);
 
 // ─────────── LISTE ───────────
 function setListTab(t){ S.listTab=t; document.querySelectorAll('.subtab').forEach(x=>x.classList.toggle('active',x.dataset.tab===t)); render(); }
