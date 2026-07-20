@@ -231,7 +231,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.28 · jours d\'indisponibilité grisés dans la grille (journée entière ou service partiel)';
+const VERSION='v0.29 · auto-fill : répartition selon heures_min perso (manque relatif) + multi-snack + alerte effectifs non configurés';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -892,6 +892,13 @@ function renderChecks(){
     if(total>plaf) over.push(`${nameOf(s.id)} : ${(total/60).toFixed(1)}h > ${plaf/60}h`);
   });
   CHECKS.push({lbl:'Plafond heures hebdo',ok:over.length===0,details:over});
+
+  // 5b. Minimum d'heures (symétrique du plafond MAX) — total tous-snacks pour un multi-snack.
+  //     Signale les salariés sous leur heures_min contractuel (le nouveau tri auto-fill vise à
+  //     l'éviter, mais la semaine peut manquer d'heures disponibles).
+  const under=[];
+  list.forEach(s=>{ const mn=s.heures_min||0; if(!mn) return; const have=weekHoursOf(s.id); if(have<mn-0.01) under.push(`${nameOf(s.id)} : ${have.toFixed(1)}h < ${mn}h (manque ${(mn-have).toFixed(1)}h)`); });
+  CHECKS.push({lbl:'Minimum heures hebdo',ok:under.length===0,details:under});
 
   // 5b. Heure de fin max (fin_semaine lun→jeu / fin_weekend ven+sam) — miroir a posteriori des
   //     plafonds durs de checkPlacement, pour que toute règle dure apparaisse aussi dans ce panneau.
@@ -1769,12 +1776,23 @@ const DEFAULT_SHIFTS={
 };
 function _autoToMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
 function _autoDur(d,f){let a=_autoToMin(d),b=_autoToMin(f);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;}
+// Vrai si AU MOINS un effectif cible est configuré pour le snack courant (tous jours/services/rôles).
+function hasEffectifsConfig(){ return S.effectifs.some(e=>e.restaurant_id===SNACK.id); }
+// Sans aucun effectif configuré, autoFillCore ne générerait aucun trou → « succès » silencieux sans
+// rien poser. On prévient explicitement et on propose d'ouvrir les Réglages (où se règlent les effectifs).
+function guardEffectifsConfigured(){
+  if(hasEffectifsConfig()) return true;
+  if(confirm(`Aucun effectif cible n'est configuré pour « ${SNACK.nom} ».\n\nL'auto-fill ne peut rien générer tant que le nombre de personnes requises par jour et par service n'a pas été renseigné.\n\nOuvrir les Réglages (effectifs cibles) maintenant ?`)) openReglages();
+  return false;
+}
 async function autoFillDay(dayIdx){
+  if(!guardEffectifsConfigured())return;
   const j=JOURS[dayIdx];
   if(!confirm(`Remplir automatiquement ${j} sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
   await autoFillCore([dayIdx]);
 }
 async function autoFillWeek(){
+  if(!guardEffectifsConfigured())return;
   if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
   await autoFillCore([0,1,2,3,4,5,6]);
 }
@@ -1802,6 +1820,13 @@ function _ruleCtx(){
 }
 const _pmin=t=>{if(!t)return null;const[h,mi]=t.slice(0,5).split(':').map(Number);return h*60+mi;};
 const _pdur=(d,f)=>{let a=_pmin(d),b=_pmin(f);if(a==null||b==null)return 0;if(b<=a)b+=1440;return b-a;};
+// ── Heures hebdo d'un salarié pour la répartition auto-fill (calcul du « manque » vs heures_min) ──
+// Multi-snack (est_multi, ou >1 restaurant dans snacks_priorites) : total TOUS restaurants de l'org
+// (S.allCreneauxWeek), car il cumule ses heures sur plusieurs sites → son vrai manque restant.
+// Mono-snack : uniquement le snack courant (S.creneaux), sa seule source d'heures possible.
+// Lit toujours l'état À JOUR (rappelé à chaque candFor, après chaque pose).
+function isMultiSnack(s){ const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:null; return (a&&a.length>1)||!!(s&&s.est_multi); }
+function weekHoursOf(sid){ const s=salById(sid); const src=(s&&isMultiSnack(s))?S.allCreneauxWeek:S.creneaux; return src.filter(c=>c.salarie_id===sid&&c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60; }
 const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé' };
 // Heure de fin max autorisée pour un shift selon le jour (di 0=lun … 6=dim), en minutes
 // depuis le début de la journée de service (les fins après minuit comptent +1440).
@@ -1902,12 +1927,27 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   return null; // ✅ aucune règle active violée
 }
 // Rapport des postes non comblés (modale)
-function showSolveReport(report){
+function showSolveReport(report, underMin){
+  report=report||[]; underMin=underMin||[];
   const rows=report.map(r=>`<div style="display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:160px;font-weight:600">${escP(r.jour)} ${r.svc} · ${escP(r.role)}${r.exp?' ★':''}</span><span style="color:var(--muted);font-family:monospace;min-width:96px">${escP(r.horaire)}</span><span style="color:var(--bad)">⚠ ${escP(r.detail)}</span></div>`).join('');
+  // Section « postes non comblés » (échecs de placement : candidat introuvable) — distincte des
+  // salariés sous leur minimum. Ces postes existent bien dans les objectifs (les trous non générés
+  // faute d'effectif configuré n'apparaissent PAS ici, ce ne sont pas de vrais échecs de placement).
+  const postesSection = report.length ? `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">⚠ Postes non comblés (${report.length})</h3></div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5">L'auto-fill n'a placé personne sur ces postes <b>sans enfreindre une règle active</b> (candidat introuvable). Complète-les à la main, ou ajuste les règles / effectifs / disponibilités. <b style="color:var(--text)">Aucun planning non conforme n'a été généré.</b></div>
+    ${rows}` : '';
+  const umRows=underMin.map(u=>`<div style="display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${(u.min-u.have).toFixed(1)} h</b></span></div>`).join('');
+  const minSection = underMin.length ? `
+    <div style="margin-top:${report.length?'18px':'0'};padding-top:${report.length?'14px':'0'};${report.length?'border-top:1px solid var(--line-2)':''}">
+      <h3 style="margin:0 0 8px">⏳ Salariés sous leur minimum d'heures (${underMin.length})</h3>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">Pas assez de créneaux disponibles cette semaine pour atteindre leur minimum contractuel (<b>heures_min</b>). Augmente les effectifs cibles, élargis leurs disponibilités, ou revois ce salarié. (Total tous snacks pour les multi-snack.)</div>
+      ${umRows}
+    </div>` : '';
+  const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : 'Salariés sous leur minimum';
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">⚠ Postes non comblés (${report.length})</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5">L'auto-fill n'a placé personne sur ces postes <b>sans enfreindre une règle active</b>. Complète-les à la main, ou ajuste les règles / effectifs / disponibilités. <b style="color:var(--text)">Aucun planning non conforme n'a été généré.</b></div>
-    ${rows}</div></div>`;
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
+    ${postesSection}${minSection}</div></div>`;
 }
 async function autoFillCore(dayIndices){
   if(_autofillRunning)return;            // anti double-clic
@@ -1931,19 +1971,34 @@ async function autoFillCore(dayIndices){
   const _now=()=>(window.performance&&performance.now)?performance.now():0;
   const T0=_now(), TBUDGET=8000, overTime=()=>_now()-T0>TBUDGET;
   const dayIdxOfDate=d=>(new Date(d).getDay()+6)%7;
-  const hoursW=sid=>S.creneaux.filter(c=>c.salarie_id===sid).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60;
   const placeCre=async(sid,sh,date,svc)=>{
     const payload={restaurant_id:SNACK.id,salarie_id:sid,role:sh.role,date,service:svc,heure_debut:sh.deb,heure_fin:sh.fin};
     const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
     if(error)return null; S.creneaux.push(data); S.allCreneauxWeek.push(data); if(_txn)_txn.push({before:null,after:data}); return data;
   };
   const removeCre=async(row)=>{ await sb.from('planning_creneaux').delete().eq('id',row.id); S.creneaux=S.creneaux.filter(c=>c.id!==row.id); S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==row.id); if(_txn)_txn.push({before:row,after:null}); };
-  // Candidats conformes (chaque candidat passe checkPlacement — état réel de S.creneaux), triés exp→moins chargé→priorité snack
-  const candFor=h=>S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null).map(s=>s.id).sort((a,b)=>{
-    if(h.shift.exp){const ae=isExp(a,h.shift.role)?0:1,be=isExp(b,h.shift.role)?0:1;if(ae!==be)return ae-be;}
-    const ha=hoursW(a),hb=hoursW(b); if(Math.abs(ha-hb)>1.5)return ha-hb;
-    return snackPrioriteOf(salById(a),SNACK.id)-snackPrioriteOf(salById(b),SNACK.id);
-  });
+  // Candidats conformes (chaque candidat passe checkPlacement — validité inchangée), triés par :
+  //   (a) MANQUE vs minimum PERSONNEL (heures_min) le plus grand d'abord — celui le plus loin sous
+  //       son propre plancher passe devant (et non plus par heures absolues, cause du sous-remplissage
+  //       d'un salarié à heures_min élevé). Manque calculé tous-snacks-confondus pour les multi-snack.
+  //   (b) à manque comparable : mono-snack prioritaire sur multi-snack (le mono ne peut rattraper que
+  //       sur CE snack ; le multi pourra ailleurs).
+  //   (c) reste (inchangé) : expérience si poste exp → équilibrage fin par heures → priorité snack.
+  // Le plafond dur (plafond_heures/plafond_hebdo) reste géré par checkPlacement : ce tri ne change
+  // QUE l'ordre des candidats déjà valides, jamais leur validité.
+  const candFor=h=>{
+    const cands=S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null);
+    // Mémo par appel → reflète l'état À JOUR de S.creneaux/allCreneauxWeek (candFor rappelé après chaque pose).
+    const hw={}, lack={};
+    cands.forEach(s=>{ const w=weekHoursOf(s.id); hw[s.id]=w; lack[s.id]=Math.max(0,(s.heures_min||0)-w); });
+    return cands.map(s=>s.id).sort((a,b)=>{
+      if(Math.abs(lack[a]-lack[b])>0.01) return lack[b]-lack[a];                         // (a) plus grand manque d'abord
+      const mA=isMultiSnack(salById(a))?1:0, mB=isMultiSnack(salById(b))?1:0; if(mA!==mB) return mA-mB; // (b) mono avant multi
+      if(h.shift.exp){const ae=isExp(a,h.shift.role)?0:1,be=isExp(b,h.shift.role)?0:1;if(ae!==be)return ae-be;} // (c)
+      if(Math.abs(hw[a]-hw[b])>1.5) return hw[a]-hw[b];
+      return snackPrioriteOf(salById(a),SNACK.id)-snackPrioriteOf(salById(b),SNACK.id);
+    });
+  };
   // ── Trous = vagues non couvertes (même cascade jour→service→rôle→vagues, créneaux hors-vague consomment un poste) ──
   const holes=[];
   for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
@@ -2007,10 +2062,22 @@ async function autoFillCore(dayIndices){
   endTxn();
   await loadWeek();
   window._lastSolveReport=report;
+  // Salariés encore SOUS leur minimum personnel après génération (avec le delta) : la semaine ne
+  // contenait peut-être pas assez d'heures (effectifs cibles insuffisants) pour tous les amener à
+  // leur plancher — on le signale pour que l'admin ajuste effectifs/dispos ou ce salarié.
+  const underMin=[];
+  S.salaries.filter(s=>onRoster(s)&&worksAt(s,SNACK.id)&&(s.heures_min||0)>0).forEach(s=>{
+    const have=weekHoursOf(s.id), mn=s.heures_min||0;
+    if(have < mn-0.01) underMin.push({name:fullName(s), have, min:mn, multi:isMultiSnack(s)});
+  });
+  underMin.sort((a,b)=>(b.min-b.have)-(a.min-a.have));
+  window._lastUnderMin=underMin;
   let msg=`✓ ${added} créneau(x) placé(s)`;
-  if(report.length) msg+=` · ${report.length} poste(s) non comblé(s) — voir rapport`;
-  setSS(report.length?'warn':'ok', msg);
-  if(report.length) showSolveReport(report);
+  if(report.length) msg+=` · ${report.length} poste(s) non comblé(s)`;
+  if(underMin.length) msg+=` · ${underMin.length} sous leur minimum`;
+  if(report.length||underMin.length) msg+=' — voir rapport';
+  setSS((report.length||underMin.length)?'warn':'ok', msg);
+  if(report.length||underMin.length) showSolveReport(report, underMin);
   }catch(err){
     setSS('err','Erreur auto-fill : '+(err.message||err));
     endTxn();
