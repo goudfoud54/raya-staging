@@ -201,7 +201,14 @@ async function loadCommonData(){
   if(!SNACK && S.snacks.length){SNACK=S.snacks[0];sel.value=SNACK.id;}
 }
 function onSnackChange(){const id=val('snackSelect');SNACK=S.snacks.find(x=>x.id===id);render();}
-function setTab(t){TAB=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();}
+function setTab(t){TAB=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));updateSnackSelVisibility();render();}
+// Sur l'onglet Feuille de besoin, le sélecteur global #snackSelect n'a plus aucun effet (ce sont les
+// chips multi-snack locales qui pilotent) → on le masque pour lever l'ambiguïté « lequel fait quoi ? ».
+// On le réaffiche sur tous les autres onglets, où il reste le seul sélecteur pertinent.
+function updateSnackSelVisibility(){
+  const sel=document.getElementById('snackSelect');
+  if(sel) sel.style.display=(TAB==='besoin')?'none':'';
+}
 
 function render(){
   if(!SNACK){document.getElementById('content').innerHTML='<div class="section" style="text-align:center;color:var(--muted)">Aucun snack disponible.</div>';return;}
