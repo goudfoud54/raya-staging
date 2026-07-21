@@ -50,6 +50,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;background:var(--ca
 table.tbl th,table.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
 table.tbl th{font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;background:var(--surface)}
 td.besoin-mobile{display:none} /* carte compacte : cachée en desktop (vue tableau), montrée sous 640px */
+/* Sélecteur multi-snack de la Feuille de besoin */
+.snack-chip{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:20px;border:1px solid var(--line-2);background:var(--surface);font-size:12.5px;cursor:pointer;user-select:none;white-space:nowrap}
+.snack-chip input{cursor:pointer;margin:0}
+.snack-chip.on{border-color:var(--gold);background:rgba(200,160,53,.12);color:var(--gold);font-weight:600}
+.besoin-brk{font-size:11px;color:var(--muted);margin-top:2px}
+.besoin-brk b{color:var(--text);font-weight:600}
 table.tbl tr:last-child td{border-bottom:none}
 table.tbl tr:hover{background:rgba(127,127,127,.04)}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase}
@@ -123,7 +129,7 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Stock · v0.1</small></div>
+    <div class="brand">Eatime360 <small>· Stock · v0.2</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -150,6 +156,9 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 let ME=null,ORG={},SNACK=null,TAB='dashboard';
+// Sélection multi-snack PROPRE à l'onglet Feuille de besoin (n'affecte pas le #snackSelect global qui
+// pilote les autres onglets, volontairement mono-snack). Tableau de restaurant_id. Défaut = snack courant.
+let BESOIN_SEL=null;
 const S={snacks:[],produits:[],fournisseurs:[],stockMax:[],saisiesAujourdhui:{}};
 const CATS=['Viandes & Frais','Boissons','Épicerie','Sauces','Emballages','Desserts','Épices','Entretien','Vaisselle','Matériel','Vêtements','Divers'];
 
@@ -311,50 +320,83 @@ async function saveSaisie(pid,vTxt){
 
 const BESOIN_STALE_DAYS=4; // au-delà, la dernière saisie est signalée "donnée ancienne" (stock probablement obsolète)
 function daysSince(dateStr){ if(!dateStr) return null; const d=new Date(dateStr+'T00:00:00'); const now=new Date(); now.setHours(0,0,0,0); return Math.round((now-d)/86400000); }
+const shortSnack=n=>(n||'').replace(/^Raya\s+/i,'').trim()||n;
+// ── SOURCE UNIQUE des besoins (affichage + copier WhatsApp + PDF → toujours cohérents) ──
+// Agrège PAR PRODUIT sur la liste de snacks donnée : le besoin total d'un produit = SOMME des besoins
+// calculés snack par snack (un même produit peut avoir un max différent par snack, table stock_max
+// scopée par restaurant_id). On ne somme que les snacks CONTRIBUTEURS (need>0, donc max>cur) → totalMax
+// et totalCur restent cohérents avec totalNeed (totalNeed = totalMax − totalCur). Détail par snack
+// conservé (perSnack) pour l'affichage/exports multi. staleAtMax listé par (snack,produit).
+async function computeBesoin(snackIds){
+  const ids=(snackIds||[]).filter(Boolean);
+  if(!ids.length) return {list:[],staleAtMax:[],totalEur:0,snackIds:[],snackNames:[],multi:false};
+  const{data:saisies}=await sb.from('stock_saisies').select('restaurant_id,produit_id,quantite,date_saisie').in('restaurant_id',ids).order('date_saisie',{ascending:false});
+  const last={};(saisies||[]).forEach(s=>{const b=last[s.restaurant_id]=last[s.restaurant_id]||{};if(!b[s.produit_id]||s.date_saisie>b[s.produit_id].date_saisie)b[s.produit_id]=s;});
+  const snackNom=sid=>{const r=S.snacks.find(x=>x.id===sid);return r?r.nom:'?';};
+  const aggMap={};const staleAtMax=[];
+  ids.forEach(sid=>{
+    S.stockMax.filter(m=>m.restaurant_id===sid && m.actif!==false).forEach(m=>{ // produits désactivés exclus
+      const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
+      const l=(last[sid]||{})[m.produit_id];
+      const jamais=!l;const cur=jamais?0:Number(l.quantite);
+      const max=Number(m.quantite_max);const need=Math.max(0,max-cur);
+      const date=l?l.date_saisie:null;const age=daysSince(date);
+      const stale=(!jamais && age!==null && age>BESOIN_STALE_DAYS);
+      if(need<=0){ if(stale) staleAtMax.push({produit:p,snack:snackNom(sid),cur,date,age}); return; }
+      const a=aggMap[p.id]=aggMap[p.id]||{produit:p,totalNeed:0,totalCur:0,totalMax:0,perSnack:[],anyStale:false,anyJamais:false};
+      a.totalNeed+=need;a.totalCur+=cur;a.totalMax+=max;
+      a.perSnack.push({sid,snack:snackNom(sid),cur,max,need,date,age,jamais,stale});
+      if(jamais)a.anyJamais=true; if(stale)a.anyStale=true;
+    });
+  });
+  const list=Object.values(aggMap).sort((a,b)=>{const c=(a.produit.categorie||'Divers').localeCompare(b.produit.categorie||'Divers');return c!==0?c:a.produit.nom.localeCompare(b.produit.nom);});
+  const totalEur=list.reduce((a,x)=>a+x.totalNeed*Number(x.produit.cout_unitaire||0),0);
+  staleAtMax.sort((a,b)=>b.age-a.age);
+  return {list,staleAtMax,totalEur,snackIds:ids,snackNames:ids.map(snackNom),multi:ids.length>1};
+}
+// Sélecteur multi-snack (checkboxes + "Tout") — propre à cet onglet.
+function besoinSelectorHtml(){
+  const sel=BESOIN_SEL||[];
+  const allOn=S.snacks.length>0 && S.snacks.every(s=>sel.includes(s.id));
+  return `<div class="section" style="padding:12px 14px;margin-bottom:12px">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:9px;font-weight:600">🏪 Snacks inclus dans la commande</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      ${S.snacks.map(s=>`<label class="snack-chip ${sel.includes(s.id)?'on':''}"><input type="checkbox" ${sel.includes(s.id)?'checked':''} onchange="toggleBesoinSnack('${s.id}',this.checked)">${s.nom}</label>`).join('')}
+      <button class="btn ghost sm" onclick="toggleAllBesoinSnacks(${allOn?'false':'true'})">${allOn?'Tout désélectionner':'Tout sélectionner'}</button>
+    </div>
+  </div>`;
+}
+function toggleBesoinSnack(id,on){
+  BESOIN_SEL=(BESOIN_SEL||[]).slice();
+  if(on){ if(!BESOIN_SEL.includes(id))BESOIN_SEL.push(id); } else BESOIN_SEL=BESOIN_SEL.filter(x=>x!==id);
+  renderBesoin(document.getElementById('content'));
+}
+function toggleAllBesoinSnacks(on){ BESOIN_SEL=on?S.snacks.map(s=>s.id):[]; renderBesoin(document.getElementById('content')); }
+
 async function renderBesoin(el){
   el.innerHTML='<div style="color:var(--muted)">Calcul…</div>';
-  // On récupère la VRAIE dernière saisie de chaque produit, quel que soit son âge (pas de fenêtre
-  // glissante : un produit compté il y a 40 jours doit afficher sa vraie valeur + un avertissement,
-  // pas apparaître à 0 comme s'il n'avait jamais été saisi). Colonnes minimales pour limiter le payload.
-  const{data:saisies}=await sb.from('stock_saisies').select('produit_id,quantite,date_saisie').eq('restaurant_id',SNACK.id).order('date_saisie',{ascending:false});
-  const last={};(saisies||[]).forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
-  // Construire la liste des besoins (à plat)
-  const besoin=[];
-  const staleAtMax=[]; // produits "au max" (need≤0) MAIS sur une saisie ancienne → à recompter (peut être vide en vrai)
-  S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif!==false).forEach(m=>{ // produits désactivés exclus de la commande
-    const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
-    const jamais=!last[m.produit_id]; // aucune saisie EN BASE (≠ compté à 0)
-    const cur=jamais?0:Number(last[m.produit_id].quantite);
-    const need=Math.max(0,Number(m.quantite_max)-cur);
-    const date=last[m.produit_id]?.date_saisie;const age=daysSince(date);
-    if(need<=0){
-      // Rien à commander SELON la dernière saisie — mais si elle est ancienne on ne la cache pas :
-      // le produit peut s'être vidé depuis, l'admin doit savoir qu'il faut recompter.
-      if(!jamais && age!==null && age>BESOIN_STALE_DAYS) staleAtMax.push({produit:p,cur,date,age});
-      return;
-    }
-    besoin.push({produit:p,cur,max:Number(m.quantite_max),need,date,jamais,age});
-  });
-  const totalEur=besoin.reduce((a,x)=>a+x.need*Number(x.produit.cout_unitaire||0),0);
-  // Encart "à recompter" : produits au max mais sur données anciennes → on ne les cache pas.
-  staleAtMax.sort((a,b)=>b.age-a.age);
+  // Défaut : snack global courant. Filtré aux snacks encore existants (pas d'id fantôme).
+  if(!BESOIN_SEL) BESOIN_SEL=[SNACK.id];
+  BESOIN_SEL=BESOIN_SEL.filter(id=>S.snacks.some(s=>s.id===id));
+  const R=await computeBesoin(BESOIN_SEL);
+  const besoin=R.list, multi=R.multi, totalEur=R.totalEur;
+  const titre = multi ? R.snackNames.join(' + ') : (R.snackNames[0]||SNACK.nom);
+  // Encart "à recompter" : produits au max mais sur données anciennes (par snack en mode multi).
+  const staleAtMax=R.staleAtMax;
   const staleNote=staleAtMax.length?`<div class="section" style="border-color:var(--warn)">
     <h3 style="color:var(--warn)">⚠️ ${staleAtMax.length} produit${staleAtMax.length>1?'s':''} au max mais sur données anciennes — à recompter</h3>
     <div style="color:var(--muted);font-size:12.5px;margin-bottom:8px">Dernière saisie ≥ ${BESOIN_STALE_DAYS} j : le stock a pu se vider depuis, ces produits n'apparaissent pas dans la commande ci-dessous.</div>
-    <table class="tbl"><thead><tr><th>Produit</th><th>Dernier compte</th><th>Dernière saisie</th></tr></thead><tbody>
-    ${staleAtMax.map(x=>`<tr><td><b>${x.produit.nom}</b></td><td>${x.cur}</td><td style="color:var(--warn);font-size:12px">${fmtD(x.date)} · ${x.age} j</td></tr>`).join('')}
+    <table class="tbl"><thead><tr>${multi?'<th>Snack</th>':''}<th>Produit</th><th>Dernier compte</th><th>Dernière saisie</th></tr></thead><tbody>
+    ${staleAtMax.map(x=>`<tr>${multi?`<td>${shortSnack(x.snack)}</td>`:''}<td><b>${x.produit.nom}</b></td><td>${x.cur}</td><td style="color:var(--warn);font-size:12px">${fmtD(x.date)} · ${x.age} j</td></tr>`).join('')}
     </tbody></table></div>`:'';
-  let html=`<div class="toolbar">
-    <h2 style="font-size:18px;font-weight:700;flex:1">Feuille de besoin — ${SNACK.nom}</h2>
+  let html=besoinSelectorHtml()+`<div class="toolbar">
+    <h2 style="font-size:18px;font-weight:700;flex:1">Feuille de besoin — ${titre}</h2>
     <button class="btn ghost" onclick="copyBesoinAll()">📋 Copier toute la commande</button>
     <button class="btn" onclick="exportBesoinPDF()">📄 Export PDF</button>
   </div>`;
+  window._BESOIN=R; // exposé pour copier/PDF
+  if(!BESOIN_SEL.length){ html+='<div class="section" style="text-align:center;color:var(--muted)">Sélectionne au moins un snack ci-dessus.</div>'; el.innerHTML=html; return; }
   if(!besoin.length){html+=(staleNote||'<div class="section" style="text-align:center;color:var(--ok)">✓ Aucun besoin — stocks au max partout</div>');el.innerHTML=html;return;}
-  // Vue unifiée : 1 seul bloc, ordonné par catégorie puis nom
-  besoin.sort((a,b)=>{
-    const c=(a.produit.categorie||'Divers').localeCompare(b.produit.categorie||'Divers');
-    return c!==0?c:a.produit.nom.localeCompare(b.produit.nom);
-  });
   html+=`<div class="section">
     <input id="besoin_search" placeholder="🔍 Rechercher un produit…" oninput="filterBesoin()" style="width:100%;margin-bottom:12px;padding:9px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;outline:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -365,30 +407,38 @@ async function renderBesoin(el){
   let prevCat=null;
   besoin.forEach(x=>{
     const cat=x.produit.categorie||'Divers';
-    const isFirstOfCat=cat!==prevCat; // en cartes mobile : header catégorie affiché seulement ici
+    const isFirstOfCat=cat!==prevCat;
     const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
     const fnom=x.produit.fournisseur_principal_id?nameFourn(x.produit.fournisseur_principal_id):'<span style="color:var(--muted)">—</span>';
     const catCell=cat===prevCat?'':`<b style="color:var(--gold);font-size:12.5px;text-transform:uppercase;letter-spacing:.03em">${cat}</b>`;
     prevCat=cat;
-    // Statut de la dernière saisie : jamais / ancienne (>seuil) / récente
-    let saisieInfo;
-    if(x.jamais){ saisieInfo=`<span style="color:var(--warn)">⚠️ jamais saisi</span>`; }
-    else if(x.age!==null && x.age>BESOIN_STALE_DAYS){ saisieInfo=`<span style="color:var(--warn)">${fmtD(x.date)} · ⚠️ donnée ancienne (${x.age} j)</span>`; }
-    else { saisieInfo=`dernière saisie : ${fmtD(x.date)}`; }
-    // Éléments réutilisés par la carte mobile compacte
     const fournName=x.produit.fournisseur_principal_id?nameFourn(x.produit.fournisseur_principal_id):'—';
-    const curTxt=x.jamais?'?':x.cur;
     const unite=x.produit.unite||'';
-    const eurHT=eur(x.need*Number(x.produit.cout_unitaire||0));
-    const warnIcon=x.jamais?'<span style="color:var(--warn)" title="Jamais saisi">⚠️</span>'
-      :(x.age!==null&&x.age>BESOIN_STALE_DAYS?`<span style="color:var(--warn)" title="Donnée ancienne (${x.age} j)">⚠️</span>`:'');
-    // data-pname pour la recherche (produit + fournisseur). Cellule .besoin-mobile = carte compacte
-    // (visible seulement sous 640px ; les 8 <td> classiques restent la vue tableau desktop).
-    html+=`<tr class="${isFirstOfCat?'bcat-first':''}" data-cat="${cat}" data-pname="${(x.produit.nom+' '+fournName).toLowerCase().replace(/"/g,'')}"><td data-label="Catégorie" style="vertical-align:top">${catCell}</td><td data-label="Produit"><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div></td><td data-label="Fournisseur" style="font-size:12.5px">${fnom}</td><td data-label="Actuel">${x.jamais?'<span style="color:var(--muted)">?</span>':x.cur}</td><td data-label="Max">${x.max}</td><td data-label="À commander"><b style="color:var(--gold);font-size:15px">${x.need}</b> ${unite}</td><td data-label="Cond." style="color:var(--muted);font-size:11.5px">${cond}</td><td data-label="€ HT">${eurHT}</td><td class="besoin-mobile"><div class="bm-name"><b>${x.produit.nom}</b> ${warnIcon}</div><div class="bm-line"><span class="bm-cmd">→ ${x.need} ${unite}</span><span class="bm-sub">stock ${curTxt}/${x.max}${cond?' · '+cond:''}</span></div><div class="bm-foot">${fournName}${x.need?' · '+eurHT:''}</div></td></tr>`;
+    const need=x.totalNeed;
+    const eurHT=eur(need*Number(x.produit.cout_unitaire||0));
+    const ps0=x.perSnack[0]; // en mono, seul et unique snack contributeur
+    // MULTI : totaux + détail par snack (nommant les snacks jamais/anciens). MONO : identique à avant.
+    const cur = multi ? x.totalCur : ps0.cur, max = multi ? x.totalMax : ps0.max;
+    let saisieInfo, brk='';
+    if(multi){
+      brk=`<div class="besoin-brk">`+x.perSnack.map(p=>`<b>${shortSnack(p.snack)}</b> ${p.need}${p.jamais?' ⚠️jamais':(p.stale?` ⚠️${p.age}j`:'')}`).join(' · ')+`</div>`;
+      saisieInfo = (x.anyJamais||x.anyStale) ? `<span style="color:var(--warn)">⚠️ à vérifier (voir détail)</span>` : `${x.perSnack.length} snack${x.perSnack.length>1?'s':''}`;
+    } else {
+      if(ps0.jamais){ saisieInfo=`<span style="color:var(--warn)">⚠️ jamais saisi</span>`; }
+      else if(ps0.age!==null && ps0.age>BESOIN_STALE_DAYS){ saisieInfo=`<span style="color:var(--warn)">${fmtD(ps0.date)} · ⚠️ donnée ancienne (${ps0.age} j)</span>`; }
+      else { saisieInfo=`dernière saisie : ${fmtD(ps0.date)}`; }
+    }
+    const curTxt = multi ? cur : (ps0.jamais?'?':cur);
+    const actuelCell = multi ? cur : (ps0.jamais?'<span style="color:var(--muted)">?</span>':cur);
+    const warnIcon = multi
+      ? ((x.anyJamais||x.anyStale)?'<span style="color:var(--warn)" title="Voir détail par snack">⚠️</span>':'')
+      : (ps0.jamais?'<span style="color:var(--warn)" title="Jamais saisi">⚠️</span>':(ps0.age!==null&&ps0.age>BESOIN_STALE_DAYS?`<span style="color:var(--warn)" title="Donnée ancienne (${ps0.age} j)">⚠️</span>`:''));
+    const pname=(x.produit.nom+' '+fournName+(multi?' '+x.perSnack.map(p=>p.snack).join(' '):'')).toLowerCase().replace(/"/g,'');
+    html+=`<tr class="${isFirstOfCat?'bcat-first':''}" data-cat="${cat}" data-pname="${pname}"><td data-label="Catégorie" style="vertical-align:top">${catCell}</td><td data-label="Produit"><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div>${brk}</td><td data-label="Fournisseur" style="font-size:12.5px">${fnom}</td><td data-label="Actuel">${actuelCell}</td><td data-label="Max">${max}</td><td data-label="À commander"><b style="color:var(--gold);font-size:15px">${need}</b> ${unite}</td><td data-label="Cond." style="color:var(--muted);font-size:11.5px">${cond}</td><td data-label="€ HT">${eurHT}</td><td class="besoin-mobile"><div class="bm-name"><b>${x.produit.nom}</b> ${warnIcon}</div><div class="bm-line"><span class="bm-cmd">→ ${need} ${unite}</span><span class="bm-sub">stock ${curTxt}/${max}${cond?' · '+cond:''}</span></div><div class="bm-foot">${fournName}${need?' · '+eurHT:''}</div>${multi?brk:''}</td></tr>`;
   });
   html+='</tbody></table></div>';
-  html+=staleNote; // encart "à recompter" APRÈS la commande (ne pas noyer l'info principale)
-  window._BESOIN_LIST=besoin;
+  html+=staleNote;
+  window._BESOIN=R;
   el.innerHTML=html;
 }
 // Recherche produit/fournisseur dans la feuille de besoin. Toggle les <tr> — marche en vue tableau
@@ -402,10 +452,12 @@ function filterBesoin(){
     if(show)visibles++;
   });
   const c=document.getElementById('besoin_count');
-  if(c)c.textContent=q?`${visibles} résultat${visibles>1?'s':''}`:`${(window._BESOIN_LIST||[]).length} produit${(window._BESOIN_LIST||[]).length>1?'s':''} à commander`;
+  const n=(window._BESOIN&&window._BESOIN.list||[]).length;
+  if(c)c.textContent=q?`${visibles} résultat${visibles>1?'s':''}`:`${n} produit${n>1?'s':''} à commander`;
 }
 function copyBesoinAll(){
-  const besoin=window._BESOIN_LIST||[];
+  const R=window._BESOIN||{list:[],multi:false,snackNames:[]};
+  const besoin=R.list, multi=R.multi;
   if(!besoin.length){toast('Rien à copier');return;}
   // Regrouper par fournisseur, puis dans chaque fournisseur par catégorie
   const byFourn={};
@@ -414,7 +466,8 @@ function copyBesoinAll(){
     (byFourn[fid]=byFourn[fid]||[]).push(x);
   });
   const today=new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
-  let txt=`*Commande ${SNACK.nom}*\n${today}\n`;
+  // Mono : en-tête identique à avant. Multi : commande groupée mentionnant les snacks inclus.
+  let txt = multi ? `*Commande groupée — ${R.snackNames.join(' + ')}*\n${today}\n` : `*Commande ${R.snackNames[0]}*\n${today}\n`;
   let totalEur=0;
   Object.keys(byFourn).forEach(fid=>{
     const fnom=fid==='_sans'?'(Sans fournisseur)':nameFourn(fid);
@@ -429,8 +482,10 @@ function copyBesoinAll(){
       byCat[c].sort((a,b)=>a.produit.nom.localeCompare(b.produit.nom)).forEach(x=>{
         const cond=x.produit.cond_fourn1||x.produit.conditionnement||'';
         const unit=x.produit.unite||'';
-        txt+=`• ${x.produit.nom} — *${x.need}*${unit?' '+unit:''}${cond?' ('+cond+')':''}\n`;
-        const eurX=x.need*Number(x.produit.cout_unitaire||0);
+        // En multi, on rappelle la répartition par snack en fin de ligne (le total reste en gras).
+        const detail = multi ? ' ('+x.perSnack.map(p=>`${shortSnack(p.snack)} ${p.need}`).join(' + ')+')' : '';
+        txt+=`• ${x.produit.nom} — *${x.totalNeed}*${unit?' '+unit:''}${cond?' ('+cond+')':''}${detail}\n`;
+        const eurX=x.totalNeed*Number(x.produit.cout_unitaire||0);
         subTotal+=eurX;totalEur+=eurX;
       });
     });
@@ -449,35 +504,38 @@ function fallbackCopy(txt){
 }
 async function exportBesoinPDF(){
   toast('Génération PDF…');
-  // Même logique que renderBesoin : VRAIE dernière saisie (pas de fenêtre 7j) pour que le PDF ne
-  // contredise pas l'écran (sinon un produit compté il y a 40 j ressortait à "Actuel 0" dans le PDF).
-  const{data:saisies}=await sb.from('stock_saisies').select('produit_id,quantite,date_saisie').eq('restaurant_id',SNACK.id).order('date_saisie',{ascending:false});
-  const last={};(saisies||[]).forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
+  // Même source agrégée que l'écran (computeBesoin) → le PDF ne peut pas contredire l'affichage.
+  const R=(window._BESOIN && window._BESOIN.list.length)?window._BESOIN:await computeBesoin(BESOIN_SEL||[SNACK.id]);
+  if(!R.list.length){toast('Rien à exporter');return;}
+  const multi=R.multi;
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:'mm',format:'a4'});
-  doc.setFontSize(18);doc.text(`Feuille de besoin — ${SNACK.nom}`,14,18);
+  const titre = multi ? R.snackNames.join(' + ') : R.snackNames[0];
+  doc.setFontSize(18);doc.text(`Feuille de besoin — ${titre}`,14,18);
   doc.setFontSize(10);doc.setTextColor(120);doc.text(`Généré le ${new Date().toLocaleString('fr-FR')} · ${ORG.nom||''}`,14,25);doc.setTextColor(0);
-  const byFourn={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif!==false).forEach(m=>{ // produits désactivés exclus du PDF
-    const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
-    const jamais=!last[m.produit_id];
-    const cur=jamais?0:Number(last[m.produit_id].quantite);
-    const need=Math.max(0,Number(m.quantite_max)-cur);if(need<=0)return;
-    const date=last[m.produit_id]?.date_saisie;const age=daysSince(date);
-    const fid=p.fournisseur_principal_id||'_sans';
-    (byFourn[fid]=byFourn[fid]||[]).push({p,cur,max:Number(m.quantite_max),need,jamais,date,age});
-  });
+  const byFourn={};
+  R.list.forEach(x=>{ const fid=x.produit.fournisseur_principal_id||'_sans'; (byFourn[fid]=byFourn[fid]||[]).push(x); });
   let y=32;
-  // Largeurs de colonnes FIXES (mm), identiques pour CHAQUE tableau fournisseur → les colonnes
-  // tombent à la même position d'un tableau à l'autre (total 180mm ≤ largeur utile A4). Sans ça,
-  // autoTable recalcule les largeurs par tableau selon son contenu → colonnes décalées.
+  // Largeurs de colonnes FIXES (mm), identiques pour CHAQUE tableau fournisseur → colonnes alignées
+  // d'un tableau à l'autre (total 180mm ≤ largeur utile A4). Ne pas casser (chantier alignement).
   const besoinCols={0:{cellWidth:52},1:{cellWidth:15,halign:'center'},2:{cellWidth:14,halign:'center'},3:{cellWidth:22,halign:'center',fontStyle:'bold'},4:{cellWidth:28},5:{cellWidth:30},6:{cellWidth:19,halign:'right'}};
+  // Mono : colonne « Dernière saisie » (date) comme avant. Multi : « Par snack » (répartition).
+  const col5Head = multi ? 'Par snack' : 'Dernière saisie';
   Object.entries(byFourn).forEach(([fid,arr])=>{
     if(y>250){doc.addPage();y=20;}
     doc.setFontSize(13);doc.text(fid==='_sans'?'(sans fournisseur)':nameFourn(fid),14,y);y+=2;
-    doc.autoTable({startY:y+2,head:[['Produit','Actuel','Max','À cmd.','Cond.','Dernière saisie','€ HT']],body:arr.map(x=>[x.p.nom,x.jamais?'?':x.cur,x.max,x.need+' '+(x.p.unite||''),x.p.cond_fourn1||x.p.conditionnement||'',x.jamais?'jamais saisi':(fmtD(x.date)+(x.age>BESOIN_STALE_DAYS?` (ancien, ${x.age}j)`:'')),(x.need*Number(x.p.cout_unitaire||0)).toFixed(2)+' €']),theme:'grid',styles:{fontSize:8,overflow:'linebreak'},columnStyles:besoinCols,margin:{left:14,right:16},tableWidth:'wrap',headStyles:{fillColor:[200,160,53]}});
+    doc.autoTable({startY:y+2,head:[['Produit','Actuel','Max','À cmd.','Cond.',col5Head,'€ HT']],body:arr.map(x=>{
+      const ps0=x.perSnack[0];
+      const actuel = multi ? x.totalCur : (ps0.jamais?'?':ps0.cur);
+      const max = multi ? x.totalMax : ps0.max;
+      const col5 = multi
+        ? x.perSnack.map(p=>`${shortSnack(p.snack)}:${p.need}${(p.jamais||p.stale)?'⚠':''}`).join('  ')
+        : (ps0.jamais?'jamais saisi':(fmtD(ps0.date)+(ps0.age>BESOIN_STALE_DAYS?` (ancien, ${ps0.age}j)`:'')));
+      return [x.produit.nom,actuel,max,x.totalNeed+' '+(x.produit.unite||''),x.produit.cond_fourn1||x.produit.conditionnement||'',col5,(x.totalNeed*Number(x.produit.cout_unitaire||0)).toFixed(2)+' €'];
+    }),theme:'grid',styles:{fontSize:8,overflow:'linebreak'},columnStyles:besoinCols,margin:{left:14,right:16},tableWidth:'wrap',headStyles:{fillColor:[200,160,53]}});
     y=doc.lastAutoTable.finalY+8;
   });
-  doc.save(`Besoin_${SNACK.nom.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`);
+  doc.save(`Besoin_${(multi?'groupe':titre.replace(/\s+/g,'_'))}_${new Date().toISOString().slice(0,10)}.pdf`);
 }
 
 function renderProduits(el){
