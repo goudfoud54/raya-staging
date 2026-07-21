@@ -52,6 +52,12 @@ body.upd-open{padding-bottom:64px}
 .prod-input{width:100%;padding:12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:18px;text-align:center;font-weight:700;outline:none}
 .prod-input:focus{border-color:var(--gold)}
 .prod-input.done{border-color:var(--ok);background:rgba(63,184,127,.1)}
+.cmt-toggle{background:none;border:1px solid var(--line-2);border-radius:6px;padding:1px 6px;font-size:13px;line-height:1.4;cursor:pointer;vertical-align:middle;margin-left:4px}
+.cmt-toggle.has{border-color:var(--gold);background:rgba(200,160,53,.16)}
+.cmt-wrap{grid-column:1/-1;margin-top:8px}
+.cmt-field{width:100%;padding:11px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;outline:none}
+.cmt-field:focus{border-color:var(--gold)}
+.cmt-hint{color:var(--warn);font-size:11px;margin-top:4px}
 .btn{padding:16px;border-radius:10px;background:var(--gold);color:#1a1a1a;font-weight:700;font-size:16px;border:none;cursor:pointer;width:100%}
 .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
 .progress{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:14px 0}
@@ -77,7 +83,7 @@ body.upd-open{padding-bottom:64px}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-let SALARIE=null,PIN='',SNACK_ID=null,SNACK=null,SNACKS=[],PRODUITS=[],STOCK_MAX={},SAISIES_TODAY={};
+let SALARIE=null,PIN='',SNACK_ID=null,SNACK=null,SNACKS=[],PRODUITS=[],STOCK_MAX={},SAISIES_TODAY={},COMMENT_ON=new Set();
 
 // Config partagée avec badgeuse/HACCP/hub (kiosk-shared.js) : plus de picker local ici — un
 // appareil non configuré est renvoyé vers le hub, seul endroit qui gère setup + reconfig.
@@ -90,14 +96,17 @@ async function init(){
   if(!SNACK){EatimeKiosk.clearSnackConfig();location.href='../kiosk/';return;}
   // Charger les produits + stock_max + saisies du jour
   const today=new Date().toISOString().slice(0,10);
-  const[p,m,s]=await Promise.all([
+  const[p,m,s,c]=await Promise.all([
     sb.from('stock_produits').select('*').eq('actif',true).eq('organization_id',SNACK.organization_id).order('categorie').order('nom'),
     sb.from('stock_max').select('*').eq('actif',true).eq('restaurant_id',SNACK_ID),
     sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK_ID).eq('date_saisie',today),
+    // Produits où l'admin a activé le commentaire libre (indépendant de actif → requête dédiée).
+    sb.from('stock_max').select('produit_id').eq('restaurant_id',SNACK_ID).eq('commentaire_actif',true),
   ]);
   PRODUITS=p.data||[];
   STOCK_MAX={};(m.data||[]).forEach(x=>{STOCK_MAX[x.produit_id]=x;});
   SAISIES_TODAY={};(s.data||[]).forEach(x=>{SAISIES_TODAY[x.produit_id]=x;});
+  COMMENT_ON=new Set((c.data||[]).map(x=>x.produit_id));
   pinScreen();
   EatimeKiosk.initWakeLock();
   EatimeKiosk.watchOnline(renderNetPill);
@@ -169,9 +178,14 @@ function renderProdList(){
       const cur=SAISIES_TODAY[p.id];
       const max=STOCK_MAX[p.id];
       const qte=cur?cur.quantite:'';
+      const hasCmt=COMMENT_ON.has(p.id);
+      const cmtVal=cur&&cur.commentaire?String(cur.commentaire):'';
+      // 💬 discret uniquement si l'admin a activé le commentaire pour ce produit (compacité kiosk).
+      const cmtBtn=hasCmt?` <button type="button" id="cmtbtn-${p.id}" class="cmt-toggle ${cmtVal?'has':''}" onclick="toggleCmt('${p.id}')" title="Ajouter un commentaire" aria-label="Commentaire">💬</button>`:'';
+      const cmtWrap=hasCmt?`<div class="cmt-wrap" id="cmt-${p.id}" style="${cmtVal?'':'display:none'}"><input type="text" class="cmt-field" data-pid="${p.id}" maxlength="300" value="${cmtVal.replace(/"/g,'&quot;')}" placeholder="Remarque (ex: rupture, produit abîmé…)" onblur="saveComment('${p.id}',this.value)"></div>`:'';
       html+=`<div class="prod-row">
-        <div class="prod-name">${p.nom}<small>${p.conditionnement||''}${max?' · max '+max.quantite_max:''}</small></div>
-        <input type="number" step="0.5" class="prod-input ${cur?'done':''}" value="${qte}" placeholder="—" data-pid="${p.id}" data-cat="${cssId(c)}" onfocus="this.select()" onblur="saveSaisie('${p.id}',this.value)" inputmode="decimal">
+        <div class="prod-name">${p.nom}${cmtBtn}<small>${p.conditionnement||''}${max?' · max '+max.quantite_max:''}</small></div>
+        <input type="number" step="0.5" class="prod-input ${cur?'done':''}" value="${qte}" placeholder="—" data-pid="${p.id}" data-cat="${cssId(c)}" onfocus="this.select()" onblur="saveSaisie('${p.id}',this.value)" inputmode="decimal">${cmtWrap}
       </div>`;
     });
     html+='</div>';
@@ -215,12 +229,52 @@ async function saveSaisie(pid,vTxt){
     if(error){markSaisieError(pid);return;} // avant : erreur avalée → cellule "done" verte mais base non mise à jour
     SAISIES_TODAY[pid].quantite=v;
   } else {
-    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,date_saisie:new Date().toISOString().slice(0,10)}).select().single();
+    // À la création, on embarque un éventuel commentaire déjà tapé (produit avec commentaire activé)
+    // pour ne pas le perdre si le salarié a écrit la remarque avant de saisir la quantité.
+    const cf=document.querySelector(`.cmt-field[data-pid="${pid}"]`);
+    const commentaire=cf?((cf.value||'').trim()||null):null;
+    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,commentaire,date_saisie:new Date().toISOString().slice(0,10)}).select().single();
     if(error){markSaisieError(pid);return;}
     SAISIES_TODAY[pid]=data;
   }
   clearSaisieError(pid);refreshCounters(pid);
 }
+// Ouvre/replie le champ commentaire d'un produit (visible d'emblée s'il contient déjà une remarque).
+function toggleCmt(pid){
+  const w=document.getElementById('cmt-'+pid); if(!w)return;
+  const show=(w.style.display==='none'||!w.style.display);
+  w.style.display=show?'block':'none';
+  if(show){const f=w.querySelector('.cmt-field');if(f)f.focus();}
+}
+// Enregistre le commentaire. Peut être ajouté/modifié même sans changer la quantité : si une saisie
+// existe déjà → simple update du champ ; sinon il faut une quantité (quantite NOT NULL) → on crée la
+// ligne avec la quantité déjà tapée, ou on invite à saisir la quantité d'abord (sans perdre le texte).
+async function saveComment(pid,txt){
+  const comment=(txt||'').trim()||null;
+  const ex=SAISIES_TODAY[pid];
+  if(ex){
+    if((ex.commentaire||null)===comment){clearCmtHint(pid);return;} // inchangé
+    const{error}=await sb.from('stock_saisies').update({commentaire:comment}).eq('id',ex.id);
+    if(error){markCmtHint(pid,'⚠ Commentaire non enregistré (réseau ?)');return;}
+    ex.commentaire=comment;clearCmtHint(pid);markCmtSaved(pid);
+    return;
+  }
+  if(!comment){clearCmtHint(pid);return;}
+  const qInp=document.querySelector(`input.prod-input[data-pid="${pid}"]`);
+  const qv=parseFloat((qInp&&qInp.value||'').replace(',','.'));
+  if(isNaN(qv)){ markCmtHint(pid,'Saisis d\'abord la quantité pour enregistrer ce commentaire'); return; }
+  const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:qv,commentaire:comment,date_saisie:new Date().toISOString().slice(0,10)}).select().single();
+  if(error){markCmtHint(pid,'⚠ Commentaire non enregistré (réseau ?)');return;}
+  SAISIES_TODAY[pid]=data;clearCmtHint(pid);refreshCounters(pid);markCmtSaved(pid);
+}
+function markCmtSaved(pid){
+  const btn=document.getElementById('cmtbtn-'+pid);
+  if(btn) btn.classList.toggle('has', !!(SAISIES_TODAY[pid]&&SAISIES_TODAY[pid].commentaire));
+  const f=document.querySelector(`.cmt-field[data-pid="${pid}"]`);
+  if(f){const o=f.style.borderColor;f.style.borderColor='var(--ok)';setTimeout(()=>{f.style.borderColor=o;},900);}
+}
+function markCmtHint(pid,text){ const w=document.getElementById('cmt-'+pid); if(!w)return; let h=w.querySelector('.cmt-hint'); if(!h){h=document.createElement('div');h.className='cmt-hint';w.appendChild(h);} h.textContent=text; }
+function clearCmtHint(pid){ const w=document.getElementById('cmt-'+pid); if(!w)return; const h=w.querySelector('.cmt-hint'); if(h)h.remove(); }
 function refreshCounters(pid){
   // Compteurs par catégorie
   const cats=[...new Set(PRODUITS.map(p=>p.categorie||'Divers'))].sort();
