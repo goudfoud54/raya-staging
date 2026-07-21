@@ -58,6 +58,10 @@ body.upd-open{padding-bottom:64px}
 .cmt-field{width:100%;padding:11px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;outline:none}
 .cmt-field:focus{border-color:var(--gold)}
 .cmt-hint{color:var(--warn);font-size:11px;margin-top:4px}
+/* Mode « commentaire seul » : le champ texte EST le champ principal de la ligne (pleine largeur). */
+.cmt-only-input{grid-column:1/-1;width:100%;padding:12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:15px;outline:none}
+.cmt-only-input:focus{border-color:var(--gold)}
+.cmt-only-input.done{border-color:var(--ok);background:rgba(63,184,127,.1)}
 .btn{padding:16px;border-radius:10px;background:var(--gold);color:#1a1a1a;font-weight:700;font-size:16px;border:none;cursor:pointer;width:100%}
 .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
 .progress{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:14px 0}
@@ -83,7 +87,7 @@ body.upd-open{padding-bottom:64px}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-let SALARIE=null,PIN='',SNACK_ID=null,SNACK=null,SNACKS=[],PRODUITS=[],STOCK_MAX={},SAISIES_TODAY={},COMMENT_ON=new Set();
+let SALARIE=null,PIN='',SNACK_ID=null,SNACK=null,SNACKS=[],PRODUITS=[],STOCK_MAX={},SAISIES_TODAY={},CMT_MODE={};
 
 // Config partagée avec badgeuse/HACCP/hub (kiosk-shared.js) : plus de picker local ici — un
 // appareil non configuré est renvoyé vers le hub, seul endroit qui gère setup + reconfig.
@@ -100,13 +104,13 @@ async function init(){
     sb.from('stock_produits').select('*').eq('actif',true).eq('organization_id',SNACK.organization_id).order('categorie').order('nom'),
     sb.from('stock_max').select('*').eq('actif',true).eq('restaurant_id',SNACK_ID),
     sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK_ID).eq('date_saisie',today),
-    // Produits où l'admin a activé le commentaire libre (indépendant de actif → requête dédiée).
-    sb.from('stock_max').select('produit_id').eq('restaurant_id',SNACK_ID).eq('commentaire_actif',true),
+    // Mode commentaire par produit (optionnel / obligatoire), indépendant de actif → requête dédiée.
+    sb.from('stock_max').select('produit_id,mode_commentaire').eq('restaurant_id',SNACK_ID).neq('mode_commentaire','aucun'),
   ]);
   PRODUITS=p.data||[];
   STOCK_MAX={};(m.data||[]).forEach(x=>{STOCK_MAX[x.produit_id]=x;});
   SAISIES_TODAY={};(s.data||[]).forEach(x=>{SAISIES_TODAY[x.produit_id]=x;});
-  COMMENT_ON=new Set((c.data||[]).map(x=>x.produit_id));
+  CMT_MODE={};(c.data||[]).forEach(x=>{CMT_MODE[x.produit_id]=x.mode_commentaire;});
   pinScreen();
   EatimeKiosk.initWakeLock();
   EatimeKiosk.watchOnline(renderNetPill);
@@ -177,10 +181,20 @@ function renderProdList(){
     list.forEach(p=>{
       const cur=SAISIES_TODAY[p.id];
       const max=STOCK_MAX[p.id];
-      const qte=cur?cur.quantite:'';
-      const hasCmt=COMMENT_ON.has(p.id);
+      const qte=cur&&cur.quantite!=null?cur.quantite:'';
+      const mode=CMT_MODE[p.id]||'aucun';
       const cmtVal=cur&&cur.commentaire?String(cur.commentaire):'';
-      // 💬 discret uniquement si l'admin a activé le commentaire pour ce produit (compacité kiosk).
+      if(mode==='obligatoire'){
+        // « Commentaire seul » : PAS de quantité. Champ texte directement visible (le champ principal
+        // de la ligne). Compte comme saisi seulement s'il est rempli (done si commentaire présent).
+        html+=`<div class="prod-row">
+          <div class="prod-name">${p.nom} <span title="Commentaire uniquement" style="font-size:12px">📝</span><small>${p.conditionnement||''} · remarque requise</small></div>
+          <input type="text" class="cmt-only-input ${cmtVal?'done':''}" data-pid="${p.id}" data-cat="${cssId(c)}" maxlength="300" value="${cmtVal.replace(/"/g,'&quot;')}" placeholder="Saisir la remarque…" onblur="saveCommentOnly('${p.id}',this.value)">
+        </div>`;
+        return;
+      }
+      // 💬 discret uniquement si mode 'optionnel' (commentaire EN PLUS de la quantité).
+      const hasCmt=mode==='optionnel';
       const cmtBtn=hasCmt?` <button type="button" id="cmtbtn-${p.id}" class="cmt-toggle ${cmtVal?'has':''}" onclick="toggleCmt('${p.id}')" title="Ajouter un commentaire" aria-label="Commentaire">💬</button>`:'';
       const cmtWrap=hasCmt?`<div class="cmt-wrap" id="cmt-${p.id}" style="${cmtVal?'':'display:none'}"><input type="text" class="cmt-field" data-pid="${p.id}" maxlength="300" value="${cmtVal.replace(/"/g,'&quot;')}" placeholder="Remarque (ex: rupture, produit abîmé…)" onblur="saveComment('${p.id}',this.value)"></div>`:'';
       html+=`<div class="prod-row">
@@ -275,6 +289,31 @@ function markCmtSaved(pid){
 }
 function markCmtHint(pid,text){ const w=document.getElementById('cmt-'+pid); if(!w)return; let h=w.querySelector('.cmt-hint'); if(!h){h=document.createElement('div');h.className='cmt-hint';w.appendChild(h);} h.textContent=text; }
 function clearCmtHint(pid){ const w=document.getElementById('cmt-'+pid); if(!w)return; const h=w.querySelector('.cmt-hint'); if(h)h.remove(); }
+// Mode « commentaire seul » : enregistre UNIQUEMENT la remarque (quantite=NULL). Le produit est
+// considéré saisi quand la remarque est non vide ; vider le champ supprime la saisie (comme une qté).
+async function saveCommentOnly(pid,txt){
+  const comment=(txt||'').trim();
+  const d=new Date().toISOString().slice(0,10);
+  if(!comment){
+    if(SAISIES_TODAY[pid]){
+      const{error}=await sb.from('stock_saisies').delete().eq('id',SAISIES_TODAY[pid].id);
+      if(error){markSaisieError(pid);return;}
+      delete SAISIES_TODAY[pid];
+    }
+    clearSaisieError(pid);refreshCounters(pid);return;
+  }
+  if(SAISIES_TODAY[pid]){
+    if((SAISIES_TODAY[pid].commentaire||'')===comment){clearSaisieError(pid);return;}
+    const{error}=await sb.from('stock_saisies').update({commentaire:comment}).eq('id',SAISIES_TODAY[pid].id);
+    if(error){markSaisieError(pid);return;}
+    SAISIES_TODAY[pid].commentaire=comment;
+  } else {
+    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:null,commentaire:comment,date_saisie:d}).select().single();
+    if(error){markSaisieError(pid);return;}
+    SAISIES_TODAY[pid]=data;
+  }
+  clearSaisieError(pid);refreshCounters(pid);
+}
 function refreshCounters(pid){
   // Compteurs par catégorie
   const cats=[...new Set(PRODUITS.map(p=>p.categorie||'Divers'))].sort();
