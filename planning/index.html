@@ -235,7 +235,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.36 · auto-fill phase 3 distribution (rallonge + sureffectif opt-in) pour atteindre le minimum d\'heures';
+const VERSION='v0.37 · checks : exclure les sortis (min/plafond/off) + matching expérimenté tolérant à la rallonge phase 3';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -503,11 +503,9 @@ function renderEffectifs(){
         const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
         const n=assigned.length;
         const ini=escP((r.nom||'?').trim().charAt(0).toUpperCase());
-        // Expérimentés : groupé par horaire (exp présents vs requis), pour gérer plusieurs postes à la même heure
-        const expByDeb={};
-        getShifts(dayJourType(i),svc,r.cle).forEach(v=>{ if(v.exp) expByDeb[v.deb]=(expByDeb[v.deb]||0)+1; });
-        let expMiss=0;
-        Object.entries(expByDeb).forEach(([deb,req])=>{ const present=assigned.filter(x=>(x.heure_debut||'').slice(0,5)===deb&&isExp(x.salarie_id,r.cle)).length; expMiss+=Math.max(0,req-present); });
+        // Expérimentés : même source unique que le panneau Vérifications (matching par couverture tolérant
+        // à la rallonge phase 3), pour ne jamais diverger de lui.
+        const expMiss=expUncoveredPosts(assigned, dayJourType(i), svc, r.cle).length;
         const expBad=expMiss>0?` <span class="cnt-under" title="${expMiss} créneau(x) « expérimenté requis » non couvert(s)">★!${expMiss}</span>`:'';
         return `<span class="${cls(n,tgt.cible)}" title="${escP(r.nom)}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${roleCol(r.cle)};margin-right:3px;vertical-align:middle"></span>${n}/${tgt.cible}${ini}</span>${expBad}`;
       }).filter(Boolean).join(' ');
@@ -888,6 +886,26 @@ async function submitAbsence(sid){
   await loadWeek(); // recharge S.dispos + créneaux → grille et blocages à jour
 }
 
+// Postes « expérimenté requis » d'un service NON couverts par un expérimenté PRÉSENT qui les tient.
+// SOURCE UNIQUE (badge en-tête de colonne + panneau Vérifications) pour ne jamais diverger.
+// Appariement TOLÉRANT à la rallonge phase 3 : depuis v0.36, la phase 3 peut avancer le début / prolonger
+// la fin d'un créneau (dans l'enveloppe du service). Un expérimenté dont le début a bougé (ex 10:00 au lieu
+// de 10:30) COUVRE toujours le poste 10:30 tant que son créneau l'englobe → matching par COUVERTURE
+// (deb ≤ horaire du poste ≤ fin, minutes, passage minuit) et non par égalité stricte du début. GLOUTON :
+// chaque expérimenté présent ne couvre qu'UN poste ; les postes exp non appariés = « non couverts ».
+// `assigned` : créneaux du (jour,service,rôle) déjà filtrés onRoster.
+function expUncoveredPosts(assigned, jt, svc, roleCle){
+  const req=[]; getShifts(jt,svc,roleCle).forEach(v=>{ if(v.exp) req.push({deb:v.deb,fin:v.fin,debMin:_pmin(v.deb)}); });
+  if(!req.length) return [];
+  req.sort((a,b)=>a.debMin-b.debMin);
+  const exps=assigned.filter(x=>x.heure_debut&&isExp(x.salarie_id,roleCle)).map(x=>{ let cd=_pmin(x.heure_debut),cf=x.heure_fin?_pmin(x.heure_fin):null; if(cd==null)return null; if(cf==null)cf=cd+30; if(cf<=cd)cf+=1440; return {cd,cf,used:false}; }).filter(Boolean);
+  const covers=(e,pm)=>{ let p=pm; if(p<e.cd)p+=1440; return e.cd<=p && p<=e.cf; };
+  const uncovered=[];
+  for(const post of req){ const e=exps.find(x=>!x.used && covers(x,post.debMin)); if(e) e.used=true; else uncovered.push(post); }
+  return uncovered;
+}
+// Un créneau (heure_debut/heure_fin) couvre-t-il un horaire donné (minutes, passage minuit) ?
+function _creCoversMin(cre, pm){ let cd=_pmin(cre.heure_debut); if(cd==null)return false; let cf=cre.heure_fin?_pmin(cre.heure_fin):cd+30; if(cf<=cd)cf+=1440; let p=pm; if(p<cd)p+=1440; return cd<=p && p<=cf; }
 let CHECKS=[];
 function renderChecks(){
   CHECKS=[];
@@ -908,15 +926,12 @@ function renderChecks(){
       const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
       const n=assigned.length;
       if(_exact ? (n!==tgt.cible) : (n<tgt.cible)) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${n}/${tgt.cible}`);
-      // Expérimenté requis : groupé PAR HORAIRE de début (plusieurs postes peuvent commencer à la même heure,
-      // certains exp d'autres non → on compare le nombre d'expérimentés PRÉSENTS au nombre REQUIS à cet horaire).
-      const expByDeb={};
-      getShifts(dayJourType(i),svc,r.cle).forEach(v=>{ if(v.exp){ expByDeb[v.deb]=expByDeb[v.deb]||{n:0,fin:v.fin}; expByDeb[v.deb].n++; } });
-      Object.entries(expByDeb).forEach(([deb,info])=>{
-        const atDeb=assigned.filter(x=>(x.heure_debut||'').slice(0,5)===deb);
-        const expPresent=atDeb.filter(x=>isExp(x.salarie_id,r.cle)).length;
-        const missing=info.n-expPresent;
-        if(missing>0) expMiss.push(`${JOURS[i]} ${svc} · ${r.nom} · poste ${deb}→${info.fin} : ${missing} expérimenté(s) requis non couvert(s)${atDeb.length>=info.n?' (postes tenus par des non-expérimentés)':''}`);
+      // Expérimenté requis : matching TOLÉRANT à la rallonge phase 3 (couverture d'horaire, appariement
+      // glouton) via la source unique expUncoveredPosts — plus d'égalité stricte du début (cf. bug Cali).
+      expUncoveredPosts(assigned, dayJourType(i), svc, r.cle).forEach(post=>{
+        // Poste tenu par un NON-expérimenté (donc à requalifier) vs simplement vacant → nuance du message.
+        const heldByNonExp = assigned.some(x=>_creCoversMin(x, post.debMin));
+        expMiss.push(`${JOURS[i]} ${svc} · ${r.nom} · poste ${post.deb}→${post.fin} : 1 expérimenté requis non couvert${heldByNonExp?' (poste tenu par un non-expérimenté)':''}`);
       });
     });
   }
@@ -950,7 +965,10 @@ function renderChecks(){
   // 4. Jours de repos mini / semaine (valeur jour_off_min, comme checkPlacement — plus de « 7/7 » codé en dur)
   const offMin=_rc.num('jour_off_min',1);
   const noOff=[];
-  const list=S.salaries.filter(s=>worksAt(s,SNACK.id));
+  // onRoster EXCLUT les salariés sortis (actif=false / date_sortie < lundi) — sans lui, les checks
+  // off/plafond/min listaient des partis (ex RIAD, ALAMIN 0h) alors que le rapport auto-fill, qui filtre
+  // onRoster, ne les compte pas → divergence 12 vs 10. Même filtre que le rapport → cohérence.
+  const list=S.salaries.filter(s=>onRoster(s) && worksAt(s,SNACK.id));
   list.forEach(s=>{const d=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));const off=7-d.size;if(d.size>0 && off<offMin)noOff.push(`${nameOf(s.id)} : ${d.size} jours travaillés (${off} repos < ${offMin})`);});
   CHECKS.push({lbl:`≥ ${offMin} jour(s) off`,ok:noOff.length===0,details:noOff});
 
