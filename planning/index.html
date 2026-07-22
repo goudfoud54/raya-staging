@@ -505,7 +505,13 @@ function renderTable(){
   list.forEach((s,rowIdx)=>{
     const roleTag=rolesOf(s.id).map(cle=>`<span title="${escP(roleNom(cle))} · ${isExp(s.id,cle)?'expérimenté':'nouveau'}" style="background:${roleCol(cle)}22;color:${roleCol(cle)};border:1px solid ${roleCol(cle)}55;border-radius:5px;padding:0 4px;font-size:9.5px;font-weight:700;margin-left:3px;white-space:nowrap">${escP((roleNom(cle).charAt(0)||'').toUpperCase())}${isExp(s.id,cle)?'★':'🔰'}</span>`).join('');
     const col=s.couleur||'#666';
-    tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span><span class="sal-clic" onclick="openSalMenu(event,'${s.id}')" title="Actions">${fullName(s)}</span>${roleTag}</td>`;
+    // Badge cumul inter-snack : heures déjà posées cette semaine sur les AUTRES snacks du salarié,
+    // visibles en permanence dans la grille du snack courant (détail par snack en title + pop-up nom).
+    const oth=otherSnackHoursOf(s.id);
+    const othBadge = oth>0.01
+      ? `<span class="oth-badge" title="${escP(otherSnackBreakdown(s.id).map(b=>b.nom+' '+fmtH1(b.h)+'h').join(' · '))} — déjà posées sur d'autres snacks cette semaine" style="display:inline-block;margin-left:5px;font-size:9px;font-weight:700;color:var(--gold);background:rgba(200,160,53,.12);border:1px solid rgba(200,160,53,.35);border-radius:5px;padding:0 4px;white-space:nowrap;cursor:help">+${fmtH1(oth)}h ailleurs</span>`
+      : '';
+    tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span><span class="sal-clic" onclick="openSalMenu(event,'${s.id}')" title="Actions">${fullName(s)}</span>${roleTag}${othBadge}</td>`;
     let colIdx=0;
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
@@ -738,7 +744,13 @@ function openSalMenu(ev, sid){
   const s=salById(sid); if(!s) return;
   const pop=document.createElement('div');
   pop.className='sal-pop'; pop.id='salPop';
+  // Détail du cumul inter-snack : les heures posées sur les AUTRES snacks cette semaine, par site.
+  const oth=otherSnackBreakdown(sid), othTot=oth.reduce((a,b)=>a+b.h,0);
+  const othLine = oth.length
+    ? `<div class="pop-oth" style="padding:7px 12px;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--muted)"><b style="color:var(--gold)">+${fmtH1(othTot)}h sur d'autres snacks</b><br>${oth.map(b=>`${escP(b.nom)} : ${fmtH1(b.h)}h`).join('<br>')}</div>`
+    : '';
   pop.innerHTML=`<div class="pop-head">${escP(fullName(s))}</div>
+    ${othLine}
     <button onclick="closeSalMenu();navToModule('salaries','${sid}')"><span class="ico">👤</span> Voir la fiche</button>
     <button onclick="closeSalMenu();openAbsenceForm('${sid}')"><span class="ico">🌴</span> Ajouter une absence</button>
     <button onclick="closeSalMenu();navToModule('avertissements','${sid}')"><span class="ico">⚠️</span> Créer un avertissement / mise à pied →</button>`;
@@ -1828,6 +1840,16 @@ const _pdur=(d,f)=>{let a=_pmin(d),b=_pmin(f);if(a==null||b==null)return 0;if(b<
 // Lit toujours l'état À JOUR (rappelé à chaque candFor, après chaque pose).
 function isMultiSnack(s){ const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:null; return (a&&a.length>1)||!!(s&&s.est_multi); }
 function weekHoursOf(sid){ const s=salById(sid); const src=(s&&isMultiSnack(s))?S.allCreneauxWeek:S.creneaux; return src.filter(c=>c.salarie_id===sid&&c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60; }
+// Heures déjà posées cette semaine sur les AUTRES snacks (hors snack courant) — pour l'annotation
+// « +Xh ailleurs » de la grille et le détail par snack de la pop-up du nom. Même source (S.allCreneauxWeek)
+// que le cumul inter-snack, jamais recalculé autrement.
+function otherSnackHoursOf(sid){ return S.allCreneauxWeek.filter(c=>c.salarie_id===sid && c.restaurant_id!==SNACK.id && c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60; }
+function otherSnackBreakdown(sid){
+  const by={};
+  S.allCreneauxWeek.filter(c=>c.salarie_id===sid && c.restaurant_id!==SNACK.id && c.heure_debut).forEach(c=>{ by[c.restaurant_id]=(by[c.restaurant_id]||0)+_pdur(c.heure_debut,c.heure_fin); });
+  return Object.entries(by).map(([rid,mins])=>{ const r=S.restos.find(x=>x.id===rid); return {nom:(r?.nom||'?').replace('Raya ',''), h:mins/60}; }).sort((a,b)=>b.h-a.h);
+}
+const fmtH1=h=>(Math.round(h*10)/10).toString().replace('.',',');
 // Plafond d'heures hebdo UNIFIÉ (en heures), source unique pour TOUS les calculs de plafond
 // (blocage checkPlacement, tri candFor via checkPlacement, vérifications, récap coûts/heures).
 // Priorité : heures_max (champ « Heures max / semaine » de la fiche) → plafond_heures → règle
@@ -1929,6 +1951,41 @@ function checkPlacement(sid, shift, date, svc, di, opt){
     } else { // ce soir : laisse-t-il 11h avant le midi du lendemain ?
       const next=fmtDate(new Date(new Date(date).getTime()+86400000)); const ns=mine.find(c=>c.date===next&&c.service==='midi'&&c.heure_debut);
       if(ns){ const se=_finAbs(shift.deb,shift.fin); if(se!=null){ const g=(_pmin(ns.heure_debut)+1440)-se; if(g<repos) return {cle:'repos_quot',label:PLACE_RULES.repos_quot}; } }
+    }
+  }
+  // ── Coupure + repos quotidien INTER-SNACK ────────────────────────────────────────────────
+  // Les contrôles ci-dessus (mine = S.creneaux) ne voient QUE le snack courant. Un salarié multi-snack
+  // enchaîne des créneaux entre deux sites : ces enchaînements doivent respecter les MÊMES seuils
+  // (coupure_min 3h le même jour · repos_quotidien 11h entre deux jours). On regarde donc
+  // S.allCreneauxWeek pour ses créneaux sur les AUTRES snacks (restaurant_id !== SNACK.id). Calcul en
+  // minutes ABSOLUES sur la semaine (dayOff*1440 + minute du jour, fin ≤ début ⇒ +1440 = à cheval sur
+  // minuit) → agnostique aux libellés midi/soir, qui ne mappent pas d'un snack à l'autre. Un
+  // chevauchement horaire réel MÊME JOUR est déjà bloqué plus haut (inter_snack) ; ici on attrape
+  // l'ADJACENCE (gap 0, cas Ahmad : Grand Cœur 10:30→18:00 puis Lobau 18:00→00:00) et les repos courts.
+  {
+    const coupM=R.num('coupure_min',3)*60, reposM=R.num('repos_quotidien_h',11)*60;
+    let cS=_pmin(shift.deb), cE=_pmin(shift.fin);
+    if(cS!=null){
+      if(cE==null) cE=cS+30; else if(cE<=cS) cE+=1440;
+      const cDate=new Date(date+'T00:00:00');
+      for(const o of S.allCreneauxWeek){
+        if(o.salarie_id!==sid || o.restaurant_id===SNACK.id || !o.heure_debut) continue;
+        const dayOff=Math.round((new Date(o.date+'T00:00:00')-cDate)/86400000);
+        if(Math.abs(dayOff)>1) continue; // au-delà de veille/lendemain : ni coupure ni repos possible
+        let oS0=_pmin(o.heure_debut), oE0=o.heure_fin?_pmin(o.heure_fin):null;
+        if(oS0==null) continue; if(oE0==null) oE0=oS0+30; else if(oE0<=oS0) oE0+=1440;
+        const oS=dayOff*1440+oS0, oE=dayOff*1440+oE0;
+        const overlap = cS<oE && oS<cE;                 // recouvrement direct ⇒ gap négatif
+        const gap = overlap ? -1 : (oE<=cS ? cS-oE : oS-cE);
+        const seuil = (dayOff===0) ? coupM : reposM;    // même jour = coupure · jour adjacent = repos
+        if(gap<seuil){
+          const r=S.restos.find(x=>x.id===o.restaurant_id);
+          const oTxt=`${(r?.nom||'autre snack').replace('Raya ','')} ${(o.heure_debut||'').slice(0,5)}→${(o.heure_fin||'').slice(0,5)}`;
+          return (dayOff===0)
+            ? {cle:'coupure_min', label:`coupure < ${coupM/60}h avec ${oTxt}`}
+            : {cle:'repos_quot',  label:`repos quotidien < ${reposM/60}h avec ${oTxt}`};
+        }
+      }
     }
   }
   // jours de repos mini / semaine (défaut 1 → max 6 jours travaillés)
