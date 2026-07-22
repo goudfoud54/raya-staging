@@ -175,6 +175,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       <button class="ic" id="btnRedo" onclick="redo()" data-tip="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled>↷</button>
       <button class="ic" onclick="openDemandes()" data-tip="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
       <button class="ic accent" onclick="autoFillWeek()" data-tip="Auto-fill : remplir la semaine selon les dispos & règles" aria-label="Auto-fill">🎲</button>
+      <button class="ic" onclick="purgeWeek()" data-tip="Purger la semaine : supprimer tous les créneaux de ce snack (annulable)" aria-label="Purger la semaine">🧹</button>
       <button class="ic" onclick="openReglages()" data-tip="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
       <button class="ic" onclick="openReport()" data-tip="Rapport réel vs prévu (pointages badgeuse × planning)" aria-label="Rapport réel vs prévu">📊</button>
       <button class="ic" onclick="document.getElementById('xlsxFile').click()" data-tip="Importer un planning Excel" aria-label="Import Excel">📥</button>
@@ -237,7 +238,7 @@ let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const JOURS_SH=['Lu','Ma','Me','Je','Ve','Sa','Di'];
-let S={restos:[],salaries:[],roles:[],orgRoles:[],dispos:[],creneaux:[],allCreneauxWeek:[],effectifs:[],regles:[]};
+let S={restos:[],salaries:[],roles:[],orgRoles:[],dispos:[],creneaux:[],allCreneauxWeek:[],effectifs:[],regles:[],miseAPied:[]};
 let SNACK=null, MONDAY=null;
 let CONFLICTS=new Set();
 let VIEW_MODE=localStorage.getItem('pl_view')||'sal';
@@ -293,6 +294,31 @@ async function redo(){
   const batch=REDO.pop();
   for(const a of batch) await applyAction(a,1);
   UNDO.push(batch);await loadWeek();setSS('ok','↷ Rétabli');updateUndoBtns();
+}
+// Suppression d'un créneau + trace undo (before=row, after=null). Fonction PARTAGÉE : l'auto-fill
+// (kick-chain) et la purge de semaine passent par ici → même comportement + undo/redo cohérent.
+// Met à jour S.creneaux ET S.allCreneauxWeek. recordAction route dans le _txn courant si ouvert.
+async function removeCreneau(row){
+  await sb.from('planning_creneaux').delete().eq('id',row.id);
+  S.creneaux=S.creneaux.filter(c=>c.id!==row.id);
+  S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==row.id);
+  recordAction(row,null);
+}
+// Purge de TOUS les créneaux de TOUS les salariés pour la semaine affichée sur le snack courant.
+// Un seul batch undo (beginTxn/endTxn) → annulable d'un coup via ↶, comme l'auto-fill.
+async function purgeWeek(){
+  const rows=S.creneaux.slice(); // déjà scopé au snack courant + semaine par loadWeek
+  if(!rows.length){setSS('ok','Rien à purger — la semaine est déjà vide');return;}
+  const nSal=new Set(rows.map(c=>c.salarie_id)).size;
+  if(!confirm(`⚠ Purger la semaine sur ${SNACK.nom} ?\n\n${rows.length} créneau(x) de ${nSal} salarié(s) vont être supprimés pour la semaine affichée.\n\nCette action est annulable (↶ Annuler).`)) return;
+  setSS('busy','Purge de la semaine…');
+  beginTxn();
+  try{
+    for(const row of rows) await removeCreneau(row);
+    endTxn();
+    await loadWeek();
+    setSS('ok',`✓ ${rows.length} créneau(x) supprimé(s) — annulable (↶)`);
+  }catch(err){ endTxn(); setSS('err','Erreur purge : '+(err.message||err)); await loadWeek(); }
 }
 
 function _toMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
@@ -396,7 +422,7 @@ async function init(){
 async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
   const toIncl=fmtDate(new Date(MONDAY.getTime()+7*86400000)); // lundi suivant (pour la règle « veille » du dimanche)
-  const[s,ro,d,cr,crAll,eff,reg,orr,alt]=await Promise.all([
+  const[s,ro,d,cr,crAll,eff,reg,orr,alt,disc]=await Promise.all([
     sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
     sb.from('salarie_dispos').select('*'),
@@ -405,9 +431,13 @@ async function loadWeek(){
     sb.from('planning_effectifs').select('*'),
     sb.from('planning_regles').select('*'),
     sb.from('org_roles').select('*').eq('actif',true).order('ordre'),
-    sb.from('alternance_jours').select('salarie_id,date,type').gte('date',from).lte('date',toIncl)
+    sb.from('alternance_jours').select('salarie_id,date,type').gte('date',from).lte('date',toIncl),
+    // Mises à pied (disciplinary_actions) chevauchant la semaine → jours où le salarié est suspendu,
+    // donc légitimement absent (utilisé pour ne pas l'alerter « sous son minimum »). select tolérant :
+    // si la table/colonne n'est pas lisible (RLS), on retombe sur [] sans casser le chargement.
+    sb.from('disciplinary_actions').select('salarie_id,mise_a_pied_debut,mise_a_pied_fin').not('mise_a_pied_debut','is',null).lte('mise_a_pied_debut',fmtDate(new Date(MONDAY.getTime()+6*86400000))).gte('mise_a_pied_fin',from)
   ]);
-  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];
+  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];
   S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
   render();
 }
@@ -561,12 +591,20 @@ function renderTable(){
     const totMin=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_dur2(c.heure_debut,c.heure_fin),0);
     const totH=totMin/60;
     const minH=s.heures_min||0, maxH=plafondOf(s);
+    const multiSnack=isMultiSnack(s);
+    // La COULEUR (ok/under/over) doit refléter le total INTER-SNACK réel (weekHoursOf) vs le contrat
+    // GLOBAL (heures_min / plafondOf) : sinon un multi-snack paraît toujours « sous son minimum »
+    // alors que son cumul tous sites est dans la cible. Mono-snack : globalH == totH (inchangé).
+    const globalH=weekHoursOf(s.id);
     let recapCls='',recapColor='var(--text)';
-    if(maxH && totH>maxH){recapCls='over';recapColor='var(--bad)';}
-    else if(minH && totH<minH){recapCls='under';recapColor='var(--warn)';}
-    else if(totH>0){recapCls='ok';recapColor='var(--ok)';}
+    if(maxH && globalH>maxH){recapCls='over';recapColor='var(--bad)';}
+    else if(minH && globalH<minH){recapCls='under';recapColor='var(--warn)';}
+    else if(globalH>0){recapCls='ok';recapColor='var(--ok)';}
     const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
-    tbody+=`<td class="rowHours" data-sid="${s.id}" style="background:rgba(200,160,53,.04);font-weight:700;color:${recapColor};text-align:center">${totH.toFixed(1)}h${range}</td>`;
+    // Multi-snack : on garde le total SUR CE SNACK (chiffre principal, utile à qui planifie ce site) et
+    // on AJOUTE le cumul tous snacks, clairement identifié — c'est lui qui porte la couleur ci-dessus.
+    const allSnacksLine=multiSnack?`<small style="color:var(--gold);font-weight:600;display:block;font-size:9.5px;margin-top:1px">Σ ${fmtH1(globalH)}h tous snacks</small>`:'';
+    tbody+=`<td class="rowHours" data-sid="${s.id}" style="background:rgba(200,160,53,.04);font-weight:700;color:${recapColor};text-align:center">${totH.toFixed(1)}h${allSnacksLine}${range}</td>`;
     // colonne coût hebdo salarié (brut + chargé avec coef perso ou org)
     const taux=Number(s.taux_horaire_brut)||0;
     const coefOrg=Number(ORG.coef_charges)||1.420;
@@ -1604,6 +1642,11 @@ function hasIndispo(sid,date){
     return false;
   });
 }
+// Salarié sous le coup d'une mise à pied (disciplinary_actions) couvrant `date` → suspendu ce jour,
+// donc légitimement absent. Bornes incluses (mise_a_pied_debut ≤ date ≤ mise_a_pied_fin).
+function isSuspended(sid,date){
+  return (S.miseAPied||[]).some(m=>m.salarie_id===sid && m.mise_a_pied_debut && m.mise_a_pied_fin && m.mise_a_pied_debut<=date && date<=m.mise_a_pied_fin);
+}
 
 // ===== RAPPORT : RÉEL vs PRÉVU =====
 async function openReport(){
@@ -2020,7 +2063,13 @@ function showSolveReport(report, underMin){
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">⚠ Postes non comblés (${report.length})</h3></div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5">L'auto-fill n'a placé personne sur ces postes <b>sans enfreindre une règle active</b> (candidat introuvable). Complète-les à la main, ou ajuste les règles / effectifs / disponibilités. <b style="color:var(--text)">Aucun planning non conforme n'a été généré.</b></div>
     ${rows}` : '';
-  const umRows=underMin.map(u=>`<div style="display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${(u.min-u.have).toFixed(1)} h</b></span></div>`).join('');
+  const umRows=underMin.map(u=>{
+    // Manque calculé sur le minimum PRORATISÉ (jours réellement dispo) si le salarié a des absences,
+    // sinon sur son minimum contractuel. On indique le nb de jours d'absence pour lever l'ambiguïté.
+    const ref=(u.blocked>0)?u.proratedMin:u.min;
+    const absTag=(u.blocked>0)?` <span style="color:var(--muted);font-weight:400">· ${u.blocked} j d'absence → attendu ~${(Math.round(u.proratedMin*10)/10).toString().replace('.',',')} h</span>`:'';
+    return `<div style="display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>`;
+  }).join('');
   const minSection = underMin.length ? `
     <div style="margin-top:${report.length?'18px':'0'};padding-top:${report.length?'14px':'0'};${report.length?'border-top:1px solid var(--line-2)':''}">
       <h3 style="margin:0 0 8px">⏳ Salariés sous leur minimum d'heures (${underMin.length})</h3>
@@ -2059,7 +2108,7 @@ async function autoFillCore(dayIndices){
     const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
     if(error)return null; S.creneaux.push(data); S.allCreneauxWeek.push(data); if(_txn)_txn.push({before:null,after:data}); return data;
   };
-  const removeCre=async(row)=>{ await sb.from('planning_creneaux').delete().eq('id',row.id); S.creneaux=S.creneaux.filter(c=>c.id!==row.id); S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==row.id); if(_txn)_txn.push({before:row,after:null}); };
+  const removeCre=removeCreneau; // factorisé → fonction partagée (voir removeCreneau, aussi utilisée par purgeWeek)
   // Candidats conformes (chaque candidat passe checkPlacement — validité/plafond inchangés), triés par
   // sortCandidates (logique PARTAGÉE avec la phase 2 : manque vs heures_min, mono>multi, etc.).
   // sortCandidates lit weekHoursOf en direct → reflète l'état À JOUR de S.creneaux à chaque appel.
@@ -2142,11 +2191,20 @@ async function autoFillCore(dayIndices){
   // contenait peut-être pas assez d'heures (effectifs cibles insuffisants) pour tous les amener à
   // leur plancher — on le signale pour que l'admin ajuste effectifs/dispos ou ce salarié.
   const underMin=[];
+  const _weekDates=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
   S.salaries.filter(s=>onRoster(s)&&worksAt(s,SNACK.id)&&(s.heures_min||0)>0).forEach(s=>{
     const have=weekHoursOf(s.id), mn=s.heures_min||0;
-    if(have < mn-0.01) underMin.push({name:fullName(s), have, min:mn, multi:isMultiSnack(s)});
+    if(have >= mn-0.01) return; // au-dessus (ou à) son minimum → rien à signaler
+    // Ne pas alerter sur un manque EXPLIQUÉ par une absence validée (arrêt, congé, indispo) ou une
+    // mise à pied. On compte les jours réellement indisponibles cette semaine puis on PRORATISE le
+    // minimum sur les jours restants (dispo = 7 − indispo) : on ne signale que si le manque persiste
+    // MALGRÉ cette disponibilité réduite. Toute la semaine couverte ⇒ dispo 0 ⇒ prorata 0 ⇒ jamais signalé.
+    const blocked=_weekDates.filter(d=>hasIndispo(s.id,d)||isSuspended(s.id,d)).length;
+    const dispo=7-blocked;
+    const proratedMin=mn*dispo/7;
+    if(have < proratedMin-0.01) underMin.push({name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
   });
-  underMin.sort((a,b)=>(b.min-b.have)-(a.min-a.have));
+  underMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
   window._lastUnderMin=underMin;
   let msg=`✓ ${added} créneau(x) placé(s)`;
   if(report.length) msg+=` · ${report.length} poste(s) non comblé(s)`;
