@@ -102,6 +102,7 @@ table.plan td.midi{background:color-mix(in srgb, var(--scol,transparent) 10%, va
 table.plan td.soir{background:color-mix(in srgb, var(--scol,transparent) 10%, var(--soir))}
 table.plan td input::placeholder{color:rgba(255,255,255,.12)}
 table.plan td.conflict{box-shadow:inset 0 0 0 1.5px var(--bad);background:rgba(196,90,90,.08)!important}
+table.plan td.sureff{box-shadow:inset 0 0 0 1.5px var(--gold);background:rgba(200,160,53,.14)!important}
 table.plan td.conflict input{color:var(--bad);font-weight:700}
 table.plan td input:hover{border-color:var(--line-2)}
 table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
@@ -234,7 +235,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.35 · repos/coupure inter-snack + prorata absences ponctuelles + colonne heures inter-snack (rowHoursCell) + purge semaine + auto-fill multi-snack';
+const VERSION='v0.36 · auto-fill phase 3 distribution (rallonge + sureffectif opt-in) pour atteindre le minimum d\'heures';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -579,12 +580,16 @@ function renderTable(){
         }
         const cr=getCreneau(s.id,date,svc)||{};
         const cls=svc;
+        // Créneau sureffectif (phase 3, au-delà du nb_cible) → fond doré + title, pour que l'admin le
+        // repère et le retire d'un clic (vider la cellule) s'il n'est pas d'accord avec le surcoût.
+        const suf=cr.sureffectif?' sureff':'';
+        const sufT=cr.sureffectif?' title="Sureffectif auto (au-delà de la cible) — ajouté pour atteindre le minimum d\'heures ; vide la cellule pour le retirer"':'';
         const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
         const cellKey=`${s.id}|${date}|${svc}`;
         const isConf=CONFLICTS.has(cellKey);
         const c1=colIdx++,c2=colIdx++;
-        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" data-saved="${hd}" data-row="${rowIdx}" data-col="${c1}" data-sid="${s.id}" data-date="${date}" data-svc="${svc}" data-w="deb" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
-        tbody+=`<td class="${cls}${isConf?' conflict':''}" data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" data-saved="${hf}" data-row="${rowIdx}" data-col="${c2}" data-sid="${s.id}" data-date="${date}" data-svc="${svc}" data-w="fin" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
+        tbody+=`<td class="${cls}${isConf?' conflict':''}${suf}"${sufT} data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hd}" data-saved="${hd}" data-row="${rowIdx}" data-col="${c1}" data-sid="${s.id}" data-date="${date}" data-svc="${svc}" data-w="deb" onblur="saveCell('${s.id}','${date}','${svc}','deb',this)"></td>`;
+        tbody+=`<td class="${cls}${isConf?' conflict':''}${suf}"${sufT} data-k="${cellKey}"><input type="text" list="t-list" inputmode="numeric" maxlength="5" placeholder="" value="${hf}" data-saved="${hf}" data-row="${rowIdx}" data-col="${c2}" data-sid="${s.id}" data-date="${date}" data-svc="${svc}" data-w="fin" onblur="saveCell('${s.id}','${date}','${svc}','fin',this)"></td>`;
       });
     });
     // colonne récap heures
@@ -1260,7 +1265,8 @@ const RULE_META={
   doublon_inter_snack:{lbl:'Zéro doublon entre snacks',type:'bool'},
   couverture_continue:{lbl:'Couverture continue 1 cuisine + 1 réception',type:'bool'},
   departs_echelonnes:{lbl:'Départs échelonnés (éviter les pics)',type:'bool'},
-  effectifs_exacts:{lbl:'Compteurs = objectif exact',type:'bool'}
+  effectifs_exacts:{lbl:'Compteurs = objectif exact',type:'bool'},
+  sureffectif_minimum:{lbl:'Sureffectif auto pour atteindre le minimum d\'heures',type:'bool',help:'Autorise l\'auto-fill (phase 3) à poser des créneaux AU-DELÀ de la cible pour amener un salarié à son minimum. Coût supplémentaire — désactivé par défaut.'}
 };
 
 // Ouvre/replie un accordéon de rôle et mémorise l'état (ne se referme que sur clic explicite de l'en-tête)
@@ -1388,6 +1394,18 @@ function openReglages(){
       }
     });
   }
+  // Sureffectif auto (phase 3) — toggle TOUJOURS présent (indépendant des lignes planning_regles
+  // existantes), créé à la volée s'il n'existe pas encore. Défaut OFF (opt-in, coût supplémentaire).
+  {
+    const sr=S.regles.find(x=>x.cle==='sureffectif_minimum');
+    const on = sr ? sr.active!==false : false;
+    html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line)">
+      <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
+        <input type="checkbox" ${on?'checked':''} onchange="toggleSureffRule(this.checked)" style="width:18px;height:18px;cursor:pointer">
+        <span style="font-size:13.5px">${RULE_META.sureffectif_minimum.lbl} <span style="color:var(--muted);font-size:11px">(phase 3 · coût +)</span></span>
+      </label>
+    </div>`;
+  }
   html+='</div></div>';
 
   // === ALERTES & COMPORTEMENT ===
@@ -1447,6 +1465,22 @@ async function saveEffectif(inp){
     if(error){alert('Erreur: '+error.message);return;}S.effectifs.push(data);
   }
   setSS('ok','Effectif sauvegardé');
+}
+// Active/désactive la règle 'sureffectif_minimum' — la crée si elle n'existe pas encore (valeur=2 par
+// défaut = max de créneaux sureffectif/salarié). restaurant_id=SNACK.id (comme les autres règles ;
+// _ruleCtx indexe par cle, donc l'effet est de fait au niveau org, cohérent avec le reste).
+async function toggleSureffRule(on){
+  const existing=S.regles.find(r=>r.cle==='sureffectif_minimum');
+  if(existing){
+    const{error}=await sb.from('planning_regles').update({active:on}).eq('id',existing.id);
+    if(error){setSS('err','Erreur: '+error.message);return;}
+    existing.active=on;
+  } else {
+    const{data,error}=await sb.from('planning_regles').insert({restaurant_id:SNACK.id,cle:'sureffectif_minimum',libelle:'Sureffectif auto (min. d\'heures)',active:on,valeur:'2',type_regle:'souple'}).select().single();
+    if(error){setSS('err','Erreur: '+error.message);return;}
+    if(data)S.regles.push(data);
+  }
+  setSS('ok', on?'Sureffectif activé (phase 3)':'Sureffectif désactivé');
 }
 async function saveRegle(id,field,val){
   const{error}=await sb.from('planning_regles').update({[field]:val}).eq('id',id);
@@ -1927,7 +1961,7 @@ async function autoFillMultiWeek(ids){
     await loadWeek(); // recharge S.creneaux/S.effectifs du snack + S.allCreneauxWeek (global, à jour)
     if(!hasEffectifsConfig()){ results.push({snackNom:SNACK.nom, skipped:true}); continue; }
     const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true})||{};
-    results.push({snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom}))});
+    results.push({snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom})), phase3:res.phase3||{}});
   }
   // Retour au snack initialement affiché (état prévisible pour l'utilisateur).
   SNACK=S.restos.find(r=>r.id===originalId)||SNACK; document.getElementById('snackSel').value=SNACK.id;
@@ -1967,10 +2001,15 @@ function showMultiSolveReport(results, underMin){
     return `<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>`;
   }).join('');
   const minSection = underMin.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⏳ Salariés sous leur minimum (${underMin.length})</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">Total tous snacks confondus (heures globales). Augmente les effectifs cibles, élargis les dispos, ou revois ces salariés.</div>${umRows}</div>` : '';
+  // Phase 3 agrégée sur tous les snacks (rallonge + sureffectif).
+  const p3R=results.reduce((a,r)=>a+((r.phase3&&r.phase3.rallongeH)||0),0);
+  const p3S=results.reduce((a,r)=>a+((r.phase3&&r.phase3.sureffH)||0),0);
+  const p3List=results.flatMap(r=>(r.phase3&&r.phase3.sureffList)||[]);
+  const phase3Section = (p3R+p3S>0.05) ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⚖️ Phase 3 — distribution : +${fmtH1(p3R+p3S)}h</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5"><b>${fmtH1(p3R)}h de rallonge</b> + <b>${fmtH1(p3S)}h de sureffectif</b>${p3List.length?` (${p3List.length} créneau(x) sureffectif, fond doré dans la grille)`:''}.</div>${p3List.map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px"><b>${escP(x.name)}</b> · ${escP(x.date)} ${x.svc} · ${fmtH1(x.h)}h</div>`).join('')}</div>` : '';
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
     <div style="font-size:13px;margin-bottom:6px">✓ <b>${totalAdded}</b> créneau(x) placé(s) sur ${results.filter(r=>!r.skipped).length} snack(s)</div>
-    ${perSnack}${postesSection}${minSection}</div></div>`;
+    ${perSnack}${phase3Section}${postesSection}${minSection}</div></div>`;
   setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
 }
 let _autofillRunning=false;
@@ -2174,7 +2213,7 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   return null; // ✅ aucune règle active violée
 }
 // Rapport des postes non comblés (modale)
-function showSolveReport(report, underMin){
+function showSolveReport(report, underMin, phase3){
   report=report||[]; underMin=underMin||[];
   const rows=report.map(r=>`<div style="display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:160px;font-weight:600">${escP(r.jour)} ${r.svc} · ${escP(r.role)}${r.exp?' ★':''}</span><span style="color:var(--muted);font-family:monospace;min-width:96px">${escP(r.horaire)}</span><span style="color:var(--bad)">⚠ ${escP(r.detail)}</span></div>`).join('');
   // Section « postes non comblés » (échecs de placement : candidat introuvable) — distincte des
@@ -2197,10 +2236,17 @@ function showSolveReport(report, underMin){
       <div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">Pas assez de créneaux disponibles cette semaine pour atteindre leur minimum contractuel (<b>heures_min</b>). Augmente les effectifs cibles, élargis leurs disponibilités, ou revois ce salarié. (Total tous snacks pour les multi-snack.)</div>
       ${umRows}
     </div>` : '';
-  const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : 'Salariés sous leur minimum';
+  const p3=phase3||{}; const rH=p3.rallongeH||0, sH=p3.sureffH||0, sList=p3.sureffList||[];
+  const phase3Section = (rH+sH>0.05) ? `
+    <div style="margin-top:${(report.length||underMin.length)?'18px':'0'};padding-top:${(report.length||underMin.length)?'14px':'0'};${(report.length||underMin.length)?'border-top:1px solid var(--line-2)':''}">
+      <h3 style="margin:0 0 6px">⚖️ Phase 3 — distribution : +${fmtH1(rH+sH)}h</h3>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5">Heures ajoutées pour rapprocher des salariés de leur minimum : <b>${fmtH1(rH)}h de rallonge</b> (extension de créneaux existants dans l'enveloppe des services) + <b>${fmtH1(sH)}h de sureffectif</b> (créneaux au-delà de la cible, ⚠ coût). ${sList.length?`${sList.length} créneau(x) sureffectif — repérables dans la grille (fond doré) :`:''}</div>
+      ${sList.map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px"><b>${escP(x.name)}</b> · ${escP(JOURS[(new Date(x.date).getDay()+6)%7]||'')} ${escP(x.date)} ${x.svc} · ${fmtH1(x.h)}h</div>`).join('')}
+    </div>` : '';
+  const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : (underMin.length?'Salariés sous leur minimum':'Rapport auto-fill');
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${postesSection}${minSection}</div></div>`;
+    ${phase3Section}${postesSection}${minSection}</div></div>`;
 }
 async function autoFillCore(dayIndices, opt={}){
   if(_autofillRunning)return;            // anti double-clic
@@ -2209,6 +2255,7 @@ async function autoFillCore(dayIndices, opt={}){
   setSS('busy','Remplissage en cours…');
   beginTxn();
   let added=0; const report=[];
+  let rallongeH=0, sureffH=0; const sureffList=[]; // bilan phase 3 (distribution)
   try{
   // Purge des créneaux orphelins (salarié sorti/supprimé) sur les jours traités → pas de double-réservation ni de fantôme
   const purgeDates=dayIndices.map(di=>fmtDate(dateOfDay(di)));
@@ -2224,10 +2271,21 @@ async function autoFillCore(dayIndices, opt={}){
   const _now=()=>(window.performance&&performance.now)?performance.now():0;
   const T0=_now(), TBUDGET=8000, overTime=()=>_now()-T0>TBUDGET;
   const dayIdxOfDate=d=>(new Date(d).getDay()+6)%7;
-  const placeCre=async(sid,sh,date,svc)=>{
-    const payload={restaurant_id:SNACK.id,salarie_id:sid,role:sh.role,date,service:svc,heure_debut:sh.deb,heure_fin:sh.fin};
+  const placeCre=async(sid,sh,date,svc,extra)=>{
+    const payload={restaurant_id:SNACK.id,salarie_id:sid,role:sh.role,date,service:svc,heure_debut:sh.deb,heure_fin:sh.fin,...(extra||{})};
     const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
     if(error)return null; S.creneaux.push(data); S.allCreneauxWeek.push(data); if(_txn)_txn.push({before:null,after:data}); return data;
+  };
+  // Mise à jour des horaires d'un créneau EXISTANT (phase 3 rallonge) : un seul write vers la valeur
+  // finale + maj mémoire des DEUX tableaux (S.creneaux/S.allCreneauxWeek peuvent contenir des objets
+  // distincts) + trace undo {before,after} (applyAction ré-upsert before à l'annulation → restaure).
+  const updateCreTimes=async(row,newDeb,newFin)=>{
+    const before={...row};
+    const{data,error}=await sb.from('planning_creneaux').update({heure_debut:newDeb,heure_fin:newFin}).eq('id',row.id).select().single();
+    if(error||!data) return null;
+    [S.creneaux,S.allCreneauxWeek].forEach(arr=>{const it=arr.find(c=>c.id===row.id); if(it){it.heure_debut=data.heure_debut;it.heure_fin=data.heure_fin;}});
+    if(_txn)_txn.push({before,after:{...data}});
+    return data;
   };
   const removeCre=removeCreneau; // factorisé → fonction partagée (voir removeCreneau, aussi utilisée par purgeWeek)
   // Candidats conformes (chaque candidat passe checkPlacement — validité/plafond inchangés), triés par
@@ -2304,6 +2362,84 @@ async function autoFillCore(dayIndices, opt={}){
     }
     if(!repaired) report.push(diag(h));
   }
+  // ── PHASE 3 : DISTRIBUTION — amener les salariés SOUS leur heures_min (proratisé) à leur plancher ──
+  // Deux leviers, dans l'ordre : (A) RALLONGE des créneaux existants dans l'ENVELOPPE du service (bornes
+  // des vagues configurées ce jour/service — pas d'heures hors service), (B) SUREFFECTIF ciblé (créneau
+  // en plus, opt-in par règle). Chaque modif passe par checkPlacement (toutes les règles, y compris repos/
+  // coupure inter-snack) + un garde-fou plafond GLOBAL explicite (checkPlacement ne plafonne que le snack
+  // courant). Phase 3 ne touche JAMAIS aux créneaux d'AUTRES salariés (pas de kick — c'est la phase 2).
+  if(opt.distribute!==false){
+    updateAutofillProgress(holes.length||1,holes.length||1,'Distribution (min. d\'heures)…'); await _yield();
+    const _wd=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
+    const absToHHMM=m=>{m=((Math.round(m)%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
+    // Enveloppe d'un service = [deb la plus matinale, fin la plus tardive] sur toutes les vagues de ce
+    // jour-type/service (tous rôles). Sans vague configurée → null → pas de rallonge (pas d'heure inventée).
+    const svcEnvelope=(jt,svc)=>{ let mn=Infinity,mx=-Infinity; for(const _r of S.orgRoles){ for(const v of getShifts(jt,svc,_r.cle)){ const d=_pmin(v.deb); if(d==null)continue; let f=_pmin(v.fin); if(f==null)continue; if(f<=d)f+=1440; if(d<mn)mn=d; if(f>mx)mx=f; } } return mn===Infinity?null:{mn,mx}; };
+    const SUREFF_ON=rg.on('sureffectif_minimum',false); // opt-in (défaut OFF, activable dans les Réglages)
+    const SUREFF_MAX=Math.max(0,Math.round(rg.num('sureffectif_minimum',2))); // créneaux sureffectif max / salarié
+    const sureffCount={};
+    // Cibles : salariés du snack courant SOUS leur min proratisé (mêmes absences ponctuelles que underMin).
+    const targets=[];
+    S.salaries.filter(s=>onRoster(s)&&worksAt(s,SNACK.id)&&(s.heures_min||0)>0).forEach(s=>{
+      const blocked=_wd.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
+      const proratedMin=(s.heures_min||0)*(7-blocked)/7;
+      const cap=plafondOf(s,rg);
+      const target=Math.min(proratedMin,cap);      // garde-fou : jamais au-dessus du plafond (cas min=max)
+      if(weekHoursOf(s.id) < target-0.01) targets.push({sid:s.id,sal:s,target,cap});
+    });
+    targets.sort((a,b)=>(b.target-weekHoursOf(b.sid))-(a.target-weekHoursOf(a.sid))); // plus gros manque d'abord
+    for(const t of targets){
+      if(overTime())break;
+      const sid=t.sid, cap=t.cap, target=t.target;
+      // (A) RALLONGE — un seul write par créneau : on cherche la fin/début max valides EN MÉMOIRE puis on écrit.
+      const myCre=S.creneaux.filter(c=>c.salarie_id===sid && c.restaurant_id===SNACK.id && c.heure_debut && c.heure_fin);
+      for(const row of myCre){
+        if(overTime()||weekHoursOf(sid)>=target-0.01)break;
+        const env=svcEnvelope(dayJourType(dayIdxOfDate(row.date)),row.service); if(!env)continue;
+        const di=dayIdxOfDate(row.date);
+        let debM=_pmin(row.heure_debut), finM=_pmin(row.heure_fin); if(finM==null||debM==null)continue; if(finM<=debM)finM+=1440;
+        const oldDur=(finM-debM)/60;
+        let curDeb=debM, curFin=finM, curDur=oldDur;
+        const projected=()=>weekHoursOf(sid)-oldDur+curDur;         // heures globales SI on écrivait `cur`
+        let step=0;
+        while(step++<64 && projected()<target-0.01){
+          let moved=false;
+          // priorité : étendre la fin (dans l'enveloppe), sinon avancer le début
+          if(curFin+30<=env.mx){
+            const nd=(curFin+30-curDeb)/60, cand={deb:absToHHMM(curDeb),fin:absToHHMM(curFin+30),role:row.role};
+            if(weekHoursOf(sid)-oldDur+nd<=cap+1e-6 && checkPlacement(sid,cand,row.date,row.service,di,{rg,excludeSelf:true})===null){ curFin+=30; curDur=nd; moved=true; }
+          }
+          if(!moved && curDeb-30>=env.mn){
+            const nd=(curFin-(curDeb-30))/60, cand={deb:absToHHMM(curDeb-30),fin:absToHHMM(curFin),role:row.role};
+            if(weekHoursOf(sid)-oldDur+nd<=cap+1e-6 && checkPlacement(sid,cand,row.date,row.service,di,{rg,excludeSelf:true})===null){ curDeb-=30; curDur=nd; moved=true; }
+          }
+          if(!moved)break;
+        }
+        if(curDur>oldDur+0.001){ const w=await updateCreTimes(row,absToHHMM(curDeb),absToHHMM(curFin)); if(w) rallongeH+=(curDur-oldDur); }
+      }
+      // (B) SUREFFECTIF — créneau EN PLUS (au-delà du nb_cible), copie une forme de vague, opt-in par règle.
+      if(SUREFF_ON){
+        let placedSureff=true;
+        while(placedSureff && !overTime() && weekHoursOf(sid)<target-0.01 && (sureffCount[sid]||0)<SUREFF_MAX){
+          placedSureff=false;
+          outer:
+          for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
+            for(const svc of ['midi','soir']){
+              for(const role of rolesOf(sid)){
+                for(const v of getShifts(jt,svc,role)){
+                  const nd=_pdur(v.deb,v.fin)/60; if(nd<=0)continue;
+                  if(weekHoursOf(sid)+nd>cap+1e-6)continue;                 // plafond global strict
+                  if(checkPlacement(sid,{deb:v.deb,fin:v.fin,role},date,svc,di,{rg})!==null)continue;
+                  const w=await placeCre(sid,{deb:v.deb,fin:v.fin,role},date,svc,{sureffectif:true});
+                  if(w){ added++; sureffH+=nd; sureffCount[sid]=(sureffCount[sid]||0)+1; sureffList.push({name:fullName(t.sal),date,svc,role,h:nd}); placedSureff=true; break outer; }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
   updateAutofillProgress(holes.length||1,holes.length||1,'Finalisation…');
   endTxn();
   await loadWeek();
@@ -2331,14 +2467,17 @@ async function autoFillCore(dayIndices, opt={}){
   // Mode multi-snack (opt.silent) : ne rien afficher ici (ni statut ni rapport) — autoFillMultiWeek
   // agrège tout et affiche UN rapport consolidé (le sous-minimum y est recalculé globalement une seule
   // fois, à la fin, car le manque d'un salarié n'est réel qu'après le passage de TOUS les snacks).
-  if(opt.silent) return {added, report, underMin, snackId:SNACK.id, snackNom:SNACK.nom};
+  const phase3={rallongeH, sureffH, sureffList};
+  if(opt.silent) return {added, report, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
+  const distrib=rallongeH+sureffH;
+  if(distrib>0.05) msg+=` · +${fmtH1(distrib)}h distribuées`;
   if(report.length) msg+=` · ${report.length} poste(s) non comblé(s)`;
   if(underMin.length) msg+=` · ${underMin.length} sous leur minimum`;
-  if(report.length||underMin.length) msg+=' — voir rapport';
+  if(report.length||underMin.length||distrib>0.05) msg+=' — voir rapport';
   setSS((report.length||underMin.length)?'warn':'ok', msg);
-  if(report.length||underMin.length) showSolveReport(report, underMin);
-  return {added, report, underMin, snackId:SNACK.id, snackNom:SNACK.nom};
+  if(report.length||underMin.length||distrib>0.05) showSolveReport(report, underMin, phase3);
+  return {added, report, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   }catch(err){
     setSS('err','Erreur auto-fill : '+(err.message||err));
     endTxn();
