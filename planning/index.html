@@ -174,7 +174,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       <button class="ic" id="btnUndo" onclick="undo()" data-tip="Annuler (Ctrl+Z)" aria-label="Annuler" disabled>↶</button>
       <button class="ic" id="btnRedo" onclick="redo()" data-tip="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled>↷</button>
       <button class="ic" onclick="openDemandes()" data-tip="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
-      <button class="ic accent" onclick="autoFillWeek()" data-tip="Auto-fill : remplir la semaine selon les dispos & règles" aria-label="Auto-fill">🎲</button>
+      <button class="ic accent" onclick="openAutoFillPicker()" data-tip="Auto-fill : remplir la semaine (1 ou plusieurs snacks) selon les dispos & règles" aria-label="Auto-fill">🎲</button>
       <button class="ic" onclick="purgeWeek()" data-tip="Purger la semaine : supprimer tous les créneaux de ce snack (annulable)" aria-label="Purger la semaine">🧹</button>
       <button class="ic" onclick="openReglages()" data-tip="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
       <button class="ic" onclick="openReport()" data-tip="Rapport réel vs prévu (pointages badgeuse × planning)" aria-label="Rapport réel vs prévu">📊</button>
@@ -232,7 +232,9 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.30 · plafond unifié (heures_max prioritaire, bloquant partout) + phase 2 réparation triée comme la phase 1';
+// ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
+//    comme sw.js CACHE_VERSION côté kiosk).
+const VERSION='v0.35 · repos/coupure inter-snack + prorata absences ponctuelles + colonne heures inter-snack (rowHoursCell) + purge semaine + auto-fill multi-snack';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -653,7 +655,16 @@ function rowHoursCell(s){
   else if(minH && globalH<minH) color='var(--warn)';
   else if(globalH>0) color='var(--ok)';
   const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
-  const allSnacksLine=isMultiSnack(s)?`<small style="color:var(--gold);font-weight:600;display:block;font-size:9.5px;margin-top:1px">Σ ${fmtH1(globalH)}h tous snacks</small>`:'';
+  // Multi-snack : compact « Σ Xh » (le libellé « tous snacks » débordait sur petits écrans) ; le détail
+  // par snack va dans le title (survol), formaté à partir d'otherSnackBreakdown (source déjà partagée
+  // avec la pop-up du nom) + le snack courant, pour un total cohérent avec globalH.
+  let allSnacksLine='';
+  if(isMultiSnack(s)){
+    const parts=[{nom:(SNACK&&SNACK.nom||'ce snack').replace('Raya ',''),h:totH},...otherSnackBreakdown(s.id)].filter(p=>p.h>0.01);
+    const detail=parts.map(p=>`${p.nom} : ${fmtH1(p.h)}h`).join(' · ');
+    const tip=escP(`Total toutes plannings confondus (${fmtH1(globalH)}h)`+(detail?` — ${detail}`:''));
+    allSnacksLine=`<small title="${tip}" style="color:var(--gold);font-weight:600;display:block;font-size:9.5px;margin-top:1px;cursor:help">Σ ${fmtH1(globalH)}h</small>`;
+  }
   return {color, html:`${totH.toFixed(1)}h${allSnacksLine}${range}`};
 }
 // Recalcule en place les coûts (lignes + footer/jour + totaux hebdo) SANS reconstruire les cellules éditables
@@ -1863,6 +1874,105 @@ async function autoFillWeek(){
   if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
   await autoFillCore([0,1,2,3,4,5,6]);
 }
+// ═══════════════ AUTO-FILL MULTI-SNACK (approche a : boucle séquentielle) ═══════════════
+// Nombre de « postes-cibles » configurés pour un snack (proxy de contrainte pour l'ordre de traitement) :
+// somme des nb_cible / longueur des vagues sur toutes les lignes d'effectif du snack. S.effectifs contient
+// déjà TOUS les snacks (loadWeek ne filtre pas) → aucun rechargement nécessaire ici.
+function snackTargetSlots(rid){
+  return (S.effectifs||[]).filter(e=>e.restaurant_id===rid).reduce((a,e)=>a+((Array.isArray(e.vagues)&&e.vagues.length)?e.vagues.length:(e.nb_cible||0)),0);
+}
+// Ouvre le sélecteur multi-snack avant de lancer 🎲 (snack courant pré-coché).
+function openAutoFillPicker(){
+  if(!S.restos||!S.restos.length) return autoFillWeek();
+  const chips=S.restos.map(r=>`<label class="af-snack" style="display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--line-2);border-radius:9px;cursor:pointer;font-size:13.5px"><input type="checkbox" value="${r.id}" ${r.id===SNACK.id?'checked':''} style="width:16px;height:16px;accent-color:var(--gold)"> ${escP(r.nom)}</label>`).join('');
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)closeAutoFillPicker()"><div class="pdf-modal" style="max-width:460px;width:92vw">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h3 style="margin:0;font-size:16px">🎲 Auto-fill — snacks à remplir</h3><button class="btn ghost sm" onclick="closeAutoFillPicker()">✕</button></div>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:12px;line-height:1.5">Sélectionne un ou plusieurs snacks. En multi, ils sont traités <b>le plus contraint d'abord</b> et chacun voit déjà ce qui vient d'être posé sur les précédents (meilleure répartition des salariés multi-snack). Les créneaux existants ne sont jamais remplacés.</div>
+    <div id="afSnackList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">${chips}</div>
+    <div style="display:flex;gap:10px;justify-content:space-between;align-items:center">
+      <button class="btn ghost sm" onclick="toggleAllAfSnacks()">Tout / aucun</button>
+      <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeAutoFillPicker()">Annuler</button><button class="btn" onclick="launchAutoFillPicker()">🎲 Lancer</button></div>
+    </div>
+  </div></div>`;
+}
+function closeAutoFillPicker(){ document.getElementById('pdfModal').innerHTML=''; }
+function toggleAllAfSnacks(){
+  const boxes=[...document.querySelectorAll('#afSnackList input[type=checkbox]')];
+  const allOn=boxes.every(b=>b.checked); boxes.forEach(b=>b.checked=!allOn);
+}
+function launchAutoFillPicker(){
+  const ids=[...document.querySelectorAll('#afSnackList input[type=checkbox]:checked')].map(b=>b.value);
+  closeAutoFillPicker();
+  if(!ids.length){ setSS('warn','Sélectionne au moins un snack'); return; }
+  if(ids.length===1){
+    // Un seul snack → comportement mono INCHANGÉ (autoFillWeek, avec sa propre confirmation).
+    if(ids[0]!==SNACK.id){ SNACK=S.restos.find(r=>r.id===ids[0]); document.getElementById('snackSel').value=ids[0]; loadWeek().then(autoFillWeek); }
+    else autoFillWeek();
+    return;
+  }
+  autoFillMultiWeek(ids);
+}
+async function autoFillMultiWeek(ids){
+  // Ordre : le plus contraint (le plus de postes-cibles) d'abord, pour qu'il ne se fasse pas « rafler »
+  // ses candidats par un snack moins tendu traité avant lui. Le tri inter-snack de sortCandidates
+  // (manque vs heures_min) + le plafond via weekHoursOf limitent déjà la sur-affectation.
+  const ordered=ids.slice().sort((a,b)=>snackTargetSlots(b)-snackTargetSlots(a));
+  const names=ordered.map(id=>(S.restos.find(r=>r.id===id)||{}).nom).filter(Boolean);
+  if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${ordered.length} snacks ?\n\nOrdre (le plus contraint d'abord) : ${names.join(' → ')}\n\nLes créneaux existants ne sont pas remplacés. Chaque snack est annulable séparément (↶).`)) return;
+  const originalId=SNACK.id;
+  const results=[];
+  for(const id of ordered){
+    SNACK=S.restos.find(r=>r.id===id); if(!SNACK) continue;
+    document.getElementById('snackSel').value=id;
+    await loadWeek(); // recharge S.creneaux/S.effectifs du snack + S.allCreneauxWeek (global, à jour)
+    if(!hasEffectifsConfig()){ results.push({snackNom:SNACK.nom, skipped:true}); continue; }
+    const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true})||{};
+    results.push({snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom}))});
+  }
+  // Retour au snack initialement affiché (état prévisible pour l'utilisateur).
+  SNACK=S.restos.find(r=>r.id===originalId)||SNACK; document.getElementById('snackSel').value=SNACK.id;
+  await loadWeek();
+  // ── Sous-minimum CONSOLIDÉ : calculé UNE SEULE FOIS, après TOUS les snacks, sur les heures GLOBALES
+  // (S.allCreneauxWeek, indépendant du snack affiché) — sinon (a) un multi-snack sous son min après le
+  // 1er snack mais complété par les suivants serait faussement listé, et (b) weekHoursOf est relatif au
+  // snack courant pour un MONO-snack → un mono travaillant sur un snack non restauré lirait 0h.
+  const underMin=[];
+  const _weekDates=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
+  const globalHoursAll=sid=>S.allCreneauxWeek.filter(c=>c.salarie_id===sid && c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60;
+  S.salaries.filter(s=>onRoster(s) && ordered.some(rid=>worksAt(s,rid)) && (s.heures_min||0)>0).forEach(s=>{
+    const have=globalHoursAll(s.id), mn=s.heures_min||0;
+    if(have >= mn-0.01) return;
+    const blocked=_weekDates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
+    const proratedMin=mn*(7-blocked)/7;
+    if(have < proratedMin-0.01) underMin.push({name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
+  });
+  underMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
+  showMultiSolveReport(results, underMin);
+}
+// Rapport consolidé multi-snack : total placé + bilan par snack, postes non comblés groupés par snack,
+// et sous-minimum global (dédupliqué par construction : un seul calcul global ci-dessus).
+function showMultiSolveReport(results, underMin){
+  const totalAdded=results.reduce((a,r)=>a+(r.added||0),0);
+  const perSnack=results.map(r=>{
+    if(r.skipped) return `<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px"><b>${escP(r.snackNom)}</b> <span style="color:var(--warn)">— ignoré (aucun effectif configuré)</span></div>`;
+    const nb=(r.report||[]).length;
+    return `<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px"><b>${escP(r.snackNom)}</b> · <span style="color:var(--ok)">${r.added||0} placé(s)</span>${nb?` · <span style="color:var(--bad)">${nb} non comblé(s)</span>`:''}</div>`;
+  }).join('');
+  const allReport=results.flatMap(r=>r.report||[]);
+  const postesRows=allReport.map(r=>`<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12px;align-items:baseline"><span style="min-width:96px;color:var(--gold);font-weight:600">${escP(r.snack)}</span><span style="min-width:150px;font-weight:600">${escP(r.jour)} ${r.svc} · ${escP(r.role)}${r.exp?' ★':''}</span><span style="color:var(--muted);font-family:monospace">${escP(r.horaire||'')}</span><span style="color:var(--bad)">⚠ ${escP(r.detail||'')}</span></div>`).join('');
+  const postesSection = allReport.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⚠ Postes non comblés (${allReport.length})</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">Aucun candidat conforme (aucune règle enfreinte). À compléter à la main ou ajuster règles/effectifs/dispos.</div>${postesRows}</div>` : '';
+  const umRows=underMin.map(u=>{
+    const ref=(u.blocked>0)?u.proratedMin:u.min;
+    const absTag=(u.blocked>0)?` <span style="color:var(--muted);font-weight:400">· ${u.blocked} j d'absence → attendu ~${fmtH1(u.proratedMin)} h</span>`:'';
+    return `<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>`;
+  }).join('');
+  const minSection = underMin.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⏳ Salariés sous leur minimum (${underMin.length})</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">Total tous snacks confondus (heures globales). Augmente les effectifs cibles, élargis les dispos, ou revois ces salariés.</div>${umRows}</div>` : '';
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
+    <div style="font-size:13px;margin-bottom:6px">✓ <b>${totalAdded}</b> créneau(x) placé(s) sur ${results.filter(r=>!r.skipped).length} snack(s)</div>
+    ${perSnack}${postesSection}${minSection}</div></div>`;
+  setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
+}
 let _autofillRunning=false;
 function showAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o){o.style.display='flex';updateAutofillProgress(0,1,'Analyse des disponibilités…');}}
 function hideAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o)o.style.display='none';}
@@ -2092,7 +2202,7 @@ function showSolveReport(report, underMin){
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
     ${postesSection}${minSection}</div></div>`;
 }
-async function autoFillCore(dayIndices){
+async function autoFillCore(dayIndices, opt={}){
   if(_autofillRunning)return;            // anti double-clic
   _autofillRunning=true;
   showAutofillOverlay();
@@ -2218,12 +2328,17 @@ async function autoFillCore(dayIndices){
   });
   underMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
   window._lastUnderMin=underMin;
+  // Mode multi-snack (opt.silent) : ne rien afficher ici (ni statut ni rapport) — autoFillMultiWeek
+  // agrège tout et affiche UN rapport consolidé (le sous-minimum y est recalculé globalement une seule
+  // fois, à la fin, car le manque d'un salarié n'est réel qu'après le passage de TOUS les snacks).
+  if(opt.silent) return {added, report, underMin, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
   if(report.length) msg+=` · ${report.length} poste(s) non comblé(s)`;
   if(underMin.length) msg+=` · ${underMin.length} sous leur minimum`;
   if(report.length||underMin.length) msg+=' — voir rapport';
   setSS((report.length||underMin.length)?'warn':'ok', msg);
   if(report.length||underMin.length) showSolveReport(report, underMin);
+  return {added, report, underMin, snackId:SNACK.id, snackNom:SNACK.nom};
   }catch(err){
     setSS('err','Erreur auto-fill : '+(err.message||err));
     endTxn();
