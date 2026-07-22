@@ -98,7 +98,20 @@ async function init(){
   const{data:snacks}=await sb.from('restaurants').select('id,nom,organization_id');SNACKS=snacks||[];
   SNACK=SNACKS.find(s=>s.id===SNACK_ID);
   if(!SNACK){EatimeKiosk.clearSnackConfig();location.href='../kiosk/';return;}
-  // Charger les produits + stock_max + saisies du jour
+  await loadStockData();
+  pinScreen();
+  EatimeKiosk.initWakeLock();
+  EatimeKiosk.watchOnline(renderNetPill);
+  EatimeKiosk.initIdleReturn(10, ()=>!!SALARIE);
+  await EatimeKiosk.registerSW();
+}
+// Charge produits + stock_max + saisies du jour + mode commentaire. Rejoué à CHAQUE connexion PIN
+// (cf. validatePin) et pas seulement au boot : une tablette reste ouverte des jours, et un changement
+// admin (nouveau produit, désactivation, passage en « commentaire seul ») doit être visible dès le
+// salarié suivant sans reload manuel. ⚠ On n'écrase un cache que si SA requête a réussi : un reload
+// partiel (réseau capricieux) ne doit jamais vider l'inventaire sous les pieds d'un salarié qui vient
+// de s'authentifier — on garde alors les données précédemment chargées.
+async function loadStockData(){
   const today=new Date().toISOString().slice(0,10);
   const[p,m,s,c]=await Promise.all([
     sb.from('stock_produits').select('*').eq('actif',true).eq('organization_id',SNACK.organization_id).order('categorie').order('nom'),
@@ -107,15 +120,10 @@ async function init(){
     // Mode commentaire par produit (optionnel / obligatoire), indépendant de actif → requête dédiée.
     sb.from('stock_max').select('produit_id,mode_commentaire').eq('restaurant_id',SNACK_ID).neq('mode_commentaire','aucun'),
   ]);
-  PRODUITS=p.data||[];
-  STOCK_MAX={};(m.data||[]).forEach(x=>{STOCK_MAX[x.produit_id]=x;});
-  SAISIES_TODAY={};(s.data||[]).forEach(x=>{SAISIES_TODAY[x.produit_id]=x;});
-  CMT_MODE={};(c.data||[]).forEach(x=>{CMT_MODE[x.produit_id]=x.mode_commentaire;});
-  pinScreen();
-  EatimeKiosk.initWakeLock();
-  EatimeKiosk.watchOnline(renderNetPill);
-  EatimeKiosk.initIdleReturn(10, ()=>!!SALARIE);
-  await EatimeKiosk.registerSW();
+  if(!p.error && p.data){ PRODUITS=p.data; }
+  if(!m.error && m.data){ STOCK_MAX={};m.data.forEach(x=>{STOCK_MAX[x.produit_id]=x;}); }
+  if(!s.error && s.data){ SAISIES_TODAY={};s.data.forEach(x=>{SAISIES_TODAY[x.produit_id]=x;}); }
+  if(!c.error && c.data){ CMT_MODE={};c.data.forEach(x=>{CMT_MODE[x.produit_id]=x.mode_commentaire;}); }
 }
 function renderNetPill(online){
   const el=document.getElementById('net-pill');
@@ -143,7 +151,12 @@ function clrPin(){PIN='';document.getElementById('pinDisp').textContent='';docum
 async function validatePin(){
   if(!PIN){document.getElementById('pinErr').textContent='Code requis';return;}
   // S11 : vérification du PIN côté serveur (rate-limit par tablette) via edge function verify-pin.
-  const res=await verifyPin(SUPA_URL,SUPA_KEY,SNACK.organization_id,SNACK.id,PIN);
+  // On recharge la config EN PARALLÈLE de la vérif PIN → le salarié qui se connecte voit toujours
+  // l'état admin le plus frais (produits/mode commentaire/saisies du jour), coût latence ~nul.
+  const[res]=await Promise.all([
+    verifyPin(SUPA_URL,SUPA_KEY,SNACK.organization_id,SNACK.id,PIN),
+    loadStockData(),
+  ]);
   const clear=()=>{PIN='';document.getElementById('pinDisp').textContent='';};
   if(res.status===429){document.getElementById('pinErr').textContent='Trop de tentatives. Réessaie dans '+Math.ceil((res.retry||60)/60)+' min.';clear();return;}
   if(!res.ok){document.getElementById('pinErr').textContent=res.error||'Code inconnu';clear();return;}

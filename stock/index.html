@@ -129,7 +129,7 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Stock · v0.4</small></div>
+    <div class="brand">Eatime360 <small>· Stock · v0.5</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -350,8 +350,8 @@ const shortSnack=n=>(n||'').replace(/^Raya\s+/i,'').trim()||n;
 // conservé (perSnack) pour l'affichage/exports multi. staleAtMax listé par (snack,produit).
 async function computeBesoin(snackIds){
   const ids=(snackIds||[]).filter(Boolean);
-  if(!ids.length) return {list:[],staleAtMax:[],totalEur:0,snackIds:[],snackNames:[],multi:false};
-  const{data:saisies}=await sb.from('stock_saisies').select('restaurant_id,produit_id,quantite,date_saisie').in('restaurant_id',ids).order('date_saisie',{ascending:false});
+  if(!ids.length) return {list:[],notes:[],staleAtMax:[],totalEur:0,snackIds:[],snackNames:[],multi:false};
+  const{data:saisies}=await sb.from('stock_saisies').select('restaurant_id,produit_id,quantite,commentaire,date_saisie').in('restaurant_id',ids).order('date_saisie',{ascending:false});
   const last={};(saisies||[]).forEach(s=>{const b=last[s.restaurant_id]=last[s.restaurant_id]||{};if(!b[s.produit_id]||s.date_saisie>b[s.produit_id].date_saisie)b[s.produit_id]=s;});
   const snackNom=sid=>{const r=S.snacks.find(x=>x.id===sid);return r?r.nom:'?';};
   const aggMap={};const staleAtMax=[];
@@ -374,7 +374,23 @@ async function computeBesoin(snackIds){
   const list=Object.values(aggMap).sort((a,b)=>{const c=(a.produit.categorie||'Divers').localeCompare(b.produit.categorie||'Divers');return c!==0?c:a.produit.nom.localeCompare(b.produit.nom);});
   const totalEur=list.reduce((a,x)=>a+x.totalNeed*Number(x.produit.cout_unitaire||0),0);
   staleAtMax.sort((a,b)=>b.age-a.age);
-  return {list,staleAtMax,totalEur,snackIds:ids,snackNames:ids.map(snackNom),multi:ids.length>1};
+  // Produits « commentaire seul » (mode_commentaire='obligatoire') : pas de quantité → hors calcul
+  // numérique ci-dessus, MAIS le/la magasinier·ère doit voir la dernière remarque saisie (ex: monnaie
+  // → « 50€ de fond de caisse », tiramisu → « goûts : coco, pistache »). On remonte la DERNIÈRE note
+  // par (snack, produit) dans une liste séparée `notes`, jamais mêlée aux totaux € ni aux lignes numériques.
+  const notesMap={};
+  ids.forEach(sid=>{
+    S.stockMax.filter(m=>m.restaurant_id===sid && m.actif!==false && m.mode_commentaire==='obligatoire').forEach(m=>{
+      const p=S.produits.find(x=>x.id===m.produit_id);if(!p)return;
+      const l=(last[sid]||{})[m.produit_id];
+      const cmt=l&&l.commentaire?String(l.commentaire).trim():'';
+      if(!cmt)return; // pas encore de remarque saisie sur ce snack → rien à afficher
+      const n=notesMap[p.id]=notesMap[p.id]||{produit:p,perSnack:[]};
+      n.perSnack.push({sid,snack:snackNom(sid),commentaire:cmt,date:l.date_saisie,age:daysSince(l.date_saisie)});
+    });
+  });
+  const notes=Object.values(notesMap).sort((a,b)=>{const c=(a.produit.categorie||'Divers').localeCompare(b.produit.categorie||'Divers');return c!==0?c:a.produit.nom.localeCompare(b.produit.nom);});
+  return {list,notes,staleAtMax,totalEur,snackIds:ids,snackNames:ids.map(snackNom),multi:ids.length>1};
 }
 // Sélecteur multi-snack (checkboxes + "Tout") — propre à cet onglet.
 function besoinSelectorHtml(){
@@ -411,6 +427,15 @@ async function renderBesoin(el){
     <table class="tbl"><thead><tr>${multi?'<th>Snack</th>':''}<th>Produit</th><th>Dernier compte</th><th>Dernière saisie</th></tr></thead><tbody>
     ${staleAtMax.map(x=>`<tr>${multi?`<td>${shortSnack(x.snack)}</td>`:''}<td><b>${x.produit.nom}</b></td><td>${x.cur}</td><td style="color:var(--warn);font-size:12px">${fmtD(x.date)} · ${x.age} j</td></tr>`).join('')}
     </tbody></table></div>`:'';
+  // Section « Notes » : produits « commentaire seul » avec leur dernière remarque (par snack en multi
+  // si les notes diffèrent). Distincte du tableau numérique et des totaux €.
+  const notes=R.notes||[];
+  const notesSection=notes.length?`<div class="section">
+    <h3 style="color:var(--gold)">📝 Notes (sans quantité)</h3>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:8px">Produits à remarque libre (monnaie, goûts à prévoir…) — pas de quantité calculée, à lire avant la tournée.</div>
+    <table class="tbl"><thead><tr><th>Produit</th>${multi?'<th>Snack</th>':''}<th>Note</th><th>Saisie</th></tr></thead><tbody>
+    ${notes.map(n=>n.perSnack.map((ps,i)=>`<tr><td style="vertical-align:top">${i===0?`<b>${n.produit.nom}</b>`:''}</td>${multi?`<td>${shortSnack(ps.snack)}</td>`:''}<td style="color:var(--warn)">💬 ${String(ps.commentaire).replace(/</g,'&lt;')}</td><td style="color:var(--muted);font-size:12px">${fmtD(ps.date)}${ps.age>BESOIN_STALE_DAYS?` · ${ps.age}j`:''}</td></tr>`).join('')).join('')}
+    </tbody></table></div>`:'';
   let html=besoinSelectorHtml()+`<div class="toolbar">
     <h2 style="font-size:18px;font-weight:700;flex:1">Feuille de besoin — ${titre}</h2>
     <button class="btn ghost" onclick="copyBesoinAll()">📋 Copier toute la commande</button>
@@ -418,7 +443,11 @@ async function renderBesoin(el){
   </div>`;
   window._BESOIN=R; // exposé pour copier/PDF
   if(!BESOIN_SEL.length){ html+='<div class="section" style="text-align:center;color:var(--muted)">Sélectionne au moins un snack ci-dessus.</div>'; el.innerHTML=html; return; }
-  if(!besoin.length){html+=(staleNote||'<div class="section" style="text-align:center;color:var(--ok)">✓ Aucun besoin — stocks au max partout</div>');el.innerHTML=html;return;}
+  if(!besoin.length){
+    html+=staleNote+notesSection;
+    if(!staleNote && !notesSection) html+='<div class="section" style="text-align:center;color:var(--ok)">✓ Aucun besoin — stocks au max partout</div>';
+    el.innerHTML=html;return;
+  }
   html+=`<div class="section">
     <input id="besoin_search" placeholder="🔍 Rechercher un produit…" oninput="filterBesoin()" style="width:100%;margin-bottom:12px;padding:9px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;outline:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -459,6 +488,7 @@ async function renderBesoin(el){
     html+=`<tr class="${isFirstOfCat?'bcat-first':''}" data-cat="${cat}" data-pname="${pname}"><td data-label="Catégorie" style="vertical-align:top">${catCell}</td><td data-label="Produit"><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div>${brk}</td><td data-label="Fournisseur" style="font-size:12.5px">${fnom}</td><td data-label="Actuel">${actuelCell}</td><td data-label="Max">${max}</td><td data-label="À commander"><b style="color:var(--gold);font-size:15px">${need}</b> ${unite}</td><td data-label="Cond." style="color:var(--muted);font-size:11.5px">${cond}</td><td data-label="€ HT">${eurHT}</td><td class="besoin-mobile"><div class="bm-name"><b>${x.produit.nom}</b> ${warnIcon}</div><div class="bm-line"><span class="bm-cmd">→ ${need} ${unite}</span><span class="bm-sub">stock ${curTxt}/${max}${cond?' · '+cond:''}</span></div><div class="bm-foot">${fournName}${need?' · '+eurHT:''}</div>${multi?brk:''}</td></tr>`;
   });
   html+='</tbody></table></div>';
+  html+=notesSection;
   html+=staleNote;
   window._BESOIN=R;
   el.innerHTML=html;
@@ -478,9 +508,9 @@ function filterBesoin(){
   if(c)c.textContent=q?`${visibles} résultat${visibles>1?'s':''}`:`${n} produit${n>1?'s':''} à commander`;
 }
 function copyBesoinAll(){
-  const R=window._BESOIN||{list:[],multi:false,snackNames:[]};
-  const besoin=R.list, multi=R.multi;
-  if(!besoin.length){toast('Rien à copier');return;}
+  const R=window._BESOIN||{list:[],notes:[],multi:false,snackNames:[]};
+  const besoin=R.list, multi=R.multi, notes=R.notes||[];
+  if(!besoin.length && !notes.length){toast('Rien à copier');return;}
   // Regrouper par fournisseur, puis dans chaque fournisseur par catégorie
   const byFourn={};
   besoin.forEach(x=>{
@@ -513,7 +543,16 @@ function copyBesoinAll(){
     });
     txt+=`\n_Sous-total ${fnom} : ${eur(subTotal)} HT_\n`;
   });
-  txt+=`\n*TOTAL GÉNÉRAL : ${eur(totalEur)} HT*\n\nMerci 🙏`;
+  if(besoin.length) txt+=`\n*TOTAL GÉNÉRAL : ${eur(totalEur)} HT*\n`;
+  // Notes « sans quantité » : une ligne texte par produit (par snack si plusieurs notes en multi).
+  if(notes.length){
+    txt+=`\n━━━━━━━━━━━━━━\n*📝 NOTES (sans quantité)*\n━━━━━━━━━━━━━━\n`;
+    notes.forEach(n=>{
+      if(n.perSnack.length===1){ txt+=`• ${n.produit.nom} : ${n.perSnack[0].commentaire}\n`; }
+      else { txt+=`• ${n.produit.nom}\n`+n.perSnack.map(ps=>`   – ${shortSnack(ps.snack)} : ${ps.commentaire}`).join('\n')+`\n`; }
+    });
+  }
+  txt+=`\nMerci 🙏`;
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(txt).then(()=>toast('✓ Toute la commande copiée — colle dans WhatsApp')).catch(()=>fallbackCopy(txt));
   } else fallbackCopy(txt);
@@ -527,8 +566,8 @@ function fallbackCopy(txt){
 async function exportBesoinPDF(){
   toast('Génération PDF…');
   // Même source agrégée que l'écran (computeBesoin) → le PDF ne peut pas contredire l'affichage.
-  const R=(window._BESOIN && window._BESOIN.list.length)?window._BESOIN:await computeBesoin(BESOIN_SEL||[SNACK.id]);
-  if(!R.list.length){toast('Rien à exporter');return;}
+  const R=(window._BESOIN && (window._BESOIN.list.length||(window._BESOIN.notes||[]).length))?window._BESOIN:await computeBesoin(BESOIN_SEL||[SNACK.id]);
+  if(!R.list.length && !(R.notes||[]).length){toast('Rien à exporter');return;}
   const multi=R.multi;
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:'mm',format:'a4'});
@@ -557,6 +596,16 @@ async function exportBesoinPDF(){
     }),theme:'grid',styles:{fontSize:8,overflow:'linebreak'},columnStyles:besoinCols,margin:{left:14,right:16},tableWidth:'wrap',headStyles:{fillColor:[200,160,53]}});
     y=doc.lastAutoTable.finalY+8;
   });
+  // Notes « sans quantité » : tableau distinct en fin de document (jamais mêlé aux totaux € ci-dessus).
+  const notes=R.notes||[];
+  if(notes.length){
+    if(y>250){doc.addPage();y=20;}
+    doc.setFontSize(13);doc.text('Notes (sans quantité)',14,y);y+=2;
+    doc.autoTable({startY:y+2,head:[multi?['Produit','Snack','Note','Saisie']:['Produit','Note','Saisie']],
+      body:notes.flatMap(n=>n.perSnack.map((ps,i)=>multi?[i===0?n.produit.nom:'',shortSnack(ps.snack),ps.commentaire,fmtD(ps.date)]:[n.produit.nom,ps.commentaire,fmtD(ps.date)])),
+      theme:'grid',styles:{fontSize:8,overflow:'linebreak'},margin:{left:14,right:16},headStyles:{fillColor:[200,160,53]}});
+    y=doc.lastAutoTable.finalY+8;
+  }
   doc.save(`Besoin_${(multi?'groupe':titre.replace(/\s+/g,'_'))}_${new Date().toISOString().slice(0,10)}.pdf`);
 }
 
@@ -732,6 +781,7 @@ async function renderHistorique(el){
     <input type="date" id="hist_to" value="${new Date().toISOString().slice(0,10)}">
     <select id="hist_prod"><option value="">Tous produits</option>${S.produits.map(p=>`<option value="${p.id}">${p.nom}</option>`).join('')}</select>
     <button class="btn sm" onclick="renderHistorique(document.getElementById('content'))">Filtrer</button>
+    <input id="hist_search" placeholder="🔍 Rechercher un produit…" oninput="filterHistorique()">
     <div style="flex:1"></div>
     <button class="btn ghost sm" onclick="genererSnapshotMensuel()" title="Agrège les saisies du mois précédent en snapshot et libère stock_saisies">📸 Snapshot mensuel</button>
   </div><div id="histList">Chargement…</div>`;
@@ -740,9 +790,18 @@ async function renderHistorique(el){
   const{data}=await q;const list=data||[];
   let html=`<table class="tbl"><thead><tr><th>Date</th><th>Produit</th><th>Qté</th><th>Catégorie</th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px">Aucune saisie sur la période</td></tr>';
-  else list.forEach(s=>{const p=S.produits.find(x=>x.id===s.produit_id);const cmt=s.commentaire?String(s.commentaire).replace(/</g,'&lt;'):'';const qte=s.quantite==null?'<span style="color:var(--muted)">—</span>':s.quantite;html+=`<tr><td>${fmtD(s.date_saisie)}</td><td><b>${p?.nom||'(supprimé)'}</b>${cmt?`<div style="font-size:11px;color:var(--warn);margin-top:2px">💬 ${cmt}</div>`:''}</td><td>${qte}</td><td style="color:var(--muted);font-size:12px">${p?.categorie||''}</td></tr>`;});
+  else list.forEach(s=>{const p=S.produits.find(x=>x.id===s.produit_id);const cmt=s.commentaire?String(s.commentaire).replace(/</g,'&lt;'):'';const qte=s.quantite==null?'<span style="color:var(--muted)">—</span>':s.quantite;const pname=(p?.nom||'(supprimé)').toLowerCase().replace(/"/g,'');html+=`<tr data-pname="${pname}"><td>${fmtD(s.date_saisie)}</td><td><b>${p?.nom||'(supprimé)'}</b>${cmt?`<div style="font-size:11px;color:var(--warn);margin-top:2px">💬 ${cmt}</div>`:''}</td><td>${qte}</td><td style="color:var(--muted);font-size:12px">${p?.categorie||''}</td></tr>`;});
   html+='</tbody></table>';
   document.getElementById('histList').innerHTML=html;
+}
+// Recherche texte libre côté client sur les lignes déjà rendues (pas de re-requête serveur) — même
+// pattern que filterMax()/filterBesoin(). Le <select> "Tous produits" filtre côté serveur ; ceci
+// filtre en direct l'affichage courant.
+function filterHistorique(){
+  const q=(val('hist_search')||'').toLowerCase();
+  document.querySelectorAll('#histList tbody tr[data-pname]').forEach(tr=>{
+    tr.style.display=(!q||(tr.dataset.pname||'').includes(q))?'':'none';
+  });
 }
 async function genererSnapshotMensuel(){
   if(!confirm('Générer un snapshot du mois précédent et purger les saisies détaillées correspondantes ?\nLes données restent consultables sous forme agrégée.'))return;
