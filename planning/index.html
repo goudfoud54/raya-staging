@@ -1647,6 +1647,13 @@ function hasIndispo(sid,date){
 function isSuspended(sid,date){
   return (S.miseAPied||[]).some(m=>m.salarie_id===sid && m.mise_a_pied_debut && m.mise_a_pied_fin && m.mise_a_pied_debut<=date && date<=m.mise_a_pied_fin);
 }
+// Absence exceptionnelle PONCTUELLE validée à cette date (arrêt maladie, congé…). VOLONTAIREMENT
+// distinct de hasIndispo : les indispos RÉCURRENTES (jour de repos fixe) ne comptent PAS comme
+// absence — elles sont déjà reflétées dans le heures_min contractuel, donc ne doivent pas réduire
+// l'attente hebdo. Seules les vraies absences exceptionnelles (ponctuelles + mise à pied) le font.
+function hasPonctuelleAbsence(sid,date){
+  return S.dispos.some(d=>d.salarie_id===sid && d.statut==='indispo' && (d.statut_demande||'validee')==='validee' && d.type==='ponctuelle' && d.date_specifique===date);
+}
 
 // ===== RAPPORT : RÉEL vs PRÉVU =====
 async function openReport(){
@@ -2195,11 +2202,12 @@ async function autoFillCore(dayIndices){
   S.salaries.filter(s=>onRoster(s)&&worksAt(s,SNACK.id)&&(s.heures_min||0)>0).forEach(s=>{
     const have=weekHoursOf(s.id), mn=s.heures_min||0;
     if(have >= mn-0.01) return; // au-dessus (ou à) son minimum → rien à signaler
-    // Ne pas alerter sur un manque EXPLIQUÉ par une absence validée (arrêt, congé, indispo) ou une
-    // mise à pied. On compte les jours réellement indisponibles cette semaine puis on PRORATISE le
-    // minimum sur les jours restants (dispo = 7 − indispo) : on ne signale que si le manque persiste
-    // MALGRÉ cette disponibilité réduite. Toute la semaine couverte ⇒ dispo 0 ⇒ prorata 0 ⇒ jamais signalé.
-    const blocked=_weekDates.filter(d=>hasIndispo(s.id,d)||isSuspended(s.id,d)).length;
+    // Ne pas alerter sur un manque EXPLIQUÉ par une absence EXCEPTIONNELLE (arrêt/congé ponctuel ou
+    // mise à pied). On compte ces jours puis on PRORATISE le minimum sur les jours restants (dispo =
+    // 7 − absence) : on ne signale que si le manque persiste MALGRÉ cette dispo réduite. Semaine
+    // entièrement couverte ⇒ dispo 0 ⇒ prorata 0 ⇒ jamais signalé. Les indispos RÉCURRENTES (jour off
+    // fixe) sont EXCLUES du comptage : déjà reflétées dans le heures_min, pas une absence de la semaine.
+    const blocked=_weekDates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
     const dispo=7-blocked;
     const proratedMin=mn*dispo/7;
     if(have < proratedMin-0.01) underMin.push({name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
