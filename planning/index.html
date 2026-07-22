@@ -589,22 +589,10 @@ function renderTable(){
     const _toMin2=t=>{if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;};
     const _dur2=(d,f)=>{let a=_toMin2(d),b=_toMin2(f);if(a==null||b==null)return 0;if(b<=a)b+=24*60;return b-a;};
     const totMin=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_dur2(c.heure_debut,c.heure_fin),0);
-    const totH=totMin/60;
-    const minH=s.heures_min||0, maxH=plafondOf(s);
-    const multiSnack=isMultiSnack(s);
-    // La COULEUR (ok/under/over) doit refléter le total INTER-SNACK réel (weekHoursOf) vs le contrat
-    // GLOBAL (heures_min / plafondOf) : sinon un multi-snack paraît toujours « sous son minimum »
-    // alors que son cumul tous sites est dans la cible. Mono-snack : globalH == totH (inchangé).
-    const globalH=weekHoursOf(s.id);
-    let recapCls='',recapColor='var(--text)';
-    if(maxH && globalH>maxH){recapCls='over';recapColor='var(--bad)';}
-    else if(minH && globalH<minH){recapCls='under';recapColor='var(--warn)';}
-    else if(globalH>0){recapCls='ok';recapColor='var(--ok)';}
-    const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
-    // Multi-snack : on garde le total SUR CE SNACK (chiffre principal, utile à qui planifie ce site) et
-    // on AJOUTE le cumul tous snacks, clairement identifié — c'est lui qui porte la couleur ci-dessus.
-    const allSnacksLine=multiSnack?`<small style="color:var(--gold);font-weight:600;display:block;font-size:9.5px;margin-top:1px">Σ ${fmtH1(globalH)}h tous snacks</small>`:'';
-    tbody+=`<td class="rowHours" data-sid="${s.id}" style="background:rgba(200,160,53,.04);font-weight:700;color:${recapColor};text-align:center">${totH.toFixed(1)}h${allSnacksLine}${range}</td>`;
+    const totH=totMin/60; // (utilisé plus bas pour la colonne Coût, propre au snack courant)
+    // Colonne Heures : contenu + couleur produits par la SOURCE UNIQUE partagée avec recomputeAggregates.
+    const _rh=rowHoursCell(s);
+    tbody+=`<td class="rowHours" data-sid="${s.id}" style="background:rgba(200,160,53,.04);font-weight:700;color:${_rh.color};text-align:center">${_rh.html}</td>`;
     // colonne coût hebdo salarié (brut + chargé avec coef perso ou org)
     const taux=Number(s.taux_horaire_brut)||0;
     const coefOrg=Number(ORG.coef_charges)||1.420;
@@ -652,6 +640,22 @@ function renderTable(){
   document.getElementById('planTbl').innerHTML=thead+tbody;
 }
 
+// Contenu de la colonne « Heures » d'un salarié — SOURCE UNIQUE partagée par renderTable (rendu
+// initial) ET recomputeAggregates (recalcul en place après chaque ajout/modif/suppression), pour ne
+// plus jamais désynchroniser la couleur et la ligne Σ inter-snack. Chiffre principal = total du snack
+// COURANT (S.creneaux) ; COULEUR = total INTER-SNACK (weekHoursOf) vs contrat global heures_min/plafondOf ;
+// ligne « Σ …h tous snacks » ajoutée uniquement pour les multi-snack (mono : globalH == totH).
+function rowHoursCell(s){
+  const totH=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60;
+  const minH=s.heures_min||0, maxH=plafondOf(s), globalH=weekHoursOf(s.id);
+  let color='var(--text)';
+  if(maxH && globalH>maxH) color='var(--bad)';
+  else if(minH && globalH<minH) color='var(--warn)';
+  else if(globalH>0) color='var(--ok)';
+  const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
+  const allSnacksLine=isMultiSnack(s)?`<small style="color:var(--gold);font-weight:600;display:block;font-size:9.5px;margin-top:1px">Σ ${fmtH1(globalH)}h tous snacks</small>`:'';
+  return {color, html:`${totH.toFixed(1)}h${allSnacksLine}${range}`};
+}
 // Recalcule en place les coûts (lignes + footer/jour + totaux hebdo) SANS reconstruire les cellules éditables
 // → réactivité temps réel à chaque ajout/modif/suppression de créneau, sans voler le focus du clavier.
 function recomputeAggregates(){
@@ -665,10 +669,10 @@ function recomputeAggregates(){
   // Lignes : heures + coût par salarié
   tbl.querySelectorAll('td.rowHours').forEach(td=>{
     const sid=td.dataset.sid, s=salById(sid); if(!s) return;
-    const totH=minOf(sid)/60, minH=s.heures_min||0, maxH=plafondOf(s);
-    let color='var(--text)'; if(maxH&&totH>maxH)color='var(--bad)'; else if(minH&&totH<minH)color='var(--warn)'; else if(totH>0)color='var(--ok)';
-    const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
-    td.style.color=color; td.innerHTML=`${totH.toFixed(1)}h${range}`;
+    // SOURCE UNIQUE (rowHoursCell) : même couleur inter-snack + ligne Σ que le rendu initial, sinon
+    // le recalcul en place réécrivait la cellule avec l'ancienne logique (snack courant seul).
+    const rh=rowHoursCell(s);
+    td.style.color=rh.color; td.innerHTML=rh.html;
   });
   tbl.querySelectorAll('td.rowCost').forEach(td=>{
     const sid=td.dataset.sid, s=salById(sid); if(!s) return;
