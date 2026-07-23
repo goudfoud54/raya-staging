@@ -235,7 +235,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.37 · checks : exclure les sortis (min/plafond/off) + matching expérimenté tolérant à la rallonge phase 3';
+const VERSION='v0.38 · plafond heures_max INTER-SNACK (weekMinutesOf global pour les multi-snack) — fin des dépassements en auto-fill multi';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -2060,7 +2060,18 @@ const _pdur=(d,f)=>{let a=_pmin(d),b=_pmin(f);if(a==null||b==null)return 0;if(b<
 // Mono-snack : uniquement le snack courant (S.creneaux), sa seule source d'heures possible.
 // Lit toujours l'état À JOUR (rappelé à chaque candFor, après chaque pose).
 function isMultiSnack(s){ const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:null; return (a&&a.length>1)||!!(s&&s.est_multi); }
-function weekHoursOf(sid){ const s=salById(sid); const src=(s&&isMultiSnack(s))?S.allCreneauxWeek:S.creneaux; return src.filter(c=>c.salarie_id===sid&&c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60; }
+// Total MINUTES hebdo d'un salarié — SOURCE UNIQUE des heures cumulées : global tous snacks
+// (S.allCreneauxWeek) pour un MULTI-snack, local (S.creneaux) pour un mono. Exclusion optionnelle du
+// créneau en cours de remplacement (excludeSelf par restaurant_id+date+service) pour ne pas le compter
+// deux fois. Utilisé par weekHoursOf ET par le blocage plafond inter-snack de checkPlacement.
+function weekMinutesOf(sid, ex){
+  const s=salById(sid);
+  const src=(s&&isMultiSnack(s))?S.allCreneauxWeek:S.creneaux;
+  return src.filter(c=>c.salarie_id===sid && c.heure_debut
+      && !(ex && ex.excludeSelf && c.date===ex.date && c.service===ex.svc && c.restaurant_id===ex.restaurant_id))
+    .reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0);
+}
+function weekHoursOf(sid){ return weekMinutesOf(sid)/60; }
 // Heures déjà posées cette semaine sur les AUTRES snacks (hors snack courant) — pour l'annotation
 // « +Xh ailleurs » de la grille et le détail par snack de la pop-up du nom. Même source (S.allCreneauxWeek)
 // que le cumul inter-snack, jamais recalculé autrement.
@@ -2225,8 +2236,13 @@ function checkPlacement(sid, shift, date, svc, di, opt){
     }
   }
   // plafond hebdo UNIFIÉ (heures_max → plafond_heures → règle plafond_hebdo → 48h) — plafond DUR
+  // Plafond DUR — INTER-SNACK pour un multi-snack : le total comparé au plafond est le cumul GLOBAL tous
+  // snacks (weekMinutesOf lit S.allCreneauxWeek), pas seulement le snack courant. En auto-fill multi-snack
+  // séquentiel, sans ça, les heures déjà posées sur les autres snacks n'étaient pas comptées → heures_max
+  // dépassé (même défaut que la coupure/repos avant f2eb648). excludeSelf : on retire le créneau en cours
+  // de remplacement (restaurant_id=snack courant) pour ne pas le compter deux fois. Mono : cumul local inchangé.
   const plaf=plafondOf(sal, R)*60;
-  const wk=mine.reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0);
+  const wk=weekMinutesOf(sid, {excludeSelf:opt.excludeSelf, date, svc, restaurant_id:SNACK.id});
   if(wk + _pdur(shift.deb,shift.fin) > plaf+1e-6) return {cle:'plafond',label:`${PLACE_RULES.plafond} (>${(plaf/60)}h)`};
   return null; // ✅ aucune règle active violée
 }
