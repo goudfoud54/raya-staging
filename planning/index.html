@@ -204,7 +204,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 <div id="autofillOverlay" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(10,10,14,.72);align-items:center;justify-content:center">
   <div style="background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:30px 38px;text-align:center;min-width:290px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div class="af-spin"></div>
-    <div style="font-size:15px;font-weight:600;margin-top:18px">🎲 Génération du planning…</div>
+    <div id="afTitle" style="font-size:15px;font-weight:600;margin-top:18px">🎲 Génération du planning…</div>
     <div id="afSnack" style="display:none;color:var(--gold);font-size:13px;font-weight:700;margin-top:8px"></div>
     <div id="afSub" style="color:var(--muted);font-size:12.5px;margin-top:6px">Analyse des disponibilités</div>
     <div style="height:7px;background:var(--surface);border-radius:6px;margin-top:16px;overflow:hidden"><div id="afBar" style="height:100%;width:0;background:var(--gold);transition:width .25s"></div></div>
@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.44 · tri des lignes salarié configurable (Rôle / Nom / Heures↓, persisté pl_sort)';
+const VERSION='v0.45 · auto-fill multi : phase 3 GLOBALE (après toutes les phases 1&2) + sureffectif priorité-P1 (non-nuisance) + min-overshoot ; overlay purge';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -368,20 +368,28 @@ async function purgeMultiWeek(ids){
   if(!confirm(`⚠ PURGE de ${detail.length} snack(s) — ${total} créneau(x) au total :\n\n${lines}\n\nTout est supprimé pour la semaine affichée. Annulable (↶ — un batch par snack).`)) return;
   const originalId=SNACK.id;
   setSS('busy','Purge multi-snack…');
+  // MÊME overlay que l'auto-fill multi (réutilise _afMulti + showAutofillOverlay) → les loadWeek
+  // intermédiaires sont masqués, l'utilisateur voit « Snack 2/3 · … » au lieu de la grille qui saute.
+  _afTitle='🧹 Purge en cours…'; _afMulti={index:1,total:detail.length,nom:detail[0].nom};
+  showAutofillOverlay();
   try{
-    for(const d of detail){
+    for(let i=0;i<detail.length;i++){ const d=detail[i];
       SNACK=S.restos.find(r=>r.id===d.id); if(!SNACK) continue;
       document.getElementById('snackSel').value=d.id;
+      _afMulti={index:i+1,total:detail.length,nom:SNACK.nom};
+      updateAutofillProgress(0,1,`Suppression (${d.n} créneaux)…`);
       await loadWeek();                       // recharge S.creneaux pour CE snack
       const rows=S.creneaux.slice(); if(!rows.length) continue;
       beginTxn();
       for(const row of rows) await removeCreneau(row);
       endTxn();                               // un batch undo par snack
     }
+    _afMulti=null;
     SNACK=S.restos.find(r=>r.id===originalId)||SNACK; document.getElementById('snackSel').value=SNACK.id;
     await loadWeek();
+    hideAutofillOverlay(); _afTitle=null;
     setSS('ok',`✓ ${total} créneau(x) supprimé(s) sur ${detail.length} snack(s) — annulable (↶, ${detail.length} batch)`);
-  }catch(err){ try{endTxn();}catch(e){} setSS('err','Erreur purge : '+(err.message||err)); await loadWeek(); }
+  }catch(err){ try{endTxn();}catch(e){} _afMulti=null; hideAutofillOverlay(); _afTitle=null; setSS('err','Erreur purge : '+(err.message||err)); await loadWeek(); }
 }
 
 function _toMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
@@ -2084,15 +2092,37 @@ async function autoFillMultiWeek(ids){
   // voit « Snack 2/3 · Raya Carnot » et une progression continue, pas un re-roll qui semble buggé.
   _afMulti={index:1,total:ordered.length,nom:(S.restos.find(r=>r.id===ordered[0])||{}).nom||''};
   showAutofillOverlay();
+  // ══ ÉTAPE A : phases 1&2 SEULES (distribute:false) pour CHAQUE snack, AVANT toute phase 3. C'est LE
+  // correctif de la régression Hayatou : la phase 3 par-snack (V1) exécutait sureffectif/rallonge d'un
+  // snack AVANT la phase 1 du suivant → un bonus sur un snack P3/P2 volait la capacité qu'un multi aurait
+  // dû recevoir en phase 1 sur son P1. En faisant TOUTES les phases 1&2 d'abord, la phase 1 du snack
+  // principal place le multi (lack-first + gate P1) AVANT qu'aucun sureffectif n'existe. On collecte les
+  // postes RÉELS non comblés de tous les snacks (globalUnfilled) pour la non-nuisance de la phase 3.
+  const globalUnfilled=[]; const total=ordered.length;
   for(let i=0;i<ordered.length;i++){ const id=ordered[i];
     SNACK=S.restos.find(r=>r.id===id); if(!SNACK) continue;
     document.getElementById('snackSel').value=id;
-    _afMulti={index:i+1,total:ordered.length,nom:SNACK.nom};
-    updateAutofillProgress(0,1,'Préparation du snack…');
+    _afMulti={index:i+1,total,nom:SNACK.nom};
+    updateAutofillProgress(0,1,'Placement (phases 1&2)…');
     await loadWeek(); // recharge S.creneaux/S.effectifs du snack + S.allCreneauxWeek (global, à jour)
-    if(!hasEffectifsConfig()){ results.push({snackNom:SNACK.nom, skipped:true}); continue; }
-    const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true})||{};
-    results.push({snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom})), phase3:res.phase3||{}});
+    if(!hasEffectifsConfig()){ results.push({snackId:id, snackNom:SNACK.nom, skipped:true}); continue; }
+    const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true, distribute:false})||{};
+    results.push({snackId:id, snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom})), phase3:{}});
+    (res.unfilled||[]).forEach(u=>globalUnfilled.push(u));
+  }
+  // ══ ÉTAPE B : UNE passe de DISTRIBUTION (phase 3 seule) par snack, APRÈS toutes les phases 1&2. Chaque
+  // salarié encore sous son min est rallongé/sureffectivé ; la non-nuisance (globalUnfilled) empêche le
+  // sureffectif sur un snack ≠ P1 tant qu'un poste régulier compatible reste non comblé sur un snack plus
+  // prioritaire. Undo : 2 batches par snack (phases 1&2 en étape A + distribution en étape B).
+  const done=results.filter(r=>!r.skipped).map(r=>r.snackId);
+  for(let i=0;i<ordered.length;i++){ const id=ordered[i]; if(!done.includes(id)) continue;
+    SNACK=S.restos.find(r=>r.id===id); if(!SNACK) continue;
+    document.getElementById('snackSel').value=id;
+    _afMulti={index:i+1,total,nom:SNACK.nom};
+    updateAutofillProgress(0.5,1,'Distribution (min. d\'heures)…');
+    await loadWeek();
+    const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true, phase3only:true, globalUnfilled})||{};
+    const rr=results.find(r=>r.snackId===id); if(rr) rr.phase3=res.phase3||{};
   }
   // Retour au snack initialement affiché (état prévisible pour l'utilisateur).
   _afMulti=null;
@@ -2149,8 +2179,8 @@ let _autofillRunning=false;
 // Contexte multi-snack de l'overlay : {index,total,nom} pendant autoFillMultiWeek, sinon null. C'est une
 // variable JS → elle SURVIT aux loadWeek() intermédiaires (qui ne re-render que la grille, pas l'overlay),
 // donc l'overlay reste affiché en continu et n'a pas besoin de persistance hors cycle de vie.
-let _afMulti=null;
-function showAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o){o.style.display='flex';updateAutofillProgress(0,1,'Analyse des disponibilités…');}}
+let _afMulti=null, _afTitle=null; // _afTitle : titre de l'overlay (défaut génération ; « Purge… » pour purgeMultiWeek)
+function showAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o){o.style.display='flex';const tt=document.getElementById('afTitle');if(tt)tt.textContent=_afTitle||'🎲 Génération du planning…';updateAutofillProgress(0,1,'Analyse des disponibilités…');}}
 function hideAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o)o.style.display='none';}
 function updateAutofillProgress(done,total,sub){
   const bar=document.getElementById('afBar'),s=document.getElementById('afSub'),sn=document.getElementById('afSnack');
@@ -2248,6 +2278,16 @@ function snackPriorityGate(ids){
     else gated.push(id);
   }
   return {kept, gated};
+}
+// Non-nuisance (phase 3 GLOBALE) : le sureffectif d'un salarié ne doit PAS être posé sur un snack qui
+// n'est pas sa priorité 1 tant qu'un poste RÉGULIER non comblé compatible (rôle + exp) existe sur un
+// snack PLUS prioritaire pour lui (globalUnfilled = postes non comblés de TOUS les snacks après phases
+// 1&2). Empêche qu'un bonus sur P2/P3 vole la capacité de son P1 qui a de vrais besoins (cas Hayatou).
+function sureffBlockedByPriority(sid, snackId, globalUnfilled){
+  const s=salById(sid), pHere=snackPrioriteOf(s,snackId);
+  if(pHere<=1) return false;                                   // P1 (ou snack principal) : jamais bloqué
+  return (globalUnfilled||[]).some(u=> snackPrioriteOf(s,u.snackId)<pHere
+      && rolesOf(sid).includes(u.role) && (!u.exp || isExp(sid,u.role)));
 }
 // Tri des candidats pour un poste h (h.shift.{exp,role}) — PARTAGÉ par la phase 1 (candFor) et la
 // phase 2 (réparation kick-chain) pour qu'elles priorisent à l'identique et ne divergent jamais :
@@ -2447,9 +2487,12 @@ async function autoFillCore(dayIndices, opt={}){
   if(!opt.silent) showAutofillOverlay();  // en multi (silent), l'overlay est géré par autoFillMultiWeek (persistant)
   setSS('busy','Remplissage en cours…');
   beginTxn();
-  let added=0; const report=[];
+  let added=0; const report=[]; const unfilled=[]; // unfilled = postes RÉELS non comblés (role cle + exp) pour la non-nuisance de la phase 3 globale
   let rallongeH=0, sureffH=0; const sureffList=[]; // bilan phase 3 (distribution)
   try{
+  // opt.phase3only : mode « phase 3 seule » (auto-fill MULTI, étape B globale) — on saute la purge des
+  // orphelins + les holes + phases 1&2 (déjà faites à l'étape A) et on ne fait QUE la distribution.
+  if(!opt.phase3only){
   // Purge des créneaux orphelins (salarié sorti/supprimé) sur les jours traités → pas de double-réservation ni de fantôme
   const purgeDates=dayIndices.map(di=>fmtDate(dateOfDay(di)));
   const orphans=S.creneaux.filter(c=>purgeDates.includes(c.date) && !onRoster(salById(c.salarie_id)));
@@ -2459,6 +2502,7 @@ async function autoFillCore(dayIndices, opt={}){
     const odel=new Set(oids);
     S.creneaux=S.creneaux.filter(c=>!odel.has(c.id));
     S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!odel.has(c.id));
+  }
   }
   const rg=_ruleCtx();
   const _now=()=>(window.performance&&performance.now)?performance.now():0;
@@ -2487,6 +2531,7 @@ async function autoFillCore(dayIndices, opt={}){
   // Éligibles (checkPlacement) → RÉSERVE DE CAPACITÉ (snackPriorityGate : un multi n'assiste un snack
   // secondaire qu'en renfort) → tri. La réserve empêche qu'un snack généré tôt aspire les multi des autres.
   const candFor=h=>sortCandidates(snackPriorityGate(S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null).map(s=>s.id)).kept, h);
+  if(!opt.phase3only){        // ── PHASES 1&2 (holes + glouton + réparation) — sautées en mode phase 3 seule ──
   // ── Trous = vagues non couvertes (même cascade jour→service→rôle→vagues, créneaux hors-vague consomment un poste) ──
   const holes=[];
   for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
@@ -2527,7 +2572,7 @@ async function autoFillCore(dayIndices, opt={}){
   // ── PHASE 2 : réparation kick-chain prof.1 (déplacer un placé compatible, recombler sa place par un autre) ──
   const USE_REPAIR=rg.on('autofill_reparation',true);
   for(const h of open){
-    if(!USE_REPAIR || overTime()){ report.push(diag(h)); continue; }
+    if(!USE_REPAIR || overTime()){ report.push(diag(h)); unfilled.push({snackId:SNACK.id,role:h.role,exp:!!h.shift.exp}); continue; }
     let repaired=false;
     // Ordre d'essai des salariés à déplacer : d'abord ceux déjà À/AU-DESSUS de leur minimum (manque le
     // plus faible), en dernier ceux encore SOUS leur minimum → on évite de perturber quelqu'un qui a
@@ -2561,8 +2606,9 @@ async function autoFillCore(dayIndices, opt={}){
       }
       if(!repaired){ const back=await placeCre(X,{deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role},moved.date,moved.service); const i=placed.indexOf(moved); if(i>=0&&back)placed.splice(i,1,back); }
     }
-    if(!repaired) report.push(diag(h));
+    if(!repaired){ report.push(diag(h)); unfilled.push({snackId:SNACK.id,role:h.role,exp:!!h.shift.exp}); }
   }
+  } // ── fin PHASES 1&2 (sautées si opt.phase3only) ──
   // ── PHASE 3 : DISTRIBUTION — amener les salariés SOUS leur heures_min (proratisé) à leur plancher ──
   // Deux leviers, dans l'ordre : (A) RALLONGE des créneaux existants dans l'ENVELOPPE du service (bornes
   // des vagues configurées ce jour/service — pas d'heures hors service), (B) SUREFFECTIF ciblé (créneau
@@ -2570,7 +2616,7 @@ async function autoFillCore(dayIndices, opt={}){
   // coupure inter-snack) + un garde-fou plafond GLOBAL explicite (checkPlacement ne plafonne que le snack
   // courant). Phase 3 ne touche JAMAIS aux créneaux d'AUTRES salariés (pas de kick — c'est la phase 2).
   if(opt.distribute!==false){
-    updateAutofillProgress(holes.length||1,holes.length||1,'Distribution (min. d\'heures)…'); await _yield();
+    updateAutofillProgress(1,1,'Distribution (min. d\'heures)…'); await _yield();
     const _wd=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
     const absToHHMM=m=>{m=((Math.round(m)%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
     // Enveloppe d'un service = [deb la plus matinale, fin la plus tardive] sur toutes les vagues de ce
@@ -2626,32 +2672,41 @@ async function autoFillCore(dayIndices, opt={}){
       }
     }
     // ── PASS B : SUREFFECTIF (opt-in) pour les targets ENCORE sous leur min après rallonge — budgété (over3) ──
+    // NON-NUISANCE (phase 3 globale) : pas de sureffectif sur un snack ≠ P1 du salarié tant qu'un poste
+    // RÉGULIER non comblé compatible (rôle+exp) existe sur un snack PLUS prioritaire pour lui (opt.globalUnfilled
+    // = non-comblés de TOUS les snacks après phases 1&2) → un bonus ne vole plus la capacité de son principal.
+    // MIN-OVERSHOOT : parmi les vagues valides, on choisit celle qui dépasse le MOINS son heures_min.
     if(SUREFF_ON){
+      const gu=opt.globalUnfilled||[];
       for(const t of targets){
         if(over3())break;
         const sid=t.sid, cap=t.cap, target=t.target;
-        let placedSureff=true;
-        while(placedSureff && !over3() && weekHoursOf(sid)<target-0.01 && (sureffCount[sid]||0)<SUREFF_MAX){
-          placedSureff=false;
-          outer:
+        if(sureffBlockedByPriority(sid, SNACK.id, gu)) continue;   // réservé à un snack plus prioritaire
+        while(!over3() && weekHoursOf(sid)<target-0.01 && (sureffCount[sid]||0)<SUREFF_MAX){
+          let best=null;                                            // vague minimisant le dépassement du min
           for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
             for(const svc of ['midi','soir']){
               for(const role of rolesOf(sid)){
                 for(const v of getShifts(jt,svc,role)){
                   const nd=_pdur(v.deb,v.fin)/60; if(nd<=0)continue;
-                  if(weekHoursOf(sid)+nd>cap+1e-6)continue;                 // plafond global strict
+                  if(weekHoursOf(sid)+nd>cap+1e-6)continue;         // plafond global strict
                   if(checkPlacement(sid,{deb:v.deb,fin:v.fin,role},date,svc,di,{rg})!==null)continue;
-                  const w=await placeCre(sid,{deb:v.deb,fin:v.fin,role},date,svc,{sureffectif:true});
-                  if(w){ added++; sureffH+=nd; sureffCount[sid]=(sureffCount[sid]||0)+1; sureffList.push({name:fullName(t.sal),date,svc,role,h:nd}); placedSureff=true; break outer; }
+                  const after=weekHoursOf(sid)+nd, over=Math.max(0,after-target), remain=Math.max(0,target-after);
+                  const sc=[over, remain, nd];                       // dépassement mini, puis + proche du min, puis + court
+                  if(!best || sc[0]<best.sc[0]-1e-9 || (Math.abs(sc[0]-best.sc[0])<1e-9 && (sc[1]<best.sc[1]-1e-9 || (Math.abs(sc[1]-best.sc[1])<1e-9 && sc[2]<best.sc[2])))) best={date,svc,role,v,nd,sc};
                 }
               }
             }
           }
+          if(!best)break;
+          const w=await placeCre(sid,{deb:best.v.deb,fin:best.v.fin,role:best.role},best.date,best.svc,{sureffectif:true});
+          if(!w)break;
+          added++; sureffH+=best.nd; sureffCount[sid]=(sureffCount[sid]||0)+1; sureffList.push({name:fullName(t.sal),date:best.date,svc:best.svc,role:best.role,h:best.nd});
         }
       }
     }
   }
-  updateAutofillProgress(holes.length||1,holes.length||1,'Finalisation…');
+  updateAutofillProgress(1,1,'Finalisation…');
   endTxn();
   await loadWeek();
   window._lastSolveReport=report;
@@ -2679,7 +2734,7 @@ async function autoFillCore(dayIndices, opt={}){
   // agrège tout et affiche UN rapport consolidé (le sous-minimum y est recalculé globalement une seule
   // fois, à la fin, car le manque d'un salarié n'est réel qu'après le passage de TOUS les snacks).
   const phase3={rallongeH, sureffH, sureffList};
-  if(opt.silent) return {added, report, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
+  if(opt.silent) return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
   const distrib=rallongeH+sureffH;
   if(distrib>0.05) msg+=` · +${fmtH1(distrib)}h distribuées`;
@@ -2688,7 +2743,7 @@ async function autoFillCore(dayIndices, opt={}){
   if(report.length||underMin.length||distrib>0.05) msg+=' — voir rapport';
   setSS((report.length||underMin.length)?'warn':'ok', msg);
   if(report.length||underMin.length||distrib>0.05) showSolveReport(report, underMin, phase3);
-  return {added, report, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
+  return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   }catch(err){
     setSS('err','Erreur auto-fill : '+(err.message||err));
     endTxn();
