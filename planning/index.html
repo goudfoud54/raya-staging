@@ -200,6 +200,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
   <div style="background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:30px 38px;text-align:center;min-width:290px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div class="af-spin"></div>
     <div style="font-size:15px;font-weight:600;margin-top:18px">🎲 Génération du planning…</div>
+    <div id="afSnack" style="display:none;color:var(--gold);font-size:13px;font-weight:700;margin-top:8px"></div>
     <div id="afSub" style="color:var(--muted);font-size:12.5px;margin-top:6px">Analyse des disponibilités</div>
     <div style="height:7px;background:var(--surface);border-radius:6px;margin-top:16px;overflow:hidden"><div id="afBar" style="height:100%;width:0;background:var(--gold);transition:width .25s"></div></div>
     <div style="color:var(--muted2);font-size:11px;margin-top:10px">Merci de patienter, ne ferme pas la page.</div>
@@ -235,7 +236,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.39 · indispo PARTIELLE time-aware (semi-ouvert) — un soir adjacent à une indispo midi n\'est plus bloqué';
+const VERSION='v0.40 · auto-fill multi-snack : overlay persistant nommant le snack en cours (Snack 2/3 · Raya Carnot)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -2004,17 +2005,26 @@ async function autoFillMultiWeek(ids){
   if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${ordered.length} snacks ?\n\nOrdre (le plus contraint d'abord) : ${names.join(' → ')}\n\nLes créneaux existants ne sont pas remplacés. Chaque snack est annulable séparément (↶).`)) return;
   const originalId=SNACK.id;
   const results=[];
-  for(const id of ordered){
+  // UN SEUL overlay pour toute la génération (persiste au-dessus des loadWeek intermédiaires) : le
+  // contexte _afMulti nomme le snack en cours et indexe la barre sur le nombre de snacks → l'utilisateur
+  // voit « Snack 2/3 · Raya Carnot » et une progression continue, pas un re-roll qui semble buggé.
+  _afMulti={index:1,total:ordered.length,nom:(S.restos.find(r=>r.id===ordered[0])||{}).nom||''};
+  showAutofillOverlay();
+  for(let i=0;i<ordered.length;i++){ const id=ordered[i];
     SNACK=S.restos.find(r=>r.id===id); if(!SNACK) continue;
     document.getElementById('snackSel').value=id;
+    _afMulti={index:i+1,total:ordered.length,nom:SNACK.nom};
+    updateAutofillProgress(0,1,'Préparation du snack…');
     await loadWeek(); // recharge S.creneaux/S.effectifs du snack + S.allCreneauxWeek (global, à jour)
     if(!hasEffectifsConfig()){ results.push({snackNom:SNACK.nom, skipped:true}); continue; }
     const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true})||{};
     results.push({snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom})), phase3:res.phase3||{}});
   }
   // Retour au snack initialement affiché (état prévisible pour l'utilisateur).
+  _afMulti=null;
   SNACK=S.restos.find(r=>r.id===originalId)||SNACK; document.getElementById('snackSel').value=SNACK.id;
   await loadWeek();
+  hideAutofillOverlay();
   // ── Sous-minimum CONSOLIDÉ : calculé UNE SEULE FOIS, après TOUS les snacks, sur les heures GLOBALES
   // (S.allCreneauxWeek, indépendant du snack affiché) — sinon (a) un multi-snack sous son min après le
   // 1er snack mais complété par les suivants serait faussement listé, et (b) weekHoursOf est relatif au
@@ -2062,12 +2072,26 @@ function showMultiSolveReport(results, underMin){
   setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
 }
 let _autofillRunning=false;
+// Contexte multi-snack de l'overlay : {index,total,nom} pendant autoFillMultiWeek, sinon null. C'est une
+// variable JS → elle SURVIT aux loadWeek() intermédiaires (qui ne re-render que la grille, pas l'overlay),
+// donc l'overlay reste affiché en continu et n'a pas besoin de persistance hors cycle de vie.
+let _afMulti=null;
 function showAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o){o.style.display='flex';updateAutofillProgress(0,1,'Analyse des disponibilités…');}}
 function hideAutofillOverlay(){const o=document.getElementById('autofillOverlay');if(o)o.style.display='none';}
 function updateAutofillProgress(done,total,sub){
-  const bar=document.getElementById('afBar'),s=document.getElementById('afSub');
-  if(bar)bar.style.width=Math.round(100*done/Math.max(1,total))+'%';
-  if(s&&sub)s.textContent=sub;
+  const bar=document.getElementById('afBar'),s=document.getElementById('afSub'),sn=document.getElementById('afSnack');
+  if(_afMulti){
+    // Multi : nomme le snack en cours + barre indexée sur le nombre de snacks (progression fluide =
+    // snacks terminés + fraction du snack courant), pour que l'utilisateur voie « Snack 2/3 · Raya Carnot ».
+    if(sn){ sn.style.display='block'; sn.textContent=`Snack ${_afMulti.index}/${_afMulti.total} · ${_afMulti.nom}`; }
+    const frac=((_afMulti.index-1)+(done/Math.max(1,total)))/Math.max(1,_afMulti.total);
+    if(bar) bar.style.width=Math.min(100,Math.max(0,Math.round(100*frac)))+'%';
+    if(s&&sub) s.textContent=sub;
+  } else {
+    if(sn) sn.style.display='none';
+    if(bar) bar.style.width=Math.round(100*done/Math.max(1,total))+'%';
+    if(s&&sub) s.textContent=sub;
+  }
 }
 const _yield=()=>new Promise(r=>setTimeout(r,0));
 
@@ -2315,7 +2339,7 @@ function showSolveReport(report, underMin, phase3){
 async function autoFillCore(dayIndices, opt={}){
   if(_autofillRunning)return;            // anti double-clic
   _autofillRunning=true;
-  showAutofillOverlay();
+  if(!opt.silent) showAutofillOverlay();  // en multi (silent), l'overlay est géré par autoFillMultiWeek (persistant)
   setSS('busy','Remplissage en cours…');
   beginTxn();
   let added=0; const report=[];
@@ -2546,7 +2570,7 @@ async function autoFillCore(dayIndices, opt={}){
     setSS('err','Erreur auto-fill : '+(err.message||err));
     endTxn();
   }finally{
-    hideAutofillOverlay();
+    if(!opt.silent) hideAutofillOverlay();  // en multi, autoFillMultiWeek garde l'overlay jusqu'à la fin
     _autofillRunning=false;
   }
 }
