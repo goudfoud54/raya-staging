@@ -172,6 +172,11 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
         <button id="vSal" onclick="setView('sal')" style="padding:5px 10px;font-size:11px">👥 Salarié</button>
         <button id="vPoste" onclick="setView('poste')" style="padding:5px 10px;font-size:11px">🪑 Poste</button>
       </div>
+      <select id="sortSel" onchange="setSort(this.value)" title="Trier les lignes salarié" style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;color:var(--text);font-size:11px;padding:5px 8px">
+        <option value="role">Tri : Rôle</option>
+        <option value="nom">Tri : Nom</option>
+        <option value="heures">Tri : Heures ↓</option>
+      </select>
       <button class="ic" id="btnUndo" onclick="undo()" data-tip="Annuler (Ctrl+Z)" aria-label="Annuler" disabled>↶</button>
       <button class="ic" id="btnRedo" onclick="redo()" data-tip="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled>↷</button>
       <button class="ic" onclick="openDemandes()" data-tip="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
@@ -236,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.43 · purge multi-snack (sélecteur, compte par snack, undo par snack) comme l\'auto-fill multi';
+const VERSION='v0.44 · tri des lignes salarié configurable (Rôle / Nom / Heures↓, persisté pl_sort)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -247,6 +252,10 @@ let SNACK=null, MONDAY=null;
 let CONFLICTS=new Set();
 let VIEW_MODE=localStorage.getItem('pl_view')||'sal';
 function setView(v){VIEW_MODE=v;localStorage.setItem('pl_view',v);render();}
+// Tri des lignes salarié de la grille (persisté comme le zoom/vue). N'affecte QUE l'ordre DOM des lignes
+// dans renderTable — recomputeAggregates (par data-sid), le footer (sommes sur S.creneaux) et les
+// vérifications (itèrent S.salaries/S.creneaux) ne supposent aucun ordre de lignes.
+function setSort(v){localStorage.setItem('pl_sort',v);render();}
 function updateViewButtons(){
   const a=document.getElementById('vSal'),b=document.getElementById('vPoste');
   if(a)a.style.background=VIEW_MODE==='sal'?'rgba(200,160,53,.18)':'transparent';
@@ -602,8 +611,17 @@ function renderTable(){
   // salariés à afficher : sur l'effectif de la semaine ET (du snack OU déjà un créneau cette semaine)
   // onRoster exclut les sortis (semaines postérieures à leur date_sortie) et les supprimés → zéro ligne fantôme.
   const sidsWithCreneau=new Set(S.creneaux.map(c=>c.salarie_id));
+  // Tri configurable (persisté 'pl_sort', défaut 'role' = comportement historique). Nom = nom+prénom
+  // alpha ; Heures = total hebdo (weekHoursOf : inter-snack pour un multi) décroissant, départage par nom.
+  const sortMode=localStorage.getItem('pl_sort')||'role';
+  const byName=(a,b)=>(((a.nom||'')+' '+(a.prenom||'')).trim()).localeCompare(((b.nom||'')+' '+(b.prenom||'')).trim());
   const list=S.salaries.filter(s=>onRoster(s) && (worksAt(s,SNACK.id) || sidsWithCreneau.has(s.id)))
-    .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return(ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
+    .sort((a,b)=>{
+      if(sortMode==='nom') return byName(a,b);
+      if(sortMode==='heures'){ const d=weekHoursOf(b.id)-weekHoursOf(a.id); if(Math.abs(d)>0.01) return d; return byName(a,b); }
+      const ra=roleMain(a.id),rb=roleMain(b.id); if(ra!==rb) return (ra||'z').localeCompare(rb||'z'); return byName(a,b);
+    });
+  { const ss=document.getElementById('sortSel'); if(ss) ss.value=sortMode; }
 
   // header
   let thead='<thead><tr><th class="salhead">Salarié</th>';
