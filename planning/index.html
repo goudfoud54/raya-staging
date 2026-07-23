@@ -176,7 +176,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       <button class="ic" id="btnRedo" onclick="redo()" data-tip="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled>↷</button>
       <button class="ic" onclick="openDemandes()" data-tip="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
       <button class="ic accent" onclick="openAutoFillPicker()" data-tip="Auto-fill : remplir la semaine (1 ou plusieurs snacks) selon les dispos & règles" aria-label="Auto-fill">🎲</button>
-      <button class="ic" onclick="purgeWeek()" data-tip="Purger la semaine : supprimer tous les créneaux de ce snack (annulable)" aria-label="Purger la semaine">🧹</button>
+      <button class="ic" onclick="openPurgePicker()" data-tip="Purger la semaine : supprimer tous les créneaux (1 ou plusieurs snacks, annulable)" aria-label="Purger la semaine">🧹</button>
       <button class="ic" onclick="openReglages()" data-tip="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
       <button class="ic" onclick="openReport()" data-tip="Rapport réel vs prévu (pointages badgeuse × planning)" aria-label="Rapport réel vs prévu">📊</button>
       <button class="ic" onclick="document.getElementById('xlsxFile').click()" data-tip="Importer un planning Excel" aria-label="Import Excel">📥</button>
@@ -236,7 +236,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.42 · phase 3 : budget dédié + rallonge-toutes-avant-sureffectif → les rallonges légales ne sont plus affamées par le temps';
+const VERSION='v0.43 · purge multi-snack (sélecteur, compte par snack, undo par snack) comme l\'auto-fill multi';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -323,6 +323,56 @@ async function purgeWeek(){
     await loadWeek();
     setSS('ok',`✓ ${rows.length} créneau(x) supprimé(s) — annulable (↶)`);
   }catch(err){ endTxn(); setSS('err','Erreur purge : '+(err.message||err)); await loadWeek(); }
+}
+// Sélecteur multi-snack pour la PURGE (même pattern que l'auto-fill multi). Chaque snack affiche son
+// nombre de créneaux/salariés (S.allCreneauxWeek = tous snacks de la semaine) pour éviter une purge de
+// masse accidentelle. Le snack courant est pré-coché ; un snack vide est désactivé.
+function openPurgePicker(){
+  if(!S.restos||!S.restos.length) return purgeWeek();
+  const rowsOf=rid=>S.allCreneauxWeek.filter(c=>c.restaurant_id===rid && c.heure_debut);
+  const chips=S.restos.map(r=>{ const rows=rowsOf(r.id); const n=rows.length, ns=new Set(rows.map(c=>c.salarie_id)).size;
+    return `<label class="af-snack" style="display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--line-2);border-radius:9px;cursor:${n?'pointer':'not-allowed'};font-size:13.5px;opacity:${n?1:.5}"><input type="checkbox" value="${r.id}" ${r.id===SNACK.id&&n?'checked':''} ${n?'':'disabled'} style="width:16px;height:16px;accent-color:var(--bad)"> ${escP(r.nom)} <span style="color:var(--muted);font-size:12px;margin-left:auto">${n?`${n} créneau(x) · ${ns} sal.`:'vide'}</span></label>`; }).join('');
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)closeAutoFillPicker()"><div class="pdf-modal" style="max-width:480px;width:92vw">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h3 style="margin:0;font-size:16px">🧹 Purger — snacks à vider</h3><button class="btn ghost sm" onclick="closeAutoFillPicker()">✕</button></div>
+    <div style="color:var(--muted);font-size:12.5px;margin-bottom:12px;line-height:1.5">Sélectionne un ou plusieurs snacks à purger pour la semaine affichée. <b style="color:var(--bad)">Tous les créneaux de tous les salariés</b> des snacks cochés seront supprimés. Annulable (↶, un batch par snack).</div>
+    <div id="afSnackList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">${chips}</div>
+    <div style="display:flex;gap:10px;justify-content:space-between;align-items:center">
+      <button class="btn ghost sm" onclick="toggleAllAfSnacks()">Tout / aucun</button>
+      <div style="display:flex;gap:10px"><button class="btn ghost" onclick="closeAutoFillPicker()">Annuler</button><button class="btn" style="background:var(--bad);border-color:var(--bad)" onclick="launchPurgePicker()">🧹 Purger</button></div>
+    </div>
+  </div></div>`;
+}
+function launchPurgePicker(){
+  const ids=[...document.querySelectorAll('#afSnackList input[type=checkbox]:checked')].map(b=>b.value);
+  closeAutoFillPicker();
+  if(!ids.length){ setSS('warn','Sélectionne au moins un snack à purger'); return; }
+  if(ids.length===1 && ids[0]===SNACK.id){ purgeWeek(); return; }   // snack courant seul → chemin mono inchangé
+  purgeMultiWeek(ids);
+}
+// Purge de plusieurs snacks. Undo PAR SNACK (un batch beginTxn/endTxn chacun, N annulations pour N snacks) —
+// même choix assumé et documenté que l'auto-fill multi : ne pas étaler un txn géant à travers les loadWeek.
+async function purgeMultiWeek(ids){
+  const detail=ids.map(id=>{ const r=S.restos.find(x=>x.id===id)||{}; const rows=S.allCreneauxWeek.filter(c=>c.restaurant_id===id && c.heure_debut); return {id,nom:r.nom||'?',n:rows.length,sal:new Set(rows.map(c=>c.salarie_id)).size}; }).filter(d=>d.n>0);
+  if(!detail.length){ setSS('ok','Rien à purger — snacks vides'); return; }
+  const total=detail.reduce((a,d)=>a+d.n,0);
+  const lines=detail.map(d=>`• ${d.nom} : ${d.n} créneau(x) · ${d.sal} salarié(s)`).join('\n');
+  if(!confirm(`⚠ PURGE de ${detail.length} snack(s) — ${total} créneau(x) au total :\n\n${lines}\n\nTout est supprimé pour la semaine affichée. Annulable (↶ — un batch par snack).`)) return;
+  const originalId=SNACK.id;
+  setSS('busy','Purge multi-snack…');
+  try{
+    for(const d of detail){
+      SNACK=S.restos.find(r=>r.id===d.id); if(!SNACK) continue;
+      document.getElementById('snackSel').value=d.id;
+      await loadWeek();                       // recharge S.creneaux pour CE snack
+      const rows=S.creneaux.slice(); if(!rows.length) continue;
+      beginTxn();
+      for(const row of rows) await removeCreneau(row);
+      endTxn();                               // un batch undo par snack
+    }
+    SNACK=S.restos.find(r=>r.id===originalId)||SNACK; document.getElementById('snackSel').value=SNACK.id;
+    await loadWeek();
+    setSS('ok',`✓ ${total} créneau(x) supprimé(s) sur ${detail.length} snack(s) — annulable (↶, ${detail.length} batch)`);
+  }catch(err){ try{endTxn();}catch(e){} setSS('err','Erreur purge : '+(err.message||err)); await loadWeek(); }
 }
 
 function _toMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
