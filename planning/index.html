@@ -236,7 +236,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.40 · auto-fill multi-snack : overlay persistant nommant le snack en cours (Snack 2/3 · Raya Carnot)';
+const VERSION='v0.41 · réserve de capacité par priorité de snack (un multi sert son principal d\'abord, secondaire en renfort) + scoring priorité';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -2000,6 +2000,12 @@ async function autoFillMultiWeek(ids){
   // Ordre : le plus contraint (le plus de postes-cibles) d'abord, pour qu'il ne se fasse pas « rafler »
   // ses candidats par un snack moins tendu traité avant lui. Le tri inter-snack de sortCandidates
   // (manque vs heures_min) + le plafond via weekHoursOf limitent déjà la sur-affectation.
+  // INDÉPENDANCE À L'ORDRE : on re-trie TOUJOURS les snacks par un ordre DÉTERMINISTE (le plus contraint
+  // d'abord) → l'ordre d'ENTRÉE est sans effet ([GC,Lobau,Carnot] et [Carnot,Lobau,GC] donnent la même
+  // séquence de traitement, donc le même résultat). La réserve de capacité (snackPriorityGate) rend en
+  // plus la répartition robuste à cette séquence (un multi n'est aspiré par un snack secondaire qu'en
+  // renfort). Une invariance TOTALE en cas pathologique (capacité du snack principal insuffisante pour
+  // le min) n'est pas garantie mathématiquement — d'où cet ordre déterministe comme filet.
   const ordered=ids.slice().sort((a,b)=>snackTargetSlots(b)-snackTargetSlots(a));
   const names=ordered.map(id=>(S.restos.find(r=>r.id===id)||{}).nom).filter(Boolean);
   if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${ordered.length} snacks ?\n\nOrdre (le plus contraint d'abord) : ${names.join(' → ')}\n\nLes créneaux existants ne sont pas remplacés. Chaque snack est annulable séparément (↶).`)) return;
@@ -2146,23 +2152,54 @@ function plafondOf(sal, rg){
   const ph=Number(sal&&sal.plafond_heures); if(ph>0) return ph;
   return (rg&&rg.num)?rg.num('plafond_hebdo',48):_ruleCtx().num('plafond_hebdo',48);
 }
+// Heures déjà posées par un salarié sur ses restaurants PLUS prioritaires que le snack courant (numéro
+// de priorité STRICTEMENT < p) — pour la réserve de capacité (condition b : a-t-il déjà atteint son min
+// sur ses snacks principaux ?). Lit S.allCreneauxWeek (état global À JOUR, correct même si le snack
+// principal est traité APRÈS le secondaire : (b) est alors false et l'éligibilité repose sur (a)).
+function hoursOnMorePrioritaryRestos(s, p){
+  const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:null; if(!a) return 0;
+  const hi=new Set(a.filter(x=>x.priorite<p).map(x=>x.restaurant_id)); if(!hi.size) return 0;
+  return S.allCreneauxWeek.filter(c=>c.salarie_id===s.id && c.heure_debut && hi.has(c.restaurant_id))
+    .reduce((acc,c)=>acc+_pdur(c.heure_debut,c.heure_fin),0)/60;
+}
+// RÉSERVE DE CAPACITÉ PAR PRIORITÉ (règle métier) : un salarié multi n'est sélectionnable sur un snack qui
+// n'est PAS sa priorité 1 QUE si (a) aucun candidat éligible dont c'est LA priorité 1 n'existe pour ce
+// créneau (sinon on GARDE le multi pour son principal), OU (b) il a déjà atteint son heures_min sur ses
+// restaurants plus prioritaires. Sinon il est écarté (renfort seulement). Empêche qu'un snack généré en
+// premier n'aspire les multi des autres indépendamment de leur priorité. (a) garantit qu'on ne laisse
+// JAMAIS un poste vide faute de primaire : sans candidat principal, le secondaire est admis en renfort.
+// Retourne {kept, gated} (gated → motif 'reserve_principal' du rapport). Appliqué en phase 1 (candFor)
+// ET en phase 2 (backfill Y) pour ne pas contourner la réserve via la réparation.
+function snackPriorityGate(ids){
+  const hasPrimary=ids.some(id=>snackPrioriteOf(salById(id),SNACK.id)===1);
+  const kept=[], gated=[];
+  for(const id of ids){
+    const s=salById(id), p=snackPrioriteOf(s,SNACK.id);
+    if(p<=1){ kept.push(id); continue; }                               // priorité 1 / snack principal : jamais gaté
+    if(!hasPrimary || hoursOnMorePrioritaryRestos(s,p)>=(((s&&s.heures_min)||0)-0.01)) kept.push(id);
+    else gated.push(id);
+  }
+  return {kept, gated};
+}
 // Tri des candidats pour un poste h (h.shift.{exp,role}) — PARTAGÉ par la phase 1 (candFor) et la
 // phase 2 (réparation kick-chain) pour qu'elles priorisent à l'identique et ne divergent jamais :
-//  (a) plus grand MANQUE vs heures_min d'abord ; (b) à manque comparable, mono-snack avant multi ;
-//  (c) expérience (poste exp) → équilibrage fin par heures → priorité snack déclarée.
+//  (1) plus grand MANQUE vs heures_min ; (2) PRIORITÉ du snack pour le salarié (P1<P2<P3) — départage
+//  DOMINANT (règle métier) ; (3) mono-snack avant multi ; (4) expérience ; (5) équilibrage fin par heures.
 // Le plafond est déjà garanti par checkPlacement (qui a filtré la liste) → pas re-testé ici.
 function sortCandidates(ids, h){
   const hw={}, lack={};
   ids.forEach(id=>{ const s=salById(id); const w=weekHoursOf(id); hw[id]=w; lack[id]=Math.max(0,((s&&s.heures_min)||0)-w); });
   return ids.slice().sort((a,b)=>{
-    if(Math.abs(lack[a]-lack[b])>0.01) return lack[b]-lack[a];
-    const mA=isMultiSnack(salById(a))?1:0, mB=isMultiSnack(salById(b))?1:0; if(mA!==mB) return mA-mB;
-    if(h.shift.exp){const ae=isExp(a,h.shift.role)?0:1,be=isExp(b,h.shift.role)?0:1;if(ae!==be)return ae-be;}
-    if(Math.abs(hw[a]-hw[b])>1.5) return hw[a]-hw[b];
-    return snackPrioriteOf(salById(a),SNACK.id)-snackPrioriteOf(salById(b),SNACK.id);
+    if(Math.abs(lack[a]-lack[b])>0.01) return lack[b]-lack[a];                                     // (1) manque
+    const pa=snackPrioriteOf(salById(a),SNACK.id), pb=snackPrioriteOf(salById(b),SNACK.id);
+    if(pa!==pb) return pa-pb;                                                                       // (2) priorité snack (DOMINANT)
+    const mA=isMultiSnack(salById(a))?1:0, mB=isMultiSnack(salById(b))?1:0; if(mA!==mB) return mA-mB; // (3) mono>multi
+    if(h.shift.exp){const ae=isExp(a,h.shift.role)?0:1,be=isExp(b,h.shift.role)?0:1;if(ae!==be)return ae-be;} // (4) exp
+    if(Math.abs(hw[a]-hw[b])>1.5) return hw[a]-hw[b];                                               // (5) équilibrage heures
+    return 0;
   });
 }
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé' };
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal' };
 // Heure de fin max autorisée pour un shift selon le jour (di 0=lun … 6=dim), en minutes
 // depuis le début de la journée de service (les fins après minuit comptent +1440).
 // Lun→jeu : règle fin_semaine · ven+sam : règle fin_weekend · dim : non plafonné (aucune
@@ -2379,7 +2416,9 @@ async function autoFillCore(dayIndices, opt={}){
   // Candidats conformes (chaque candidat passe checkPlacement — validité/plafond inchangés), triés par
   // sortCandidates (logique PARTAGÉE avec la phase 2 : manque vs heures_min, mono>multi, etc.).
   // sortCandidates lit weekHoursOf en direct → reflète l'état À JOUR de S.creneaux à chaque appel.
-  const candFor=h=>sortCandidates(S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null).map(s=>s.id), h);
+  // Éligibles (checkPlacement) → RÉSERVE DE CAPACITÉ (snackPriorityGate : un multi n'assiste un snack
+  // secondaire qu'en renfort) → tri. La réserve empêche qu'un snack généré tôt aspire les multi des autres.
+  const candFor=h=>sortCandidates(snackPriorityGate(S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null).map(s=>s.id)).kept, h);
   // ── Trous = vagues non couvertes (même cascade jour→service→rôle→vagues, créneaux hors-vague consomment un poste) ──
   const holes=[];
   for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
@@ -2397,13 +2436,17 @@ async function autoFillCore(dayIndices, opt={}){
   holes.forEach(h=>h._n=candFor(h).length);
   holes.sort((a,b)=>{const ae=a.shift.exp?0:1,be=b.shift.exp?0:1;if(ae!==be)return ae-be;return a._n-b._n;});
   // Diagnostic de la règle dominante qui bloque un poste (pour le rapport)
-  const diag=(h)=>{ const tally={}; let capable=false;
+  const diag=(h)=>{ const tally={}; let capable=false; const eligIds=[];
     for(const s of S.salaries){ if(!onRoster(s)||!worksAt(s,SNACK.id)||!rolesOf(s.id).includes(h.role))continue; if(h.shift.exp&&!isExp(s.id,h.role))continue; capable=true;
-      const v=checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg}); if(v){tally[v.cle]=tally[v.cle]||{n:0,label:v.label};tally[v.cle].n++;} }
+      const v=checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg}); if(v){tally[v.cle]=tally[v.cle]||{n:0,label:v.label};tally[v.cle].n++;} else eligIds.push(s.id); }
+    const meta={jour:JOURS[h.di],date:h.date,svc:h.svc,role:roleNom(h.role),horaire:`${h.shift.deb}→${h.shift.fin}`,exp:!!h.shift.exp};
+    // Des candidats passent checkPlacement mais sont TOUS écartés par la réserve de capacité → motif dédié
+    // (message best-effort : recalculé sur l'état post-phase-2). Sinon : règle dure dominante du tally.
+    if(eligIds.length){ const g=snackPriorityGate(eligIds); if(g.kept.length===0 && g.gated.length){ return {...meta,cle:'reserve_principal',detail:`${PLACE_RULES.reserve_principal} — ${g.gated.length} multi gardé(s) pour leur snack prioritaire`}; } }
     const order=Object.keys(PLACE_RULES); let cle,detail;
     if(!capable){ cle='role'; detail=h.shift.exp?'aucun salarié expérimenté pour ce rôle':'aucun salarié avec ce rôle'; }
     else { const top=Object.entries(tally).sort((a,b)=>order.indexOf(a[0])-order.indexOf(b[0]))[0]; cle=top?top[0]:'inconnu'; detail=top?`${top[1].label} (bloque ${top[1].n} candidat·s)`:'conflit combinatoire'; }
-    return {jour:JOURS[h.di],date:h.date,svc:h.svc,role:roleNom(h.role),horaire:`${h.shift.deb}→${h.shift.fin}`,exp:!!h.shift.exp,cle,detail};
+    return {...meta,cle,detail};
   };
   // ── PHASE 1 : glouton conforme — chaque pose est gardée par checkPlacement (via candFor) ──
   const placed=[]; const open=[]; let seen=0;
@@ -2437,8 +2480,10 @@ async function autoFillCore(dayIndices, opt={}){
         const pSh={deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role,exp:!!(pVag&&pVag.exp)};
         // Remplaçant Y : MÊME priorité que la phase 1 (sortCandidates : manque vs heures_min d'abord,
         // mono>multi…) au lieu du 1er salarié valide trouvé dans S.salaries.
+        // Réserve de capacité appliquée AUSSI au backfill Y (sinon la réparation contournerait la règle
+        // en plaçant un multi secondaire là où un primaire aurait dû aller).
         const yIds=S.salaries.filter(s=>s.id!==X && checkPlacement(s.id,pSh,moved.date,moved.service,dayIdxOfDate(moved.date),{rg})===null).map(s=>s.id);
-        const Yid=sortCandidates(yIds,{shift:pSh})[0]||null;
+        const Yid=sortCandidates(snackPriorityGate(yIds).kept,{shift:pSh})[0]||null;
         if(Yid){
           const rH=await placeCre(X,h.shift,h.date,h.svc);
           const rP=await placeCre(Yid,pSh,moved.date,moved.service);
