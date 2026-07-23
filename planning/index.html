@@ -236,7 +236,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.41 · réserve de capacité par priorité de snack (un multi sert son principal d\'abord, secondaire en renfort) + scoring priorité';
+const VERSION='v0.42 · phase 3 : budget dédié + rallonge-toutes-avant-sureffectif → les rallonges légales ne sont plus affamées par le temps';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -2521,13 +2521,19 @@ async function autoFillCore(dayIndices, opt={}){
       if(weekHoursOf(s.id) < target-0.01) targets.push({sid:s.id,sal:s,target,cap});
     });
     targets.sort((a,b)=>(b.target-weekHoursOf(b.sid))-(a.target-weekHoursOf(a.sid))); // plus gros manque d'abord
+    // BUDGET DÉDIÉ à la phase 3 (horloge remise à zéro) : elle ne doit plus être affamée par le temps déjà
+    // consommé par les phases 1&2 — c'était LA cause du bug (rallonges LÉGALES de BELEM/SY jamais appliquées
+    // parce qu'overTime était déjà vrai à l'entrée de la phase 3, réplique Node à l'appui). En plus : on
+    // fait la RALLONGE d'abord pour TOUS (bornée, cheap, haute valeur → NON gatée par le temps), puis le
+    // SUREFFECTIF (expensive, opt-in, budgété) — sinon la recherche de sureffectif d'un target affamait les
+    // rallonges des suivants. Deux passes distinctes.
+    const _t3=_now(), over3=()=>_now()-_t3>6000;
+    // ── PASS A : RALLONGE des créneaux existants pour TOUS les targets (un seul write par créneau) ──
     for(const t of targets){
-      if(overTime())break;
       const sid=t.sid, cap=t.cap, target=t.target;
-      // (A) RALLONGE — un seul write par créneau : on cherche la fin/début max valides EN MÉMOIRE puis on écrit.
       const myCre=S.creneaux.filter(c=>c.salarie_id===sid && c.restaurant_id===SNACK.id && c.heure_debut && c.heure_fin);
       for(const row of myCre){
-        if(overTime()||weekHoursOf(sid)>=target-0.01)break;
+        if(weekHoursOf(sid)>=target-0.01)break;
         const env=svcEnvelope(dayJourType(dayIdxOfDate(row.date)),row.service); if(!env)continue;
         const di=dayIdxOfDate(row.date);
         let debM=_pmin(row.heure_debut), finM=_pmin(row.heure_fin); if(finM==null||debM==null)continue; if(finM<=debM)finM+=1440;
@@ -2550,10 +2556,14 @@ async function autoFillCore(dayIndices, opt={}){
         }
         if(curDur>oldDur+0.001){ const w=await updateCreTimes(row,absToHHMM(curDeb),absToHHMM(curFin)); if(w) rallongeH+=(curDur-oldDur); }
       }
-      // (B) SUREFFECTIF — créneau EN PLUS (au-delà du nb_cible), copie une forme de vague, opt-in par règle.
-      if(SUREFF_ON){
+    }
+    // ── PASS B : SUREFFECTIF (opt-in) pour les targets ENCORE sous leur min après rallonge — budgété (over3) ──
+    if(SUREFF_ON){
+      for(const t of targets){
+        if(over3())break;
+        const sid=t.sid, cap=t.cap, target=t.target;
         let placedSureff=true;
-        while(placedSureff && !overTime() && weekHoursOf(sid)<target-0.01 && (sureffCount[sid]||0)<SUREFF_MAX){
+        while(placedSureff && !over3() && weekHoursOf(sid)<target-0.01 && (sureffCount[sid]||0)<SUREFF_MAX){
           placedSureff=false;
           outer:
           for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
