@@ -235,7 +235,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.38 · plafond heures_max INTER-SNACK (weekMinutesOf global pour les multi-snack) — fin des dépassements en auto-fill multi';
+const VERSION='v0.39 · indispo PARTIELLE time-aware (semi-ouvert) — un soir adjacent à une indispo midi n\'est plus bloqué';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -325,13 +325,44 @@ async function purgeWeek(){
 }
 
 function _toMin(t){if(!t)return null;const[h,m]=t.slice(0,5).split(':').map(Number);return h*60+m;}
-function _overlap(a,b){
-  let a1=_toMin(a.heure_debut),a2=a.heure_fin?_toMin(a.heure_fin):null;
-  let b1=_toMin(b.heure_debut),b2=b.heure_fin?_toMin(b.heure_fin):null;
-  if(a1==null||b1==null)return false;
+// Chevauchement de deux plages horaires en INTERVALLES SEMI-OUVERTS [début, fin) : bornes STRICTES aux
+// DEUX extrémités → un créneau qui commence PILE à la fin de l'autre NE chevauche PAS (18:00 adjacent à
+// une indispo 10:00–18:00 = OK). Franchissement de minuit géré (fin ≤ début ⇒ +1440). Fin absente ⇒ +30.
+// SOURCE UNIQUE de tout test de chevauchement temporel (indispo, doublon inter-snack, conflits).
+function overlaps(aDeb,aFin,bDeb,bFin){
+  let a1=_toMin(aDeb), a2=aFin?_toMin(aFin):null;
+  let b1=_toMin(bDeb), b2=bFin?_toMin(bFin):null;
+  if(a1==null||b1==null) return false;
   if(a2==null) a2=a1+30; if(b2==null) b2=b1+30;
-  if(a2<=a1) a2+=24*60; if(b2<=b1) b2+=24*60;
+  if(a2<=a1) a2+=1440; if(b2<=b1) b2+=1440;
   return a1<b2 && b1<a2;
+}
+function _overlap(a,b){ return overlaps(a.heure_debut,a.heure_fin,b.heure_debut,b.heure_fin); }
+// Indispo VALIDÉE bloquant un shift — TIME-AWARE (via overlaps, semi-ouvert). Gère les indispos
+// PARTIELLES (heures) vs journée entière (sans heures → bloque tout le jour), ET le franchissement de
+// minuit : la portion du shift APRÈS minuit est confrontée aux indispos du LENDEMAIN. Retourne l'indispo
+// bloquante ou null. Remplace l'ancien test « même jour » (qui bloquait toute la journée même pour une
+// indispo partielle → un soir 18:00→00:00 rejeté à tort derrière une indispo 10:00–18:00).
+function _indispoBlocking(sid, deb, fin, date, di){
+  const a1=_toMin(deb); if(a1==null) return null;
+  let a2=fin?_toMin(fin):a1+30; if(a2<=a1) a2+=1440;
+  const crosses=a2>1440, nextEnd=a2-1440;                 // minutes retombant dans le lendemain
+  const nextDate=crosses?fmtDate(new Date(new Date(date).getTime()+86400000)):null, nextDi=(di+1)%7;
+  const isFull=d=>!(d.heure_debut||d.heure_fin);
+  for(const d of S.dispos){
+    if(d.salarie_id!==sid || d.statut!=='indispo' || (d.statut_demande||'validee')!=='validee') continue;
+    const sameDay=(d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date);
+    if(sameDay && (isFull(d) || overlaps(deb,fin,d.heure_debut,d.heure_fin))) return d;
+    if(crosses){
+      const nextDay=(d.type==='recurrente'&&d.jour_semaine===nextDi)||(d.type==='ponctuelle'&&d.date_specifique===nextDate);
+      if(nextDay){
+        if(isFull(d)) return d;                            // journée entière du lendemain : le shift y déborde
+        let nb1=_toMin(d.heure_debut), nb2=d.heure_fin?_toMin(d.heure_fin):nb1+30; if(nb2<=nb1)nb2+=1440;
+        if(nb1<nextEnd) return d;                          // [0,nextEnd) ∩ [nb1,nb2) (nb2>0 toujours)
+      }
+    }
+  }
+  return null;
 }
 function computeConflicts(){
   CONFLICTS.clear();
@@ -2135,10 +2166,9 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   const mine=S.creneaux.filter(c=>c.salarie_id===sid && c.heure_debut && !(opt.excludeSelf && c.date===date && c.service===svc));
   const dayCre=mine.filter(c=>c.date===date);
   if(dayCre.some(c=>c.service===svc))       return {cle:'dbl_svc', label:PLACE_RULES.dbl_svc};
-  // indispo validée (la colonne salarie_dispos.statut EXISTE et vaut 'indispo' — ne pas retirer ce filtre)
-  const ind=S.dispos.find(d=>d.salarie_id===sid && d.statut==='indispo' && (d.statut_demande||'validee')==='validee'
-        && ((d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date)));
-  if(ind)                                   return {cle:'indispo', label:PLACE_RULES.indispo};
+  // indispo validée — TIME-AWARE (une indispo PARTIELLE 10:00–18:00 ne bloque que les shifts qui la
+  // chevauchent réellement ; un soir 18:00→00:00 adjacent passe). Voir _indispoBlocking (source unique).
+  if(_indispoBlocking(sid, shift.deb, shift.fin, date, di)) return {cle:'indispo', label:PLACE_RULES.indispo};
   // jour d'école / examen CFA → strictement bloquant (alternant indispo)
   const _ad=altDayType(sid,date);
   if(_ad==='ecole')                         return {cle:'cfa', label:'jour d\'école CFA'};
