@@ -2089,22 +2089,42 @@ function openOcrReview(data, rejected, via){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:560px">${bodyHtml}</div></div>`;
 }
 
+// Dernier filet CÔTÉ CLIENT : re-vérification automatique avant écriture, même si un champ
+// coché a franchi les garde-fous serveur. Sous-ensemble déterministe, indépendant de l'IA.
+const _CLIENT_LABELS=new Set(['nom','prenom','prenoms','date de naissance','nationalite','sexe','adresse','ville','code postal','effectif total salaries de','type d\'employeur','lieu d\'execution']);
+function _clientReject(type,val){
+  const n=String(val).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+  if(type==='text'||type==='sexe'){
+    if(_CLIENT_LABELS.has(n)) return 'libellé de formulaire';
+    if(String(val).includes(':')) return 'contient « : »';
+    if(/^effectif total|^type d'employeur|^lieu d'execution/.test(n)) return 'libellé de formulaire';
+  }
+  if(type==='date'){
+    const d=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(val).trim());
+    if(d){ const t=Date.UTC(+d[1],+d[2]-1,+d[3]); const now=new Date(); if(t>=Date.UTC(now.getFullYear(),now.getMonth(),now.getDate())) return 'date aujourd\'hui ou future'; }
+  }
+  return null;
+}
 function applyOcrReview(){
   if(!_ocrData){ closeModal(); return; }
   const conf=typeof _ocrData.confidence==='number'?_ocrData.confidence:1;
   const border=conf>=0.8?'var(--ok)':'var(--warn)';
-  let n=0;
+  let n=0; const blocked=[];
   document.querySelectorAll('.ocr-chk:checked').forEach(chk=>{
     const k=chk.getAttribute('data-field');
     const def=OCR_FIELDS.find(f=>f[0]===k); if(!def)return;
-    const id=def[1], type=def[3]; const el=document.getElementById(id); if(!el)return;
+    const id=def[1], label=def[2], type=def[3]; const el=document.getElementById(id); if(!el)return;
     let val=_ocrData[k]; if(val===undefined||val===null||String(val).trim()==='')return;
     if(type==='sexe'){ const s=String(val).toUpperCase(); val=(s.startsWith('H')||s.startsWith('M'))?'M':(s.startsWith('F')?'F':''); if(!val)return; }
+    const rej=_clientReject(type==='contrat'?'text':type, val);
+    if(rej){ blocked.push(label); return; }   // valeur douteuse : jamais écrite
     el.value=val; el.style.borderColor=border; n++;
     if(type==='contrat' && typeof toggleSortie==='function') toggleSortie(el.value);
   });
   closeModal();
-  toast(n?`${n} champ(s) appliqué(s) — vérifie puis enregistre`:'Aucun champ appliqué');
+  let msg=n?`${n} champ(s) appliqué(s) — vérifie puis enregistre`:'Aucun champ appliqué';
+  if(blocked.length) msg+=` · ${blocked.length} bloqué(s) (valeur douteuse : ${blocked.join(', ')})`;
+  toast(msg);
 }
 
 </script>
