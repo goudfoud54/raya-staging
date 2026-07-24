@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.45 · auto-fill multi : phase 3 GLOBALE (après toutes les phases 1&2) + sureffectif priorité-P1 (non-nuisance) + min-overshoot ; overlay purge';
+const VERSION='v0.46 · phase 3 : étape TRANSFERT (coût nul, vol d\'heures à un surplus) avant rallonge/sureffectif + avertissement sureffectif (€) en haut du rapport';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -2164,13 +2164,17 @@ function showMultiSolveReport(results, underMin){
     return `<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>`;
   }).join('');
   const minSection = underMin.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⏳ Salariés sous leur minimum (${underMin.length})</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">Total tous snacks confondus (heures globales). Augmente les effectifs cibles, élargis les dispos, ou revois ces salariés.</div>${umRows}</div>` : '';
-  // Phase 3 agrégée sur tous les snacks (rallonge + sureffectif).
+  // Phase 3 agrégée sur tous les snacks (transfert + rallonge + sureffectif + € du sureffectif).
   const p3R=results.reduce((a,r)=>a+((r.phase3&&r.phase3.rallongeH)||0),0);
   const p3S=results.reduce((a,r)=>a+((r.phase3&&r.phase3.sureffH)||0),0);
+  const p3T=results.reduce((a,r)=>a+((r.phase3&&r.phase3.transferH)||0),0);
+  const p3Eur=results.reduce((a,r)=>a+((r.phase3&&r.phase3.sureffEur)||0),0);
   const p3List=results.flatMap(r=>(r.phase3&&r.phase3.sureffList)||[]);
-  const phase3Section = (p3R+p3S>0.05) ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⚖️ Phase 3 — distribution : +${fmtH1(p3R+p3S)}h</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5"><b>${fmtH1(p3R)}h de rallonge</b> + <b>${fmtH1(p3S)}h de sureffectif</b>${p3List.length?` (${p3List.length} créneau(x) sureffectif, fond doré dans la grille)`:''}.</div>${p3List.map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px"><b>${escP(x.name)}</b> · ${escP(x.date)} ${x.svc} · ${fmtH1(x.h)}h</div>`).join('')}</div>` : '';
+  const p3TList=results.flatMap(r=>(r.phase3&&r.phase3.transferList)||[]);
+  const {sureffWarn, phase3Section}=buildPhase3Report(p3R,p3S,p3T,p3List,p3TList,p3Eur,true);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
+    ${sureffWarn}
     <div style="font-size:13px;margin-bottom:6px">✓ <b>${totalAdded}</b> créneau(x) placé(s) sur ${results.filter(r=>!r.skipped).length} snack(s)</div>
     ${perSnack}${phase3Section}${postesSection}${minSection}</div></div>`;
   setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
@@ -2469,17 +2473,28 @@ function showSolveReport(report, underMin, phase3){
       <div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">Pas assez de créneaux disponibles cette semaine pour atteindre leur minimum contractuel (<b>heures_min</b>). Augmente les effectifs cibles, élargis leurs disponibilités, ou revois ce salarié. (Total tous snacks pour les multi-snack.)</div>
       ${umRows}
     </div>` : '';
-  const p3=phase3||{}; const rH=p3.rallongeH||0, sH=p3.sureffH||0, sList=p3.sureffList||[];
-  const phase3Section = (rH+sH>0.05) ? `
-    <div style="margin-top:${(report.length||underMin.length)?'18px':'0'};padding-top:${(report.length||underMin.length)?'14px':'0'};${(report.length||underMin.length)?'border-top:1px solid var(--line-2)':''}">
-      <h3 style="margin:0 0 6px">⚖️ Phase 3 — distribution : +${fmtH1(rH+sH)}h</h3>
-      <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5">Heures ajoutées pour rapprocher des salariés de leur minimum : <b>${fmtH1(rH)}h de rallonge</b> (extension de créneaux existants dans l'enveloppe des services) + <b>${fmtH1(sH)}h de sureffectif</b> (créneaux au-delà de la cible, ⚠ coût). ${sList.length?`${sList.length} créneau(x) sureffectif — repérables dans la grille (fond doré) :`:''}</div>
-      ${sList.map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px"><b>${escP(x.name)}</b> · ${escP(JOURS[(new Date(x.date).getDay()+6)%7]||'')} ${escP(x.date)} ${x.svc} · ${fmtH1(x.h)}h</div>`).join('')}
-    </div>` : '';
+  const p3=phase3||{}; const rH=p3.rallongeH||0, sH=p3.sureffH||0, tH=p3.transferH||0, sList=p3.sureffList||[], tList=p3.transferList||[], sEur=p3.sureffEur||0;
+  const {sureffWarn, phase3Section}=buildPhase3Report(rH,sH,tH,sList,tList,sEur,(report.length||underMin.length));
   const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : (underMin.length?'Salariés sous leur minimum':'Rapport auto-fill');
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${phase3Section}${postesSection}${minSection}</div></div>`;
+    ${sureffWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
+}
+// Bloc rapport phase 3 partagé (mono showSolveReport + multi showMultiSolveReport) : l'AVERTISSEMENT
+// sureffectif (masse salariale ajoutée) est un encart WARNING en HAUT du rapport, avec estimation € ;
+// la ligne « +Xh (transfert ±0€ + rallonge + sureffectif) » et les détails suivent.
+function buildPhase3Report(rH,sH,tH,sList,tList,sEur,hasPrev){
+  const sureffWarn = (sH>0.05) ? `<div style="background:rgba(224,169,58,.12);border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:var(--warn);font-weight:700;font-size:13.5px">⚠ L'auto-fill a ajouté ${sList.length} créneau(x) en SUREFFECTIF (+${fmtH1(sH)}h ≈ +${Math.round(sEur)} € chargé)</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">Dernier recours pour atteindre des minimums, faute de transfert/rallonge possible. Repérables en fond doré dans la grille — supprimables d'un clic si tu n'es pas d'accord.</div></div>` : '';
+  const tAgg={}; (tList||[]).forEach(x=>{const k=x.from+'|'+x.to+'|'+x.date+'|'+x.svc; (tAgg[k]=tAgg[k]||{...x,h:0}).h+=x.h;});
+  const tRows=Object.values(tAgg).map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">↔ <b>${escP(x.to)}</b> reçoit ${fmtH1(x.h)}h de <b>${escP(x.from)}</b> · ${escP(JOURS[(new Date(x.date).getDay()+6)%7]||'')} ${x.svc}</div>`).join('');
+  const sRows=(sList||[]).map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px">🟡 <b>${escP(x.name)}</b> · ${escP(JOURS[(new Date(x.date).getDay()+6)%7]||'')} ${escP(x.date)} ${x.svc} · ${fmtH1(x.h)}h sureffectif</div>`).join('');
+  const phase3Section = (rH+sH+tH>0.05) ? `<div style="margin-top:${hasPrev?'18px':'0'};padding-top:${hasPrev?'14px':'0'};${hasPrev?'border-top:1px solid var(--line-2)':''}">
+    <h3 style="margin:0 0 6px">⚖️ Phase 3 — distribution : +${fmtH1(rH+sH+tH)}h</h3>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5"><b>${fmtH1(tH)}h de transfert</b> (±0 € : heures déplacées d'un salarié en surplus vers un sous-min, couverture identique) + <b>${fmtH1(rH)}h de rallonge</b> (extension dans l'enveloppe des services) + <b style="color:var(--warn)">${fmtH1(sH)}h de sureffectif</b> (⚠ coût).</div>
+    ${tRows}${sRows}</div>` : '';
+  return {sureffWarn, phase3Section};
 }
 async function autoFillCore(dayIndices, opt={}){
   if(_autofillRunning)return;            // anti double-clic
@@ -2488,7 +2503,7 @@ async function autoFillCore(dayIndices, opt={}){
   setSS('busy','Remplissage en cours…');
   beginTxn();
   let added=0; const report=[]; const unfilled=[]; // unfilled = postes RÉELS non comblés (role cle + exp) pour la non-nuisance de la phase 3 globale
-  let rallongeH=0, sureffH=0; const sureffList=[]; // bilan phase 3 (distribution)
+  let rallongeH=0, sureffH=0, transferH=0; const sureffList=[], transferList=[]; // bilan phase 3 (transfert/rallonge/sureffectif)
   try{
   // opt.phase3only : mode « phase 3 seule » (auto-fill MULTI, étape B globale) — on saute la purge des
   // orphelins + les holes + phases 1&2 (déjà faites à l'étape A) et on ne fait QUE la distribution.
@@ -2642,6 +2657,57 @@ async function autoFillCore(dayIndices, opt={}){
     // SUREFFECTIF (expensive, opt-in, budgété) — sinon la recherche de sureffectif d'un target affamait les
     // rallonges des suivants. Deux passes distinctes.
     const _t3=_now(), over3=()=>_now()-_t3>6000;
+    // ── PASS 0 : TRANSFERT (coût ~NUL) — AVANT rallonge/sureffectif (ordre par coût) ──
+    // Pour un receveur sous son min, prendre un segment de 30 min à un DONNEUR au-dessus de SON PROPRE min,
+    // sur le même (jour, service, rôle, snack), en déplaçant la frontière : le donneur raccourcit son
+    // créneau (début retardé OU fin avancée) et le receveur couvre EXACTEMENT le segment libéré (extension
+    // adjacente préférée, sinon petit segment dédié). Couverture INSTANTANÉE identique, masse salariale
+    // INCHANGÉE (transfert d'heures, pas d'ajout). NON gaté par le temps (comme la rallonge — tier « toujours
+    // exécuté » ; seul le sureffectif est budgété). PAS de gate priorité (cost-neutral, donneur en surplus).
+    const TRANSFER_MIN_RESIDUAL=120;   // le créneau réduit du donneur garde ≥ 2h (pas de résidu de 30 min)
+    const proratedMinOf=s=>{ const b=_wd.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length; return Math.min((s.heures_min||0)*(7-b)/7, plafondOf(s,rg)); };
+    for(const t of targets){
+      const R=t.sid, target=t.target;
+      let guard=0;
+      while(weekHoursOf(R)<target-0.01 && guard++<48){
+        let best=null; // meilleur transfert de 30 min : plus gros surplus donneur, puis extension adjacente
+        for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
+          for(const svc of ['midi','soir']){
+            const Rrow=getCreneau(R,date,svc);
+            for(const dRow of S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.restaurant_id===SNACK.id&&c.salarie_id!==R&&c.heure_debut&&c.heure_fin)){
+              const D=dRow.salarie_id, role=dRow.role;
+              if(!rolesOf(R).includes(role))continue;
+              const Dsurplus=weekHoursOf(D)-proratedMinOf(salById(D));
+              if(Dsurplus<0.5-1e-9)continue;                                   // pas d'au moins 30 min de surplus
+              if(getShifts(jt,svc,role).some(v=>v.exp && _creCoversMin(dRow,_pmin(v.deb))) && !isExp(R,role))continue; // poste ★exp → receveur exp requis
+              let dDeb=_pmin(dRow.heure_debut), dFin=_pmin(dRow.heure_fin); if(dFin<=dDeb)dFin+=1440;
+              if((dFin-dDeb)-30<TRANSFER_MIN_RESIDUAL)continue;                 // résidu < 2h après −30 min
+              for(const boundary of ['start','end']){
+                const fDeb=boundary==='start'?dDeb:dFin-30, fFin=boundary==='start'?dDeb+30:dFin;
+                let Rnew, useRrow=false;
+                if(Rrow){ let rd=_pmin(Rrow.heure_debut), rf=_pmin(Rrow.heure_fin); if(rf<=rd)rf+=1440;
+                  if(boundary==='start' && rf===fDeb){ Rnew={deb:absToHHMM(rd),fin:absToHHMM(fFin)}; useRrow=true; }   // R finit où le segment commence → étend la fin
+                  else if(boundary==='end' && rd===fFin){ Rnew={deb:absToHHMM(fDeb),fin:absToHHMM(rf)}; useRrow=true; } // R commence où le segment finit → étend le début
+                  else continue;                                               // créneau R non adjacent → dbl_svc impossible
+                } else Rnew={deb:absToHHMM(fDeb),fin:absToHHMM(fFin)};          // pas de créneau R → segment dédié
+                if(checkPlacement(R,{deb:Rnew.deb,fin:Rnew.fin,role},date,svc,di,{rg,excludeSelf:useRrow})!==null)continue;
+                if(!best||Dsurplus>best.surplus+1e-9||(Math.abs(Dsurplus-best.surplus)<1e-9 && useRrow && !best.useRrow))
+                  best={dRow,D,role,date,svc,di,boundary,Rrow:useRrow?Rrow:null,useRrow,Rnew,surplus:Dsurplus};
+              }
+            }
+          }
+        }
+        if(!best)break;
+        // APPLIQUER : raccourcir le donneur, puis étendre/créer R ; si R échoue → rollback donneur (pas de trou).
+        const b=best, oldD={deb:b.dRow.heure_debut,fin:b.dRow.heure_fin};
+        const nDeb=b.boundary==='start'?absToHHMM(_pmin(b.dRow.heure_debut)+30):b.dRow.heure_debut;
+        const nFin=b.boundary==='end'?absToHHMM(_pmin(b.dRow.heure_fin)-30):b.dRow.heure_fin;
+        if(!await updateCreTimes(b.dRow,nDeb,nFin))break;
+        const wr = b.Rrow ? await updateCreTimes(b.Rrow,b.Rnew.deb,b.Rnew.fin) : await placeCre(R,{deb:b.Rnew.deb,fin:b.Rnew.fin,role:b.role},b.date,b.svc);
+        if(!wr){ await updateCreTimes(b.dRow,oldD.deb,oldD.fin); break; }
+        transferH+=0.5; transferList.push({from:fullName(salById(b.D)),to:fullName(t.sal),date:b.date,svc:b.svc,h:0.5});
+      }
+    }
     // ── PASS A : RALLONGE des créneaux existants pour TOUS les targets (un seul write par créneau) ──
     for(const t of targets){
       const sid=t.sid, cap=t.cap, target=t.target;
@@ -2701,7 +2767,7 @@ async function autoFillCore(dayIndices, opt={}){
           if(!best)break;
           const w=await placeCre(sid,{deb:best.v.deb,fin:best.v.fin,role:best.role},best.date,best.svc,{sureffectif:true});
           if(!w)break;
-          added++; sureffH+=best.nd; sureffCount[sid]=(sureffCount[sid]||0)+1; sureffList.push({name:fullName(t.sal),date:best.date,svc:best.svc,role:best.role,h:best.nd});
+          added++; sureffH+=best.nd; sureffCount[sid]=(sureffCount[sid]||0)+1; sureffList.push({name:fullName(t.sal),sid,date:best.date,svc:best.svc,role:best.role,h:best.nd});
         }
       }
     }
@@ -2733,15 +2799,19 @@ async function autoFillCore(dayIndices, opt={}){
   // Mode multi-snack (opt.silent) : ne rien afficher ici (ni statut ni rapport) — autoFillMultiWeek
   // agrège tout et affiche UN rapport consolidé (le sous-minimum y est recalculé globalement une seule
   // fois, à la fin, car le manque d'un salarié n'est réel qu'après le passage de TOUS les snacks).
-  const phase3={rallongeH, sureffH, sureffList};
+  // Estimation € du sureffectif (taux horaire brut × coef charges perso/org) pour l'avertissement du rapport.
+  const _coefOrg=Number(ORG.coef_charges)||1.420;
+  const sureffEur=sureffList.reduce((a,x)=>{ const s=salById(x.sid)||{}; const taux=Number(s.taux_horaire_brut)||0; const cp=Number(s.coef_charges_perso); const coef=isFinite(cp)&&cp>0?cp:_coefOrg; return a+x.h*taux*coef; },0);
+  const phase3={rallongeH, sureffH, transferH, sureffList, transferList, sureffEur};
   if(opt.silent) return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
-  const distrib=rallongeH+sureffH;
+  const distrib=rallongeH+sureffH+transferH;
   if(distrib>0.05) msg+=` · +${fmtH1(distrib)}h distribuées`;
+  if(sureffH>0.05) msg+=` · ⚠ ${sureffList.length} sureffectif(s) (+${Math.round(sureffEur)}€)`;   // signalé aussi dans le statut
   if(report.length) msg+=` · ${report.length} poste(s) non comblé(s)`;
   if(underMin.length) msg+=` · ${underMin.length} sous leur minimum`;
   if(report.length||underMin.length||distrib>0.05) msg+=' — voir rapport';
-  setSS((report.length||underMin.length)?'warn':'ok', msg);
+  setSS((report.length||underMin.length||sureffH>0.05)?'warn':'ok', msg);
   if(report.length||underMin.length||distrib>0.05) showSolveReport(report, underMin, phase3);
   return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   }catch(err){
