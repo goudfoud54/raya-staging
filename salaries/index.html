@@ -242,7 +242,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.14 · alternance CFA';
+const VERSION='v0.15 · import IA fiche';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -1985,192 +1985,128 @@ function applyCfaClusters(){
 // ===== OCR / Pré-remplissage =====
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
-function dateFR(d,m,y){const dd=String(d).padStart(2,'0'),mm=String(m).padStart(2,'0');let yy=String(y);if(yy.length===2)yy=(parseInt(yy)>30?'19':'20')+yy;return `${yy}-${mm}-${dd}`;}
+// Pré-remplissage via l'edge function IA (import-contrat-ai) : Mistral OCR/vision + LLM
+// json_schema + garde-fous serveur. Remplace l'ancien pipeline Tesseract + regex (parseEmployeData),
+// qui prenait des libellés de formulaire pour des valeurs sur les CERFA scannés.
+function escOcr(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fileToBase64(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]||'');r.onerror=rej;r.readAsDataURL(f);});}
 
-// Isole la ZONE SALARIÉ dans un contrat de travail.
-// Le but : ignorer "Représentée par Monsieur AZZI Rayan" + le siège social,
-// et ne lire que la partie du salarié (après "Et :" / "D'une part," / avant "Il a été convenu").
-function isolerZoneSalarie(t){
-  // Cherche le marqueur le plus tardif possible
-  const markers=[
-    /\bd[’']une\s+part\s*,?/i,                  // "D'une part,"
-    /\n\s*Et\s*:\s*/i,                              // "Et :" (newline avant)
-    /\bENTRE\s+LES\s+SOUSSIGN[EÉ]S?\b/i,        // fallback
-  ];
-  let startIdx=0;
-  for(const m of markers){
-    const r=t.match(m);
-    if(r && (r.index+r[0].length) > startIdx) startIdx=r.index+r[0].length;
-  }
-  let zone=t.slice(startIdx);
-  // Coupe AVANT le corps du contrat (où les noms employeur reviennent dans "S.A.S GOUD FOUD est immatriculée...")
-  const stopIdx=zone.search(/\b(?:IL\s+A\s+[EÉ]T[EÉ]\s+CONVENU|ARTICLE\s+N[°]?\s*0?1|\bENGAGEMENT\b)/i);
-  if(stopIdx>0) zone=zone.slice(0, Math.min(stopIdx+50, zone.length));
-  return zone || t;
-}
-
-function parseEmployeData(txt){
-  const out={};
-  const tFull=txt.replace(/[ \t]+/g,' ').replace(/ /g,' ');
-  // Isole UNIQUEMENT la zone salarié pour éviter de prendre l'employeur (AZZI, siège social, etc.)
-  const t=isolerZoneSalarie(tFull);
-  const flat=t.replace(/\s+/g,' ');
-  const flatFull=tFull.replace(/\s+/g,' '); // pour date d'entrée et type contrat (qui sont dans le corps)
-
-  // === N° sécu ===
-  const secu=flat.match(/\b([12])[\s.\-]?(\d{2})[\s.\-]?(\d{2})[\s.\-]?(\d{2})[\s.\-]?(\d{3})[\s.\-]?(\d{3})[\s.\-]?(\d{2})\b/);
-  if(secu) out.num_secu=secu.slice(1).join('');
-
-  // === Email ===
-  const em=flat.match(/[\w.+-]+@[\w-]+\.[\w.-]+/i);
-  if(em) out.email=em[0];
-
-  // === Téléphone FR ===
-  const tel=flat.match(/(?:\+33[\s.\-]?|0)[1-9](?:[\s.\-]?\d{2}){4}/);
-  if(tel) out.telephone=tel[0].replace(/[.\-]/g,' ').replace(/\s+/g,' ').trim();
-
-  // === Code postal + ville ===
-  const cpVille=flat.match(/\b(\d{5})\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-Za-zéèàâêôûïîç\-]+(?:[\s\-][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-]+){0,3})\b/);
-  if(cpVille){
-    out.code_postal=cpVille[1];
-    // Nettoie les mots parasites après la ville (Siret, SIRET, Téléphone, N°, etc.)
-    let v=cpVille[2].trim().replace(/\b(Siret|SIRET|N°|N|RCS|TVA|Téléphone|Tel|Tél|Email|E-mail|Mail|Demeurant|Représentée|Représenté|Représenté|Représentant)\b.*$/i,'').trim();
-    out.ville=v;
-  }
-
-  // === Date de naissance ===
-  // Format DD/MM/YYYY ou DD.MM.YYYY ou DD-MM-YYYY
-  let dob=flat.match(/(?:n[ée]\(?e?\)?(?:\s+le)?|date\s*(?:de\s*)?naissance|naissance|date\s*nais)\s*:?\s*(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})/i);
-  if(dob){out.date_naissance=dateFR(dob[1],dob[2],dob[3]);}
-  else{
-    // Format "15 mars 1990"
-    const dobL=flat.match(/(?:n[ée]\(?e?\)?(?:\s+le)?|date\s*(?:de\s*)?naissance|naissance)\s*:?\s*(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(\d{4})/i);
-    if(dobL){out.date_naissance=dateFR(dobL[1],MOIS_FR[dobL[2].toLowerCase()],dobL[3]);}
-  }
-
-  // === Date d'embauche / entrée / effet (cherchée dans TOUT le texte, car dans le corps) ===
-  let dent=flatFull.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|date\s+d['’]?\s*effet|date\s+de\s+d[ée]but|prise\s+de\s+fonction|[àa]\s+compter\s+du|embauch[ée]\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?)|engag[ée]?\s*(?:e\s+)?(?:le|à\s+(?:partir\s+)?(?:du|de)?))\s*:?\s*(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})/i);
-  if(dent){out.date_entree=dateFR(dent[1],dent[2],dent[3]);}
-  else{
-    const dentL=flatFull.match(/(?:date\s+d['’]?\s*embauche|date\s+d['’]?\s*entr[ée]e|prise\s+de\s+fonction|[àa]\s+compter\s+du)\s*:?\s*(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(\d{4})/i);
-    if(dentL){out.date_entree=dateFR(dentL[1],MOIS_FR[dentL[2].toLowerCase()],dentL[3]);}
-  }
-
-  // === Nationalité ===
-  // 1) Match explicite "Nationalité : XXX" (tolérant aux OCR errors et accents)
-  let nat=flat.match(/nationalit[éèe]?\s*[:.]?\s*([A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç][A-Za-zéèàâêôûïîçÉÈÀÂÊÔÛÏÎÇ\-]{2,30})/i);
-  if(nat) out.nationalite=nat[1].trim().replace(/^./,c=>c.toUpperCase());
-  // 2) Fallback : détection par mots-clés de nationalités connues
-  if(!out.nationalite){
-    const natKeywords=['française','francaise','marocaine','algérienne','algerienne','tunisienne','sénégalaise','senegalaise','malienne','ivoirienne','camerounaise','congolaise','guinéenne','guineenne','portugaise','espagnole','italienne','allemande','belge','suisse','britannique','américaine','americaine','canadienne','roumaine','polonaise','bulgare','ukrainienne','syrienne','libanaise','turque','chinoise','indienne','pakistanaise','bangladaise','vietnamienne','thaïlandaise','thailandaise','marocain','algérien','algerien','tunisien','sénégalais','senegalais','malien','ivoirien','camerounais','congolais','français','francais','portugais','espagnol','italien','allemand','britannique','américain','americain','canadien','roumain','polonais','syrien','libanais','turc','chinois','indien','pakistanais','vietnamien'];
-    for(const kw of natKeywords){
-      const re=new RegExp('\\b'+kw+'\\b','i');
-      if(re.test(flat)){ out.nationalite=kw.charAt(0).toUpperCase()+kw.slice(1); break; }
-    }
-  }
-
-  // === Nom + Prénom ===
-  // 1) Patterns explicites "Nom : XXX" / "Prénom : YYY" (par ligne)
-  const nomLine=t.match(/Nom(?:\s+de\s+(?:naissance|famille)|\s+patronymique|\s+d['’]usage)?\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-' ]{1,40})/);
-  if(nomLine) out.nom=nomLine[1].trim().split(/\s{2,}/)[0];
-  const prenomLine=t.match(/Pr[ée]nom(?:s)?\s*:?\s*([A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-' ]{1,40})/);
-  if(prenomLine) out.prenom=prenomLine[1].trim().split(/\s{2,}/)[0];
-
-  // 2) Pattern "Madame/Monsieur PRENOM NOM" ou "Madame/Monsieur NOM Prénom"
-  if(!out.nom || !out.prenom){
-    const civ=flat.match(/(?:Madame|Mme|Monsieur|M\.|Mr)\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-']{1,30})\s+([A-ZÉÈÀÂÊÔÛÏÎÇ][A-ZÉÈÀÂÊÔÛÏÎÇa-zéèàâêôûïîç\-']{1,30})/);
-    if(civ){
-      const a=civ[1].trim(),b=civ[2].trim();
-      const aUp=a===a.toUpperCase(), bUp=b===b.toUpperCase();
-      if(aUp && !bUp){out.nom=out.nom||a; out.prenom=out.prenom||b;}
-      else if(!aUp && bUp){out.prenom=out.prenom||a; out.nom=out.nom||b;}
-      else{out.prenom=out.prenom||a; out.nom=out.nom||b;}
-    }
-  }
-  // Format propre pour le prénom (Title Case)
-  if(out.prenom) out.prenom=out.prenom.toLowerCase().replace(/(^|[\s\-'])([a-zéèàâêôûïîç])/g,(_,p,c)=>p+c.toUpperCase());
-
-  // === Adresse ===
-  const adr=t.match(/(?:Adresse|Demeurant|Domicili[ée])\s*:?\s*([^\n]{5,90})/i);
-  if(adr) out.adresse=adr[1].trim().replace(/\s{2,}/g,' ');
-
-  // === Type de contrat ===
-  const contrats=[
-    {re:/contrat\s+(?:de\s+travail\s+)?(?:à|a)\s+dur[ée]e\s+ind[ée]termin[ée]e|\bCDI\b/i,v:'CDI'},
-    {re:/contrat\s+(?:de\s+travail\s+)?(?:à|a)\s+dur[ée]e\s+d[ée]termin[ée]e|\bCDD\b/i,v:'CDD'},
-    {re:/contrat\s+d['’]apprentissage|\balternance\b|\bapprenti\b/i,v:'alternant'},
-    {re:/contrat\s+de\s+professionnalisation/i,v:'professionnalisation'},
-    {re:/\bextra\b/i,v:'extra'}
-  ];
-  for(const c of contrats){if(c.re.test(flatFull)){out.type_contrat=c.v;break;}}
-
-  return out;
-}
-
-async function ocrPdf(file){
+// Rend les pages d'un PDF en PNG UNIQUEMENT si c'est un scan (couche texte native quasi absente).
+// Le modèle « voit » alors la mise en page (bloc employeur vs bloc salarié) au lieu d'un texte aplati.
+async function pdfPagesToImages(file){
   const buf=await file.arrayBuffer();
   const pdf=await pdfjsLib.getDocument({data:buf}).promise;
-  const n=Math.min(pdf.numPages,3);
-  let text='';
-  // 1) Essai d'abord : extraction de la couche TEXTE NATIVE du PDF (rapide + propre, pas d'OCR)
-  let nativeText='';
-  try{
+  const n=Math.min(pdf.numPages,4);
+  let nativeChars=0;
+  for(let i=1;i<=n;i++){ try{ const tc=await (await pdf.getPage(i)).getTextContent(); nativeChars+=tc.items.reduce((a,it)=>a+((it.str||'').replace(/\s/g,'').length),0); }catch(_){} }
+  const isScan=nativeChars<200; const images=[];
+  if(isScan){
     for(let i=1;i<=n;i++){
       const page=await pdf.getPage(i);
-      const tc=await page.getTextContent();
-      // Reconstitue le texte en préservant les sauts de ligne (selon y position)
-      let lastY=null;
-      const parts=[];
-      for(const it of tc.items){
-        const y=it.transform?it.transform[5]:null;
-        if(lastY!==null && y!==null && Math.abs(y-lastY)>3) parts.push('\n');
-        parts.push(it.str);
-        if(y!==null) lastY=y;
-      }
-      nativeText+=parts.join(' ')+'\n\n';
+      const vp=page.getViewport({scale:2});
+      const c=document.createElement('canvas'); c.width=vp.width; c.height=vp.height;
+      await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+      images.push(c.toDataURL('image/png'));
     }
-  }catch(_){}
-  // Si le texte natif est suffisant (PDF avec texte), on l'utilise directement
-  if(nativeText.replace(/\s+/g,'').length>200){
-    return nativeText;
   }
-  // 2) Fallback : PDF scanné → Tesseract OCR
-  for(let i=1;i<=n;i++){
-    const page=await pdf.getPage(i);
-    const viewport=page.getViewport({scale:2});
-    const canvas=document.createElement('canvas');
-    canvas.width=viewport.width;canvas.height=viewport.height;
-    await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
-    const{data:{text:t}}=await Tesseract.recognize(canvas,'fra');
-    text+=t+'\n';
-  }
-  return text;
+  return {isScan,images};
 }
 
+// Champs pré-remplissables : [clé IA, id champ, libellé, type].
+const OCR_FIELDS=[
+  ['nom','f_nom','Nom','text'],['prenom','f_prenom','Prénom','text'],
+  ['date_naissance','f_naiss','Date de naissance','date'],['sexe','f_sexe','Sexe','sexe'],
+  ['nationalite','f_nat','Nationalité','text'],['num_secu','f_secu','N° Sécurité sociale','text'],
+  ['email','f_email','Email','text'],['telephone','f_tel','Téléphone','text'],
+  ['adresse','f_adr','Adresse','text'],['code_postal','f_cp','Code postal','text'],
+  ['ville','f_ville','Ville','text'],['type_contrat','f_contrat','Type de contrat','contrat'],
+  ['date_entree','f_entree',"Date d'entrée",'date'],
+];
+const OCR_LABEL=Object.fromEntries(OCR_FIELDS.map(f=>[f[0],f[2]]));
+let _ocrData=null;
+
 async function ocrExtract(ev){
-  const file=ev.target.files[0];if(!file)return;
+  const file=ev.target.files[0]; if(!file)return; ev.target.value='';
   const btn=document.getElementById('ocrBtn');
-  if(btn){btn.disabled=true;btn.textContent='⏳ Lecture en cours…';}
+  const setBtn=(t,d)=>{ if(btn){btn.disabled=d;btn.textContent=t;} };
+  setBtn('⏳ Lecture IA…',true);
   try{
-    let text='';
-    if(file.type==='application/pdf'){text=await ocrPdf(file);}
-    else{const{data:{text:t}}=await Tesseract.recognize(file,'fra');text=t;}
-    const found=parseEmployeData(text);
-    const map={nom:'f_nom',prenom:'f_prenom',date_naissance:'f_naiss',num_secu:'f_secu',
-      nationalite:'f_nat',
-      email:'f_email',telephone:'f_tel',adresse:'f_adr',code_postal:'f_cp',ville:'f_ville',
-      type_contrat:'f_contrat',date_entree:'f_entree'};
-    let n=0;const filled=[];
-    for(const[k,id]of Object.entries(map)){
-      const e=document.getElementById(id);
-      if(e && found[k]){e.value=found[k];e.style.borderColor='var(--ok)';n++;filled.push(k);}
+    const{data:{session}}=await sb.auth.getSession();
+    if(!session?.access_token){ toast('Session expirée — reconnecte-toi'); setBtn('📄 Pré-remplir depuis un document',false); return; }
+    const base64=await fileToBase64(file);
+    let images=[];
+    if(file.type==='application/pdf'){
+      const r=await pdfPagesToImages(file); images=r.images;
+      if(r.isScan) setBtn('⏳ Scan détecté — lecture visuelle…',true);
+    } else if((file.type||'').startsWith('image/')){
+      images=['data:'+file.type+';base64,'+base64];
     }
-    if(n) toast(`${n} champ(s) détecté(s) : ${filled.join(', ')} — vérifie avant d'enregistrer`);
-    else toast('Aucun champ détecté — remplis manuellement');
-  }catch(err){toast('Erreur OCR : '+err.message);}
-  if(btn){btn.disabled=false;btn.textContent='📄 Pré-remplir depuis un document';}
-  ev.target.value='';
+    const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),90000); let r;
+    try{
+      r=await fetch(SUPA_URL+'/functions/v1/import-contrat-ai',{method:'POST',signal:ctrl.signal,
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token,'apikey':SUPA_KEY},
+        body:JSON.stringify({base64,mime_type:file.type||'application/pdf',images})});
+    }catch(err){ throw new Error(err.name==='AbortError'?'Délai dépassé (90 s) — réessaie':err.message); }
+    finally{ clearTimeout(to); }
+    let j={}; try{ j=await r.json(); }catch(_){}
+    if(r.status===403) throw new Error("Accès refusé : l'import IA requiert un rôle admin ou manager.");
+    if(!r.ok) throw new Error(j.error||('Erreur IA ('+r.status+')'));
+    openOcrReview(j.data||{}, j.rejected||[], j.via);
+  }catch(err){ toast('Erreur lecture : '+err.message); }
+  setBtn('📄 Pré-remplir depuis un document',false);
 }
+
+// Panneau de REVUE : rien n'est écrit sans validation. Chaque valeur proposée est affichée
+// avec la confiance ; l'utilisateur coche/décoche. Les collisions (champ déjà rempli) sont
+// signalées et DÉCOCHÉES par défaut. Les champs rejetés par les garde-fous sont listés à part.
+function openOcrReview(data, rejected, via){
+  _ocrData=data;
+  const conf=typeof data.confidence==='number'?data.confidence:null;
+  const confPct=conf==null?null:Math.round(conf*100);
+  const confCls=conf==null?'off':(conf>=0.8?'ok':conf>=0.5?'warn':'bad');
+  const viaLabel=(via==='vision'||via==='ocr-fallback')?'lecture visuelle (scan)':'lecture texte';
+  let rows='',any=false;
+  for(const [k,id,label] of OCR_FIELDS){
+    const val=data[k]; if(val===undefined||val===null||String(val).trim()==='')continue;
+    const el=document.getElementById(id); if(!el)continue;
+    const existing=(el.value||'').trim();
+    const collision=existing && existing!==String(val).trim();
+    any=true;
+    rows+=`<tr>
+      <td style="width:30px;text-align:center"><input type="checkbox" class="ocr-chk" data-field="${k}" ${collision?'':'checked'}></td>
+      <td style="color:var(--muted);white-space:nowrap">${label}</td>
+      <td><b style="word-break:break-word">${escOcr(String(val))}</b>${collision?`<div style="color:var(--warn);font-size:11.5px;margin-top:2px">⚠ écrase « ${escOcr(existing)} » — décoché par défaut</div>`:''}</td>
+    </tr>`;
+  }
+  const uniqRej=[...new Set((rejected||[]).map(r=>OCR_LABEL[r.field]||r.field))];
+  const rejBlock=uniqRej.length?`<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(224,169,58,.12);color:var(--warn);font-size:12.5px">⚠ ${uniqRej.length} champ(s) non exploitable(s), à saisir à la main : ${escOcr(uniqRej.join(', '))}.</div>`:'';
+  const head=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px"><h3 style="margin:0">Vérifier le pré-remplissage</h3>${conf!=null?`<span class="chip ${confCls}">Confiance ${confPct}%</span>`:''}<span style="color:var(--muted);font-size:11.5px">${viaLabel}</span></div>
+    <p style="color:var(--muted);font-size:12.5px;margin:4px 0 12px">Décoche ce qui est faux. Seuls les champs cochés seront appliqués — tu pourras encore tout modifier ensuite.</p>`;
+  const bodyHtml=any
+    ? `${head}<table class="tbl" style="width:100%"><tbody>${rows}</tbody></table>${rejBlock}
+       <div class="modal-actions" style="margin-top:16px"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyOcrReview()">Appliquer les champs cochés</button></div>`
+    : `${head}<p style="color:var(--muted)">Aucune donnée exploitable détectée dans ce document.</p>${rejBlock}<div class="modal-actions" style="margin-top:16px"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:560px">${bodyHtml}</div></div>`;
+}
+
+function applyOcrReview(){
+  if(!_ocrData){ closeModal(); return; }
+  const conf=typeof _ocrData.confidence==='number'?_ocrData.confidence:1;
+  const border=conf>=0.8?'var(--ok)':'var(--warn)';
+  let n=0;
+  document.querySelectorAll('.ocr-chk:checked').forEach(chk=>{
+    const k=chk.getAttribute('data-field');
+    const def=OCR_FIELDS.find(f=>f[0]===k); if(!def)return;
+    const id=def[1], type=def[3]; const el=document.getElementById(id); if(!el)return;
+    let val=_ocrData[k]; if(val===undefined||val===null||String(val).trim()==='')return;
+    if(type==='sexe'){ const s=String(val).toUpperCase(); val=(s.startsWith('H')||s.startsWith('M'))?'M':(s.startsWith('F')?'F':''); if(!val)return; }
+    el.value=val; el.style.borderColor=border; n++;
+    if(type==='contrat' && typeof toggleSortie==='function') toggleSortie(el.value);
+  });
+  closeModal();
+  toast(n?`${n} champ(s) appliqué(s) — vérifie puis enregistre`:'Aucun champ appliqué');
+}
+
 </script>
 <script defer src="../assistant-widget.js?v=4.9"></script>
 </body>
