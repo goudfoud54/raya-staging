@@ -242,7 +242,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.15 · import IA fiche';
+const VERSION='v0.16 · contraintes individuelles : saisie guidée (libellés FR, champ typé, jour en liste) + phrases lisibles';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -252,6 +252,45 @@ const MOIS_FR={janvier:1,février:2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juille
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 const CONTRAINTE_PRESETS=['pas_apres','pas_avant','pas_de_coupure','max_soirs_semaine','jours_off_consecutifs','indispo_jour','autre'];
+// Saisie GUIDÉE des contraintes (fini les clés techniques + « valeur (ex 19:00, true, 1) »).
+// blocking=true → dure (appliquée par le planning via checkPlacement) ; false → indicative (souple).
+const CONTRAINTE_META={
+  pas_apres:            {label:'Ne peut pas finir après',                   input:'time',   blocking:true},
+  pas_avant:            {label:'Ne peut pas commencer avant',               input:'time',   blocking:true},
+  pas_de_coupure:       {label:'Pas de coupure (midi + soir le même jour)', input:'bool',   blocking:true},
+  max_soirs_semaine:    {label:'Maximum de soirs par semaine',              input:'number', blocking:true},
+  jours_off_consecutifs:{label:'Jours de repos consécutifs souhaités',      input:'number', blocking:false},
+  indispo_jour:         {label:'Jour non travaillé',                        input:'day',    blocking:true},
+  autre:                {label:'Note libre',                                input:'text',   blocking:false},
+};
+// Jour 0=Lundi…6=Dimanche depuis un libellé FR OU un nombre (rétro-compat : indispo_jour numérique déjà saisi).
+const _CONTR_JOURS={lundi:0,mardi:1,mercredi:2,jeudi:3,vendredi:4,samedi:5,dimanche:6};
+function contrDayIdx(v){ if(v==null)return null; const s=String(v).trim().toLowerCase(); if(_CONTR_JOURS[s]!=null)return _CONTR_JOURS[s]; const n=parseInt(s,10); return (isFinite(n)&&n>=0&&n<=6)?n:null; }
+// Phrase lisible d'une contrainte enregistrée.
+function contrPhrase(c){
+  const v=c.valeur;
+  switch(c.cle){
+    case 'pas_apres': return `Ne peut pas finir après ${(v||'').slice(0,5)}`;
+    case 'pas_avant': return `Ne peut pas commencer avant ${(v||'').slice(0,5)}`;
+    case 'pas_de_coupure': return 'Pas de coupure (midi + soir le même jour)';
+    case 'max_soirs_semaine': return `Maximum ${v} soir(s) par semaine`;
+    case 'jours_off_consecutifs': return `${v} jour(s) de repos consécutifs souhaités`;
+    case 'indispo_jour': { const ji=contrDayIdx(v); return `Jour non travaillé : ${ji!=null?JOURS[ji]:v}`; }
+    case 'autre': return v||'';
+    default: return `${(CONTRAINTE_META[c.cle]||{}).label||c.cle} : ${v}`;
+  }
+}
+// Champ de saisie adapté au type sélectionné (heure / jour / nombre / case / texte).
+function contrInputHtml(cle){
+  const m=CONTRAINTE_META[cle]||{input:'text'};
+  const st='padding:6px 9px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px';
+  if(m.input==='time')   return `<input type="time" id="nc_val" style="${st}">`;
+  if(m.input==='number') return `<input type="number" id="nc_val" min="0" max="7" value="2" style="${st};width:70px">`;
+  if(m.input==='bool')   return `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="nc_val_chk" checked> Oui</label>`;
+  if(m.input==='day')    return `<select id="nc_val" style="${st}">${JOURS.map(j=>`<option value="${j.toLowerCase()}">${j}</option>`).join('')}</select>`;
+  return `<input type="text" id="nc_val" placeholder="note libre…" style="${st};width:180px">`;
+}
+function onContrTypeChange(){ const w=document.getElementById('nc_val_wrap'); if(w) w.innerHTML=contrInputHtml(document.getElementById('nc_cle').value); }
 const DOC_REQUIRED=[
   {key:'contrat',     label:'Contrat de travail',      ic:'📄'},
   {key:'dpae',        label:'DPAE',                    ic:'📋'},
@@ -831,8 +870,8 @@ function renderFiche(){
         <h3>Contraintes individuelles</h3>
         <div id="contrList"></div>
         <div class="add-row">
-          <select id="nc_cle">${CONTRAINTE_PRESETS.map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
-          <input id="nc_val" placeholder="valeur (ex 19:00, true, 1)" style="width:180px">
+          <select id="nc_cle" onchange="onContrTypeChange()">${Object.entries(CONTRAINTE_META).map(([k,m])=>`<option value="${k}">${m.label}${m.blocking?'':' (indicatif)'}</option>`).join('')}</select>
+          <span id="nc_val_wrap">${contrInputHtml('pas_apres')}</span>
           <button class="btn sm" onclick="addContrainte()">+ Ajouter</button>
         </div>
       </div>`}
@@ -1025,9 +1064,13 @@ function renderDispoList(){
 }
 function renderContrList(){
   const id=currentFiche.id;
-  document.getElementById('contrList').innerHTML=contrOf(id).map(c=>
-    `<div class="subitem"><b>${c.cle}</b> = ${c.valeur||''} ${c.active?'':'<span style="color:var(--muted)">(inactive)</span>'}<button class="btn danger sm" style="margin-left:auto" onclick="delContrainte('${c.id}')">×</button></div>`
-  ).join('')||'<div style="color:var(--muted);font-size:13px">Aucune contrainte enregistrée</div>';
+  document.getElementById('contrList').innerHTML=contrOf(id).map(c=>{
+    const m=CONTRAINTE_META[c.cle]||{blocking:true};
+    const tag=m.blocking
+      ? '<span title="Appliquée automatiquement par le planning" style="font-size:10px;font-weight:700;color:var(--info,#4a7fbd);background:rgba(74,127,189,.12);border:1px solid rgba(74,127,189,.3);border-radius:4px;padding:0 5px">bloquant</span>'
+      : '<span title="Indicative : signalée mais non bloquante pour le planning" style="font-size:10px;color:var(--muted);border:1px solid var(--line-2);border-radius:4px;padding:0 5px">indicatif</span>';
+    return `<div class="subitem"><span>${escOcr(contrPhrase(c))}</span> ${tag} ${c.active?'':'<span style="color:var(--muted)">(inactive)</span>'}<button class="btn danger sm" style="margin-left:auto" onclick="delContrainte('${c.id}')">×</button></div>`;
+  }).join('')||'<div style="color:var(--muted);font-size:13px">Aucune contrainte enregistrée</div>';
 }
 
 // ===== CRUD =====
@@ -1203,7 +1246,15 @@ async function addDispo(){
 async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await sb.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
 async function addContrainte(){
   const id=currentFiche.id;
-  const{error}=await sb.from('salarie_contraintes').insert({salarie_id:id,cle:document.getElementById('nc_cle').value,valeur:val('nc_val'),active:true});
+  const cle=document.getElementById('nc_cle').value;
+  const m=CONTRAINTE_META[cle]||{input:'text'};
+  // indispo_jour → on stocke le NOM du jour (« jeudi »), non ambigu (le planning lit nom OU nombre) ;
+  // pas_de_coupure → 'true'/'false' ; les autres → la valeur brute du champ typé.
+  let valeur;
+  if(m.input==='bool') valeur=document.getElementById('nc_val_chk').checked?'true':'false';
+  else valeur=(document.getElementById('nc_val').value||'').trim();
+  if(m.input!=='bool' && !valeur){ toast('Renseigne une valeur'); return; }
+  const{error}=await sb.from('salarie_contraintes').insert({salarie_id:id,cle,valeur,active:true});
   if(error){toast('Erreur: '+error.message);return;}
   const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();toast('Ajoutée');
 }
