@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.47 · phase 3 réordonnée (rallonge→transfert→sureffectif) : transfert anti-fragmentation (créneau créé ≥ règle durée_creneau_min_h, défaut 3h), garde anti-chaîne, plafond dépassement effectif +1 signalé';
+const VERSION='v0.48 · contraintes individuelles (pas_apres/pas_avant/pas_de_coupure/max_soirs/indispo_jour) appliquées dans checkPlacement + avertissement des réglages sous seuil légal (repos 11h…)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -524,7 +524,7 @@ async function init(){
 async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
   const toIncl=fmtDate(new Date(MONDAY.getTime()+7*86400000)); // lundi suivant (pour la règle « veille » du dimanche)
-  const[s,ro,d,cr,crAll,eff,reg,orr,alt,disc]=await Promise.all([
+  const[s,ro,d,cr,crAll,eff,reg,orr,alt,disc,ct]=await Promise.all([
     sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
     sb.from('salarie_dispos').select('*'),
@@ -537,9 +537,12 @@ async function loadWeek(){
     // Mises à pied (disciplinary_actions) chevauchant la semaine → jours où le salarié est suspendu,
     // donc légitimement absent (utilisé pour ne pas l'alerter « sous son minimum »). select tolérant :
     // si la table/colonne n'est pas lisible (RLS), on retombe sur [] sans casser le chargement.
-    sb.from('disciplinary_actions').select('salarie_id,mise_a_pied_debut,mise_a_pied_fin').not('mise_a_pied_debut','is',null).lte('mise_a_pied_debut',fmtDate(new Date(MONDAY.getTime()+6*86400000))).gte('mise_a_pied_fin',from)
+    sb.from('disciplinary_actions').select('salarie_id,mise_a_pied_debut,mise_a_pied_fin').not('mise_a_pied_debut','is',null).lte('mise_a_pied_debut',fmtDate(new Date(MONDAY.getTime()+6*86400000))).gte('mise_a_pied_fin',from),
+    // Contraintes individuelles (pas_apres, pas_avant, pas_de_coupure, max_soirs_semaine, indispo_jour,
+    // jours_off_consecutifs, autre) : appliquées dans checkPlacement (auto-fill + saisie manuelle).
+    sb.from('salarie_contraintes').select('*')
   ]);
-  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];
+  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];
   S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
   render();
 }
@@ -650,7 +653,12 @@ function renderTable(){
     const othBadge = oth>0.01
       ? `<span class="oth-badge" title="${escP(otherSnackBreakdown(s.id).map(b=>b.nom+' '+fmtH1(b.h)+'h').join(' · '))} — déjà posées sur d'autres snacks cette semaine" style="display:inline-block;margin-left:5px;font-size:9px;font-weight:700;color:var(--gold);background:rgba(200,160,53,.12);border:1px solid rgba(200,160,53,.35);border-radius:5px;padding:0 4px;white-space:nowrap;cursor:help">+${fmtH1(oth)}h ailleurs</span>`
       : '';
-    tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span><span class="sal-clic" onclick="openSalMenu(event,'${s.id}')" title="Actions">${fullName(s)}</span>${roleTag}${othBadge}</td>`;
+    // Contraintes individuelles actives → petit badge (tooltip listant les contraintes appliquées).
+    const _csAll=contrOf(s.id);
+    const contrBadge=_csAll.length
+      ? `<span title="Contraintes individuelles appliquées : ${escP(_csAll.map(_contrLabelOf).join(' · '))}" style="display:inline-block;margin-left:5px;font-size:9px;font-weight:700;color:var(--info,#4a7fbd);background:rgba(74,127,189,.12);border:1px solid rgba(74,127,189,.35);border-radius:5px;padding:0 4px;white-space:nowrap;cursor:help">🔒 ${_csAll.length}</span>`
+      : '';
+    tbody+=`<tr style="--scol:${col}"><td class="salname"><span class="dot" style="background:${col}"></span><span class="sal-clic" onclick="openSalMenu(event,'${s.id}')" title="Actions">${fullName(s)}</span>${roleTag}${othBadge}${contrBadge}</td>`;
     let colIdx=0;
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
@@ -1245,6 +1253,35 @@ function renderChecks(){
     CHECKS.push({lbl:'Heures compl. temps partiel',ok:tp.length===0,details:tp});
   }
 
+  // Contraintes individuelles (salarie_contraintes) — a posteriori. Les clés DURES sont bloquées à la pose,
+  // mais une dérogation manuelle peut les forcer → on les re-signale ici. jours_off_consecutifs est SOUPLE
+  // (jamais bloquant, seulement signalé). autre est purement informatif.
+  const contrViol=[], joursOffViol=[], autreInfo=[], seenCV=new Set();
+  list.forEach(s=>{
+    const cs=contrOf(s.id); if(!cs.length) return;
+    const myCre=S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut);
+    const daysWorked=new Set(myCre.map(c=>c.date));
+    myCre.forEach(cr=>{
+      const di=dayIdxOfDate(cr.date);
+      const v=_contrainteBlocking(s.id,{deb:(cr.heure_debut||'').slice(0,5),fin:(cr.heure_fin||'').slice(0,5),role:cr.role},cr.date,cr.service,di);
+      if(v){ const line=`${nameOf(s.id)} · ${JOURS[di]} ${cr.service} ${(cr.heure_debut||'').slice(0,5)}→${(cr.heure_fin||'').slice(0,5)} : ${v.label}`; if(!seenCV.has(line)){ seenCV.add(line); contrViol.push(line); } }
+    });
+    cs.forEach(c=>{
+      if(c.cle==='autre'){ autreInfo.push(`${nameOf(s.id)} : ${escP(c.valeur)}`); }
+      else if(c.cle==='jours_off_consecutifs'){
+        const nOff=parseInt(c.valeur,10);
+        if(isFinite(nOff) && daysWorked.size>0){
+          const off=[]; for(let i=0;i<7;i++){ if(!daysWorked.has(fmtDate(dateOfDay(i)))) off.push(i); }
+          let best=0,cur=0,prev=-9; off.forEach(i=>{ cur=(i===prev+1)?cur+1:1; prev=i; if(cur>best)best=cur; });
+          if(off.length && best<nOff) joursOffViol.push(`${nameOf(s.id)} : repos non groupés (plus longue série ${best}j < ${nOff}j souhaités)`);
+        }
+      }
+    });
+  });
+  CHECKS.push({lbl:'Contraintes individuelles',ok:contrViol.length===0,details:contrViol});
+  if(joursOffViol.length) CHECKS.push({lbl:'Repos groupés (préférence)',ok:false,details:joursOffViol});
+  if(autreInfo.length) CHECKS.push({lbl:'Contraintes libres (info)',ok:true,details:autreInfo});
+
   document.getElementById('checks').innerHTML=CHECKS.map((c,i)=>{
     const n=c.details.length;const hasD=n>0;
     return `<button class="chk ${c.ok?'ok':'ko'}" ${hasD?`onclick="showCheckDetails(${i})"`:''} style="${hasD?'cursor:pointer':'cursor:default'}">${c.ok?'✓':'⚠'} ${c.lbl}${n?` (${n})`:''}</button>`;
@@ -1395,6 +1432,48 @@ const RULE_META={
   sureffectif_minimum:{lbl:'Sureffectif auto pour atteindre le minimum d\'heures',type:'bool',help:'Autorise l\'auto-fill (phase 3) à poser des créneaux AU-DELÀ de la cible pour amener un salarié à son minimum. Coût supplémentaire — désactivé par défaut.'}
 };
 
+// ── Seuils LÉGAUX (France) ──────────────────────────────────────────────────────────────────────
+// On N'INTERDIT PAS (des dérogations conventionnelles existent, notamment HCR) mais on AVERTIT : le produit
+// étant revendu, l'utilisateur doit savoir qu'il descend sous un seuil légal. Réf. VÉRIFIÉE fournie :
+// repos quotidien 11h = art. L3131-1. Les autres seuils sont indiqués génériquement (« seuil légal
+// français » / convention) — chiffres à confirmer selon la convention collective applicable. Ne pas
+// inventer de numéros d'article : une mauvaise citation dans un produit de revente est un risque juridique.
+const LEGAL_LIMITS={
+  repos_quotidien_h:{dir:'min', seuil:11, unit:'h', label:'repos quotidien de 11 h consécutives', ref:'art. L3131-1 du Code du travail'},
+  jour_off_min:{dir:'min', seuil:1,  unit:'j', label:'repos hebdomadaire (au moins 1 jour de repos par semaine)', ref:'seuil légal français'}, // seuil à confirmer
+  plafond_hebdo:{dir:'max', seuil:48, unit:'h', label:'durée hebdomadaire maximale absolue de 48 h', ref:'seuil légal français'},              // seuil à confirmer
+  amplitude_max:{dir:'max', seuil:13, unit:'h', label:'amplitude journalière maximale de 13 h', ref:'convention collective (ex. HCR)'},        // seuil à confirmer
+};
+function legalBreach(cle, val){ const L=LEGAL_LIMITS[cle]; if(!L)return null; const v=parseFloat(val); if(!isFinite(v))return null; return (L.dir==='min'?v<L.seuil:v>L.seuil)?L:null; }
+function legalBreachList(){ return Object.keys(LEGAL_LIMITS).map(k=>{ const r=(S.regles||[]).find(x=>x.cle===k); if(!r||r.valeur==null)return null; const L=legalBreach(k,r.valeur); return L?{cle:k,val:r.valeur,L}:null; }).filter(Boolean); }
+// Saisie d'une valeur de règle soumise à un seuil légal : avertit + journalise UNIQUEMENT quand on FRANCHIT
+// le seuil (jamais quand on repasse au-dessus). Annulation → on restaure la valeur précédente (comme la saisie).
+async function onRegleValue(el, id){
+  const r=(S.regles||[]).find(x=>x.id===id); if(!r) return;
+  const old=r.valeur, val=el.value, L=legalBreach(r.cle, val);
+  if(L && String(val)!==String(old)){
+    const sens = L.dir==='min' ? 'descendez sous le' : 'dépassez le';
+    if(!confirm(`⚠️ Vous ${sens} ${L.label}.\n\nUn planning ne respectant pas ce seuil vous expose à des sanctions (contentieux prud'homal, contrôle de l'inspection du travail). Certaines conventions collectives (dont HCR) prévoient des dérogations encadrées — vérifiez votre situation.\n\nRéférence : ${L.ref}.\n\nEnregistrer quand même cette valeur sous le seuil légal ?`)){
+      el.value = old!=null?old:''; return;   // annulé → on restaure la valeur d'avant
+    }
+    await saveRegle(id,'valeur',val);
+    logLegalOverride(r,val,L);
+  } else {
+    await saveRegle(id,'valeur',val);
+  }
+  openReglages();   // re-render : badge « sous le seuil légal » persistant, à jour dans les deux sens
+}
+// Traçabilité : qui a réglé sous le seuil légal et quand (réutilise planning_derogations, salarie_id null).
+async function logLegalOverride(r,val,L){
+  try{ await sb.from('planning_derogations').insert({restaurant_id:SNACK.id, salarie_id:null, service:null, date:fmtDate(new Date()), regle_cle:r.cle, regle_label:`Réglage sous seuil légal : ${L.label}`, motif:`Confirmé à ${val}${L.unit} (seuil ${L.seuil}${L.unit}) — ${L.ref}`, forced_by:ME&&ME.id}); }
+  catch(e){ console.warn('[planning] journalisation seuil légal échouée', e); }
+}
+// Encart « généré sous un seuil légal » pour le rapport d'auto-fill (discret mais présent).
+function buildLegalWarn(){
+  const list=legalBreachList(); if(!list.length) return '';
+  return `<div style="margin-bottom:12px;padding:8px 12px;border-radius:8px;background:rgba(196,90,90,.10);border:1px solid var(--bad);color:var(--bad);font-size:12px">⚠ Planning généré avec ${list.length} réglage(s) sous le seuil légal : ${list.map(x=>`${escP((RULE_META[x.cle]||{}).lbl||x.cle)} = ${escP(x.val)}${x.L.unit} (min. ${x.L.seuil}${x.L.unit})`).join(' · ')}. Vérifiez votre convention collective.</div>`;
+}
+
 // Ouvre/replie un accordéon de rôle et mémorise l'état (ne se referme que sur clic explicite de l'en-tête)
 function toggleRoleAcc(cle, headerEl){
   const body=headerEl.nextElementSibling; const willOpen=body.style.display==='none';
@@ -1486,7 +1565,9 @@ function openReglages(){
 
       let valueInput='';
       if(meta.type==='number'){
-        valueInput=`<input type="number" ${meta.min!=null?`min="${meta.min}"`:''} ${meta.max!=null?`max="${meta.max}"`:''} value="${r.valeur||0}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:80px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;text-align:center;font-weight:600">${meta.unit?`<span style="color:var(--muted);font-size:12px;margin-left:6px">${meta.unit}</span>`:''}`;
+        const _onb = LEGAL_LIMITS[r.cle] ? `onRegleValue(this,'${r.id}')` : `saveRegle('${r.id}','valeur',this.value)`;
+        const _brk = legalBreach(r.cle, r.valeur);
+        valueInput=`<input type="number" ${meta.min!=null?`min="${meta.min}"`:''} ${meta.max!=null?`max="${meta.max}"`:''} value="${r.valeur||0}" onblur="${_onb}" style="width:80px;padding:7px 10px;border-radius:6px;border:1px solid ${_brk?'var(--bad)':'var(--line-2)'};background:var(--bg);color:var(--text);font-size:13px;text-align:center;font-weight:600">${meta.unit?`<span style="color:var(--muted);font-size:12px;margin-left:6px">${meta.unit}</span>`:''}`;
       } else if(meta.type==='time' && (r.cle==='fin_semaine'||r.cle==='fin_weekend')){
         valueInput=finRuleInput(r);
       } else if(meta.type==='time'){
@@ -1512,9 +1593,11 @@ function openReglages(){
           </label>
         </div>`;
       } else {
-        // Règles à valeur — pas de case, juste le champ
+        // Règles à valeur — pas de case, juste le champ. Badge ROUGE persistant si sous le seuil légal.
+        const _lb=legalBreach(r.cle, r.valeur);
+        const legalBadge=_lb?`<span title="${escP(_lb.ref)} — dérogations conventionnelles possibles, vérifiez votre situation" style="margin-left:8px;font-size:10px;font-weight:700;color:var(--bad);background:rgba(196,90,90,.13);border:1px solid var(--bad);border-radius:4px;padding:1px 6px;white-space:nowrap;cursor:help">⚠ sous le seuil légal (${_lb.dir==='min'?'min. ':'max. '}${_lb.seuil}${_lb.unit})</span>`:'';
         html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line)">
-          <span style="font-size:13.5px;flex:1">${meta.lbl}</span>
+          <span style="font-size:13.5px;flex:1">${meta.lbl}${legalBadge}</span>
           <div>${valueInput}</div>
         </div>`;
       }
@@ -2175,7 +2258,7 @@ function showMultiSolveReport(results, underMin){
   const {sureffWarn, overflowWarn, phase3Section}=buildPhase3Report(p3R,p3S,p3T,p3List,p3TList,p3Eur,true,p3OList);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${sureffWarn}${overflowWarn}
+    ${buildLegalWarn()}${sureffWarn}${overflowWarn}
     <div style="font-size:13px;margin-bottom:6px">✓ <b>${totalAdded}</b> créneau(x) placé(s) sur ${results.filter(r=>!r.skipped).length} snack(s)</div>
     ${perSnack}${phase3Section}${postesSection}${minSection}</div></div>`;
   setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
@@ -2312,7 +2395,59 @@ function sortCandidates(ids, h){
     return 0;
   });
 }
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal' };
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
+// ── Contraintes individuelles (salarie_contraintes) ─────────────────────────────────────────────
+// Longtemps configurables sur la fiche salarié mais JAMAIS lues côté planning → purement décoratives.
+// Désormais branchées dans checkPlacement (donc auto-fill ET saisie manuelle, dérogeables à la main).
+function contrOf(sid){ return (S.contraintes||[]).filter(c=>c.salarie_id===sid && c.active!==false && c.valeur!=null && c.valeur!==''); }
+// Libellé lisible d'une contrainte (badge/tooltip du nom + rapport).
+function _contrLabelOf(c){
+  const v=c.valeur;
+  switch(c.cle){
+    case 'pas_apres': return `pas de fin après ${v}`;
+    case 'pas_avant': return `pas de début avant ${v}`;
+    case 'pas_de_coupure': return 'pas de coupure (midi + soir le même jour)';
+    case 'max_soirs_semaine': return `max ${v} soir(s)/semaine`;
+    case 'jours_off_consecutifs': return `${v} jours de repos groupés (préférence)`;
+    case 'indispo_jour': { const ji=_dayIndexOf(v); return `indisponible le ${ji!=null?JOURS[ji].toLowerCase():v}`; }
+    case 'autre': return `note : ${v}`;
+    default: return `${c.cle} : ${v}`;
+  }
+}
+// Jour 0=Lundi … 6=Dimanche (cohérent avec JOURS et dayIdxOfDate). Accepte un libellé FR OU un nombre 0-6.
+const _JOURS_IDX={lundi:0,mardi:1,mercredi:2,jeudi:3,vendredi:4,samedi:5,dimanche:6,lun:0,mar:1,mer:2,jeu:3,ven:4,sam:5,dim:6};
+function _dayIndexOf(v){ if(v==null)return null; const s=String(v).trim().toLowerCase(); if(_JOURS_IDX[s]!=null)return _JOURS_IDX[s]; const n=parseInt(s,10); return (isFinite(n)&&n>=0&&n<=6)?n:null; }
+const _truthyContr=v=>{ const s=String(v==null?'':v).trim().toLowerCase(); return s!=='' && s!=='false' && s!=='0' && s!=='non' && s!=='off'; };
+// Contrainte individuelle DURE enfreinte par ce shift ? → {cle,label} ou null. jours_off_consecutifs (souple,
+// Vérifications) et autre (info) ne bloquent JAMAIS ici. indispo_jour = blocage dur, en UNION avec les indispos
+// récurrentes de salarie_dispos (l'un OU l'autre bloque). Passage minuit géré comme _endCapMin (00:30 = 24:30).
+function _contrainteBlocking(sid, shift, date, svc, di){
+  for(const c of contrOf(sid)){
+    if(c.cle==='pas_apres'){
+      let cap=_pmin(c.valeur); if(cap==null)continue; if(cap<=360)cap+=1440;
+      let endM=_pmin(shift.fin), debM=_pmin(shift.deb); if(endM==null||debM==null)continue; if(endM<=debM)endM+=1440;
+      if(endM>cap) return {cle:'c_pas_apres', label:`contrainte perso : pas de fin après ${c.valeur}`};
+    } else if(c.cle==='pas_avant'){
+      const lim=_pmin(c.valeur), debM=_pmin(shift.deb); if(lim==null||debM==null)continue;
+      if(debM<lim) return {cle:'c_pas_avant', label:`contrainte perso : pas de début avant ${c.valeur}`};
+    } else if(c.cle==='pas_de_coupure'){
+      if(_truthyContr(c.valeur)){
+        const other = svc==='soir'?'midi':'soir';
+        if((S.allCreneauxWeek||[]).some(x=>x.salarie_id===sid && x.date===date && x.service===other && x.heure_debut))
+          return {cle:'c_pas_coupure', label:'contrainte perso : pas de coupure (midi + soir le même jour)'};
+      }
+    } else if(c.cle==='max_soirs_semaine' && svc==='soir'){
+      const max=parseInt(c.valeur,10); if(!isFinite(max))continue;
+      const soirDates=new Set();
+      (S.allCreneauxWeek||[]).forEach(x=>{ if(x.salarie_id===sid && x.service==='soir' && x.heure_debut && x.date!==date) soirDates.add(x.date); });
+      if(soirDates.size+1>max) return {cle:'c_max_soirs', label:`contrainte perso : max ${max} soir(s) par semaine`};
+    } else if(c.cle==='indispo_jour'){
+      const ji=_dayIndexOf(c.valeur); if(ji==null)continue;
+      if(di===ji) return {cle:'c_indispo_jour', label:`contrainte perso : indisponible le ${JOURS[ji].toLowerCase()}`};
+    }
+  }
+  return null;
+}
 // Heure de fin max autorisée pour un shift selon le jour (di 0=lun … 6=dim), en minutes
 // depuis le début de la journée de service (les fins après minuit comptent +1440).
 // Lun→jeu : règle fin_semaine · ven+sam : règle fin_weekend · dim : non plafonné (aucune
@@ -2343,6 +2478,8 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   // indispo validée — TIME-AWARE (une indispo PARTIELLE 10:00–18:00 ne bloque que les shifts qui la
   // chevauchent réellement ; un soir 18:00→00:00 adjacent passe). Voir _indispoBlocking (source unique).
   if(_indispoBlocking(sid, shift.deb, shift.fin, date, di)) return {cle:'indispo', label:PLACE_RULES.indispo};
+  // contraintes individuelles DURES (pas_apres / pas_avant / pas_de_coupure / max_soirs_semaine / indispo_jour)
+  const _cViol=_contrainteBlocking(sid, shift, date, svc, di); if(_cViol) return _cViol;
   // jour d'école / examen CFA → strictement bloquant (alternant indispo)
   const _ad=altDayType(sid,date);
   if(_ad==='ecole')                         return {cle:'cfa', label:'jour d\'école CFA'};
@@ -2479,7 +2616,7 @@ function showSolveReport(report, underMin, phase3){
   const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : (underMin.length?'Salariés sous leur minimum':'Rapport auto-fill');
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${sureffWarn}${overflowWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
+    ${buildLegalWarn()}${sureffWarn}${overflowWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
 }
 // Bloc rapport phase 3 partagé (mono showSolveReport + multi showMultiSolveReport) : l'AVERTISSEMENT
 // sureffectif (masse salariale ajoutée) est un encart WARNING en HAUT du rapport, avec estimation € ;
