@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.49 · couverture horaire = contrainte dure (la rallonge ne sur-couvre plus — profil de besoin par demi-heure) + rallonge CHIFFRÉE en € et détaillée dans le rapport';
+const VERSION='v0.50 · sureffectif = SUGGESTIONS par défaut (le patron décide ; mode auto conservé via réglage), classées par jour le plus chargé + alerte de sur-couverture basée sur la présence SIMULTANÉE réelle (fin des fausses alertes sur relais)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1458,7 +1458,7 @@ const RULE_META={
   couverture_continue:{lbl:'Couverture continue 1 cuisine + 1 réception',type:'bool'},
   departs_echelonnes:{lbl:'Départs échelonnés (éviter les pics)',type:'bool'},
   effectifs_exacts:{lbl:'Compteurs = objectif exact',type:'bool'},
-  sureffectif_minimum:{lbl:'Sureffectif auto pour atteindre le minimum d\'heures',type:'bool',help:'Autorise l\'auto-fill (phase 3) à poser des créneaux AU-DELÀ de la cible pour amener un salarié à son minimum. Coût supplémentaire — désactivé par défaut.'}
+  sureffectif_minimum:{lbl:'Compléter automatiquement les minimums en sureffectif (coût supplémentaire)',type:'bool',help:'ACTIVÉ : l\'auto-fill pose lui-même des créneaux au-delà de la cible pour amener chaque salarié à son minimum (coût supplémentaire, créneaux en fond doré). DÉSACTIVÉ (défaut) : l\'app ne dépense rien — elle PROPOSE des créneaux plaçables dans le rapport et vous décidez lesquels poser.'}
 };
 
 // ── Seuils LÉGAUX (France) ──────────────────────────────────────────────────────────────────────
@@ -2253,7 +2253,7 @@ async function autoFillMultiWeek(ids){
     if(have >= mn-0.01) return;
     const blocked=_weekDates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
     const proratedMin=mn*(7-blocked)/7;
-    if(have < proratedMin-0.01) underMin.push({name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
+    if(have < proratedMin-0.01) underMin.push({sid:s.id, name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
   });
   underMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
   showMultiSolveReport(results, underMin);
@@ -2270,18 +2270,20 @@ function showMultiSolveReport(results, underMin){
   const allReport=results.flatMap(r=>r.report||[]);
   const postesRows=allReport.map(r=>`<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12px;align-items:baseline"><span style="min-width:96px;color:var(--gold);font-weight:600">${escP(r.snack)}</span><span style="min-width:150px;font-weight:600">${escP(r.jour)} ${r.svc} · ${escP(r.role)}${r.exp?' ★':''}</span><span style="color:var(--muted);font-family:monospace">${escP(r.horaire||'')}</span><span style="color:var(--bad)">⚠ ${escP(r.detail||'')}</span></div>`).join('');
   const postesSection = allReport.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⚠ Postes non comblés (${allReport.length})</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">Aucun candidat conforme (aucune règle enfreinte). À compléter à la main ou ajuster règles/effectifs/dispos.</div>${postesRows}</div>` : '';
+  const _allSugg=results.flatMap(r=>(r.phase3&&r.phase3.suggestList)||[]);   // suggestions de tous les snacks, fusionnées par sid dans suggestFor
   const umRows=underMin.map(u=>{
     const ref=(u.blocked>0)?u.proratedMin:u.min;
     const absTag=(u.blocked>0)?` <span style="color:var(--muted);font-weight:400">· ${u.blocked} j d'absence → attendu ~${fmtH1(u.proratedMin)} h</span>`:'';
-    return `<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>`;
+    const sgHtml=suggestLineHtml(suggestFor(u.sid,_allSugg));
+    return `<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>${sgHtml}</div>`;
   }).join('');
-  const minSection = underMin.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⏳ Salariés sous leur minimum (${underMin.length})</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">Total tous snacks confondus (heures globales). Augmente les effectifs cibles, élargis les dispos, ou revois ces salariés.</div>${umRows}</div>` : '';
+  const minSection = underMin.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⏳ Salariés sous leur minimum (${underMin.length})${_allSugg.length?' — à compléter manuellement':''}</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">${_allSugg.length?'Sureffectif auto désactivé : l\'app <b>suggère</b>, tu décides. ':''}Total tous snacks confondus. Augmente les effectifs cibles, élargis les dispos, ou pose les suggestions ci-dessous.</div>${umRows}</div>` : '';
   // Phase 3 AGRÉGÉE sur tous les snacks (transfert + rallonge + sureffectif + € rallonge/sureffectif + détails).
   const _sum=k=>results.reduce((a,r)=>a+((r.phase3&&r.phase3[k])||0),0);
   const _cat=k=>results.flatMap(r=>(r.phase3&&r.phase3[k])||[]);
   const p3agg={ rallongeH:_sum('rallongeH'), sureffH:_sum('sureffH'), transferH:_sum('transferH'),
     sureffEur:_sum('sureffEur'), rallongeEur:_sum('rallongeEur'),
-    sureffList:_cat('sureffList'), transferList:_cat('transferList'), rallongeList:_cat('rallongeList'), overflowList:_cat('overflowList') };
+    sureffList:_cat('sureffList'), transferList:_cat('transferList'), rallongeList:_cat('rallongeList'), suggestList:_cat('suggestList'), overflowList:_cat('overflowList') };
   const {sureffWarn, overflowWarn, phase3Section}=buildPhase3Report(p3agg, true);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
@@ -2625,17 +2627,19 @@ function showSolveReport(report, underMin, phase3){
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">⚠ Postes non comblés (${report.length})</h3></div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5">L'auto-fill n'a placé personne sur ces postes <b>sans enfreindre une règle active</b> (candidat introuvable). Complète-les à la main, ou ajuste les règles / effectifs / disponibilités. <b style="color:var(--text)">Aucun planning non conforme n'a été généré.</b></div>
     ${rows}` : '';
+  const _sugg=(phase3||{}).suggestList||[];
   const umRows=underMin.map(u=>{
     // Manque calculé sur le minimum PRORATISÉ (jours réellement dispo) si le salarié a des absences,
     // sinon sur son minimum contractuel. On indique le nb de jours d'absence pour lever l'ambiguïté.
     const ref=(u.blocked>0)?u.proratedMin:u.min;
     const absTag=(u.blocked>0)?` <span style="color:var(--muted);font-weight:400">· ${u.blocked} j d'absence → attendu ~${(Math.round(u.proratedMin*10)/10).toString().replace('.',',')} h</span>`:'';
-    return `<div style="display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>`;
+    const sgHtml=suggestLineHtml(suggestFor(u.sid,_sugg));
+    return `<div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>${sgHtml}</div>`;
   }).join('');
   const minSection = underMin.length ? `
     <div style="margin-top:${report.length?'18px':'0'};padding-top:${report.length?'14px':'0'};${report.length?'border-top:1px solid var(--line-2)':''}">
-      <h3 style="margin:0 0 8px">⏳ Salariés sous leur minimum d'heures (${underMin.length})</h3>
-      <div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">Pas assez de créneaux disponibles cette semaine pour atteindre leur minimum contractuel (<b>heures_min</b>). Augmente les effectifs cibles, élargis leurs disponibilités, ou revois ce salarié. (Total tous snacks pour les multi-snack.)</div>
+      <h3 style="margin:0 0 8px">⏳ Salariés sous leur minimum d'heures (${underMin.length})${_sugg.length?' — à compléter manuellement':''}</h3>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">${_sugg.length?'Le sureffectif automatique est désactivé (réglage) : l\'app <b>suggère</b> des créneaux réellement plaçables, tu décides. ':''}Pas assez de créneaux disponibles pour atteindre le minimum contractuel (<b>heures_min</b>) sans dépense non voulue. Augmente les effectifs cibles, élargis les disponibilités, ou pose les suggestions ci-dessous. (Total tous snacks pour les multi-snack.)</div>
       ${umRows}
     </div>` : '';
   const {sureffWarn, overflowWarn, phase3Section}=buildPhase3Report(phase3||{}, (report.length||underMin.length));
@@ -2647,6 +2651,21 @@ function showSolveReport(report, underMin, phase3){
 // Bloc rapport phase 3 partagé (mono showSolveReport + multi showMultiSolveReport) : l'AVERTISSEMENT
 // sureffectif (masse salariale ajoutée) est un encart WARNING en HAUT du rapport, avec estimation € ;
 // la ligne « +Xh (transfert ±0€ + rallonge + sureffectif) » et les détails suivent.
+// Suggestions de créneaux plaçables pour un salarié sous son min (mode par DÉFAUT, sureffectif OFF).
+// FUSION par sid : un multi-snack peut avoir des suggestions sur plusieurs sites → une seule entrée, candidats
+// dédoublonnés et re-triés par effectif cible décroissant (jour le plus chargé d'abord).
+function suggestFor(sid, suggestList){
+  const arr=(suggestList||[]).filter(x=>x.sid===sid); if(!arr.length)return null;
+  const seen=new Set(), cands=[];
+  arr.flatMap(x=>x.cands||[]).forEach(c=>{ const k=`${c.jour}|${c.svc}|${c.deb}|${c.fin}`; if(seen.has(k))return; seen.add(k); cands.push(c); });
+  cands.sort((a,b)=>(b.cible||0)-(a.cible||0));
+  return {cands:cands.slice(0,4), eur:Math.max(0,...arr.map(x=>x.eur||0))};
+}
+function suggestLineHtml(sg){
+  if(!sg||!sg.cands.length)return '';
+  const list=sg.cands.map(c=>`${escP(c.jour)} ${c.svc} (${escP((c.deb||'').slice(0,5))}→${escP((c.fin||'').slice(0,5))})`).join(' · ');
+  return `<div style="color:var(--info,#4a7fbd);font-size:11.5px;margin-top:3px">Plaçable sur : ${list} · ≈ +${Math.round(sg.eur)} € chargé</div>`;
+}
 function buildPhase3Report(p3, hasPrev){
   p3=p3||{};
   const rH=p3.rallongeH||0, sH=p3.sureffH||0, tH=p3.transferH||0;
@@ -2657,10 +2676,13 @@ function buildPhase3Report(p3, hasPrev){
     <div style="color:var(--warn);font-weight:700;font-size:13.5px">⚠ L'auto-fill a ajouté ${sList.length} créneau(x) en SUREFFECTIF (+${fmtH1(sH)}h ≈ +${Math.round(sEur)} € chargé)</div>
     <div style="color:var(--muted);font-size:12px;margin-top:4px">Dernier recours pour atteindre des minimums, faute de transfert/rallonge possible. Repérables en fond doré dans la grille — supprimables d'un clic si tu n'es pas d'accord.</div></div>` : '';
   // Dépassement d'effectif dû aux transferts : MÊME visibilité que le sureffectif (encart WARNING en haut).
+  // Alerte de SUR-COUVERTURE = présence SIMULTANÉE réelle > besoin sur une demi-heure (état du planning, pas
+  // attribution de cause). Des salariés qui se relaient sans jamais se chevaucher au-delà de la cible ne
+  // déclenchent RIEN — c'est ce que le patron reprochait (fausse alerte « 4/3 » sur des relais).
   const overflowWarn = (oList&&oList.length) ? `<div style="background:rgba(224,169,58,.12);border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:14px">
-    <div style="color:var(--warn);font-weight:700;font-size:13.5px">⚠ ${oList.length} service(s) dépassent l'effectif cible (+1 personne) suite à des transferts</div>
-    <div style="color:var(--muted);font-size:12px;margin-top:4px">Un transfert a amené un salarié sous son minimum sur un service déjà à sa cible (dépassement plafonné à +1). Vérifie la faisabilité sur la feuille de service.</div>
-    ${oList.map(o=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">▲ ${escP(o.snack||'')} · ${escP(o.jour)} ${o.svc} · ${escP(o.role)} → ${o.cible+1}/${o.cible} personnes</div>`).join('')}</div>` : '';
+    <div style="color:var(--warn);font-weight:700;font-size:13.5px">⚠ ${oList.length} service(s) en SUR-COUVERTURE horaire (plus de présents SIMULTANÉS que nécessaire)</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">Sur au moins une demi-heure, il y a plus de monde en même temps que l'effectif cible du profil. Retire un créneau ou décale une borne.</div>
+    ${oList.map(o=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">▲ ${escP(o.snack||'')} · ${escP(o.jour)} ${o.svc} · ${escP(o.role)} → ${o.cover} présents en même temps pour ${o.need} requis</div>`).join('')}</div>` : '';
   const tAgg={}; (tList||[]).forEach(x=>{const k=x.from+'|'+x.to+'|'+x.date+'|'+x.svc; (tAgg[k]=tAgg[k]||{...x,h:0}).h+=x.h;});
   const tRows=Object.values(tAgg).map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">↔ <b>${escP(x.to)}</b> reçoit ${fmtH1(x.h)}h de <b>${escP(x.from)}</b> · ${escP(jl(x.date))} ${x.svc} <span style="color:var(--muted)">(±0 €)</span></div>`).join('');
   const rRows=(rList||[]).map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">➕ <b>${escP(x.name)}</b> · ${escP(jl(x.date))} ${x.svc} · ${escP((x.oldDeb||'').slice(0,5))}→${escP((x.oldFin||'').slice(0,5))} ⇒ <b>${escP((x.newDeb||'').slice(0,5))}→${escP((x.newFin||'').slice(0,5))}</b> (+${fmtH1(x.h)}h payée)</div>`).join('');
@@ -2678,7 +2700,7 @@ async function autoFillCore(dayIndices, opt={}){
   setSS('busy','Remplissage en cours…');
   beginTxn();
   let added=0; const report=[]; const unfilled=[]; // unfilled = postes RÉELS non comblés (role cle + exp) pour la non-nuisance de la phase 3 globale
-  let rallongeH=0, sureffH=0, transferH=0; const sureffList=[], transferList=[], rallongeList=[]; let overflowList=[]; // bilan phase 3 (transfert/rallonge/sureffectif + détail rallonge + dépassements d'effectif)
+  let rallongeH=0, sureffH=0, transferH=0; const sureffList=[], transferList=[], rallongeList=[], suggestList=[]; let overflowList=[]; // bilan phase 3 (transfert/rallonge/sureffectif + détail rallonge + suggestions + sur-couverture)
   try{
   // opt.phase3only : mode « phase 3 seule » (auto-fill MULTI, étape B globale) — on saute la purge des
   // orphelins + les holes + phases 1&2 (déjà faites à l'étape A) et on ne fait QUE la distribution.
@@ -2896,7 +2918,9 @@ async function autoFillCore(dayIndices, opt={}){
       if(Math.abs(c.surplus-b.surplus)>1e-6)return c.surplus>b.surplus;                  // puis plus gros surplus donneur
       return (c.sz||0)>(b.sz||0); };
     const carvedBy={};                 // id créneau donneur → receveur qui l'a entamé (anti-fragmentation en chaîne)
-    const overflowMap=new Map();       // `date|svc|role` → dépassement d'effectif (+1) causé par un transfert
+    // Plafond de TÊTES (≤ cible+1) : limite le nb de personnes qui se relaient sur un service (vestiaires,
+    // encadrement). Invariant opérationnel conservé. L'ALERTE de sur-couverture, elle, est basée sur la
+    // présence SIMULTANÉE réelle (calculée a posteriori plus bas) — 4 têtes qui se relaient ≠ dépassement.
     const _persons=(date,svc,role)=>S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut&&onRoster(salById(c.salarie_id))).length;
     for(const t of targets){
       const R=t.sid;
@@ -2958,45 +2982,82 @@ async function autoFillCore(dayIndices, opt={}){
         carvedBy[b.dRow.id]=R;
         transferH+=b.sz/60;
         transferList.push({from:fullName(salById(b.D)),to:fullName(t.sal),date:b.date,svc:b.svc,h:b.sz/60});
-        if(b.kind==='crea' && _persons(b.date,b.svc,b.role)>b.cible){
-          overflowMap.set(`${b.date}|${b.svc}|${b.role}`,{jour:JOURS[b.di],svc:b.svc,role:(S.orgRoles.find(r=>r.cle===b.role)||{}).nom||b.role,snack:SNACK.nom,cible:b.cible});
-        }
       }
     }
-    overflowList=[...overflowMap.values()];
-    // ── PASS C : SUREFFECTIF (opt-in) pour les targets ENCORE sous leur min après rallonge — budgété (over3) ──
-    // NON-NUISANCE (phase 3 globale) : pas de sureffectif sur un snack ≠ P1 du salarié tant qu'un poste
-    // RÉGULIER non comblé compatible (rôle+exp) existe sur un snack PLUS prioritaire pour lui (opt.globalUnfilled
-    // = non-comblés de TOUS les snacks après phases 1&2) → un bonus ne vole plus la capacité de son principal.
-    // MIN-OVERSHOOT : parmi les vagues valides, on choisit celle qui dépasse le MOINS son heures_min.
+    // ── PASS C : SUREFFECTIF / SUGGESTIONS pour les targets ENCORE sous leur min après rallonge + transfert ──
+    // DOCTRINE (patron) : par DÉFAUT (réglage OFF), l'algo ne crée AUCUN sureffectif — il SUGGÈRE des créneaux
+    // réellement plaçables et laisse l'utilisateur décider (« mieux sous-effectif que payer pour rien »). Réglage
+    // ON → mode automatique conservé (pour la revente : certains restaurateurs le voudront).
+    // CLASSEMENT (les DEUX modes) : on privilégie les jours/services à effectif CIBLE le plus élevé — proxy du
+    // jour chargé (le patron met plus de monde quand il y a plus de travail) — jamais au hasard. Le reproche
+    // était le choix du lundi midi (le plus calme). Score = [-cible, dépassement du min, éloignement, durée].
+    const _cibleOf=(di,svc,role)=>(targetFor(di,svc)[role]||{cible:0}).cible;
+    const _rankedCandidates=(sid,cap,target)=>{                    // candidats plaçables triés par pertinence
+      const out=[];
+      for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
+        for(const svc of ['midi','soir']){ for(const role of rolesOf(sid)){
+          const cible=_cibleOf(di,svc,role);
+          for(const v of getShifts(jt,svc,role)){
+            const nd=_pdur(v.deb,v.fin)/60; if(nd<=0)continue;
+            if(weekHoursOf(sid)+nd>cap+1e-6)continue;               // plafond global strict
+            if(checkPlacement(sid,{deb:v.deb,fin:v.fin,role},date,svc,di,{rg})!==null)continue;
+            const after=weekHoursOf(sid)+nd, over=Math.max(0,after-target), remain=Math.max(0,target-after);
+            out.push({date,svc,role,di,v,nd,cible, sc:[-cible, over, remain, nd]});
+          }
+        }}
+      }
+      out.sort((a,b)=>{ for(let i=0;i<a.sc.length;i++){ const d=a.sc[i]-b.sc[i]; if(Math.abs(d)>1e-9)return d; } return 0; });
+      return out;
+    };
     if(SUREFF_ON){
+      // MODE AUTOMATIQUE (opt-in) : crée les créneaux, meilleur candidat d'abord (cible décroissante).
+      // NON-NUISANCE : pas de sureffectif sur un snack ≠ P1 tant qu'un poste régulier compatible reste non
+      // comblé sur un snack plus prioritaire (opt.globalUnfilled). Ne s'applique QU'au mode auto (le suggestif
+      // ne vole rien).
       const gu=opt.globalUnfilled||[];
       for(const t of targets){
         if(over3())break;
         const sid=t.sid, cap=t.cap, target=t.target;
-        if(sureffBlockedByPriority(sid, SNACK.id, gu)) continue;   // réservé à un snack plus prioritaire
+        if(sureffBlockedByPriority(sid, SNACK.id, gu)) continue;
         while(!over3() && weekHoursOf(sid)<target-0.01 && (sureffCount[sid]||0)<SUREFF_MAX){
-          let best=null;                                            // vague minimisant le dépassement du min
-          for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
-            for(const svc of ['midi','soir']){
-              for(const role of rolesOf(sid)){
-                for(const v of getShifts(jt,svc,role)){
-                  const nd=_pdur(v.deb,v.fin)/60; if(nd<=0)continue;
-                  if(weekHoursOf(sid)+nd>cap+1e-6)continue;         // plafond global strict
-                  if(checkPlacement(sid,{deb:v.deb,fin:v.fin,role},date,svc,di,{rg})!==null)continue;
-                  const after=weekHoursOf(sid)+nd, over=Math.max(0,after-target), remain=Math.max(0,target-after);
-                  const sc=[over, remain, nd];                       // dépassement mini, puis + proche du min, puis + court
-                  if(!best || sc[0]<best.sc[0]-1e-9 || (Math.abs(sc[0]-best.sc[0])<1e-9 && (sc[1]<best.sc[1]-1e-9 || (Math.abs(sc[1]-best.sc[1])<1e-9 && sc[2]<best.sc[2])))) best={date,svc,role,v,nd,sc};
-                }
-              }
-            }
-          }
-          if(!best)break;
+          const cands=_rankedCandidates(sid,cap,target); if(!cands.length)break;
+          const best=cands[0];
           const w=await placeCre(sid,{deb:best.v.deb,fin:best.v.fin,role:best.role},best.date,best.svc,{sureffectif:true});
           if(!w)break;
-          added++; sureffH+=best.nd; sureffCount[sid]=(sureffCount[sid]||0)+1; sureffList.push({name:fullName(t.sal),sid,date:best.date,svc:best.svc,role:best.role,h:best.nd});
+          added++; sureffH+=best.nd; sureffCount[sid]=(sureffCount[sid]||0)+1;
+          sureffList.push({name:fullName(t.sal),sid,date:best.date,svc:best.svc,role:best.role,h:best.nd});
         }
       }
+    } else {
+      // MODE PAR DÉFAUT — SUGGESTIONS : rien n'est créé. Pour chaque target encore sous son min, jusqu'à 3
+      // créneaux RÉELLEMENT plaçables (checkPlacement OK), du jour le plus chargé au plus calme, + coût estimé
+      // pour combler le manque (taux × coef). Pas de gate (informatif — l'utilisateur pose à la main).
+      const _coef=Number(ORG.coef_charges)||1.420;
+      for(const t of targets){
+        const sid=t.sid, cap=t.cap, target=t.target;
+        const gap=target-weekHoursOf(sid); if(gap<=0.01)continue;
+        const cands=_rankedCandidates(sid,cap,target); if(!cands.length)continue;
+        const seen=new Set(), top=[];
+        for(const c of cands){ const k=`${c.date}|${c.svc}`; if(seen.has(k))continue; seen.add(k); top.push({jour:JOURS[c.di],svc:c.svc,deb:c.v.deb,fin:c.v.fin,cible:c.cible}); if(top.length>=3)break; }
+        const s=salById(sid)||{}; const taux=Number(s.taux_horaire_brut)||0; const cp=Number(s.coef_charges_perso); const coef=isFinite(cp)&&cp>0?cp:_coef;
+        suggestList.push({sid, name:fullName(t.sal), gap, eur:gap*taux*coef, cands:top});
+      }
+    }
+    // ── SUR-COUVERTURE RÉELLE (a posteriori) : présence SIMULTANÉE > besoin sur une demi-heure. C'est la VRAIE
+    // contrainte (4 personnes qui se RELAIENT sur un service à cible 3 = OK, jamais >3 simultanés) — à ne pas
+    // confondre avec le nombre de TÊTES. Alimente l'alerte du rapport (ÉTAT du planning, pas attribution de cause).
+    { const _ovm=new Map();
+      for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
+        for(const svc of ['midi','soir']){ for(const _r of S.orgRoles){
+          const vs=getShifts(jt,svc,_r.cle); if(!vs.length)continue;
+          let mn=Infinity,mx=-Infinity; vs.forEach(v=>{let d=_pmin(v.deb),f=_pmin(v.fin);if(d==null||f==null)return;if(f<=d)f+=1440;if(d<mn)mn=d;if(f>mx)mx=f;});
+          if(mn===Infinity)continue;
+          let worst=null;
+          for(let hh=mn;hh<mx;hh+=30){ const cov=_coverAt(date,svc,_r.cle,hh,null), need=_needAt(jt,svc,_r.cle,hh); if(cov>need && (!worst||cov-need>worst.d)) worst={cov,need,d:cov-need}; }
+          if(worst) _ovm.set(`${date}|${svc}|${_r.cle}`,{jour:JOURS[di],svc,role:_r.nom,snack:SNACK.nom,cover:worst.cov,need:worst.need});
+        }}
+      }
+      overflowList=[..._ovm.values()];
     }
   }
   updateAutofillProgress(1,1,'Finalisation…');
@@ -3019,7 +3080,7 @@ async function autoFillCore(dayIndices, opt={}){
     const blocked=_weekDates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
     const dispo=7-blocked;
     const proratedMin=mn*dispo/7;
-    if(have < proratedMin-0.01) underMin.push({name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
+    if(have < proratedMin-0.01) underMin.push({sid:s.id, name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
   });
   underMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
   window._lastUnderMin=underMin;
@@ -3031,7 +3092,7 @@ async function autoFillCore(dayIndices, opt={}){
   const _eurOf=x=>{ const s=salById(x.sid)||{}; const taux=Number(s.taux_horaire_brut)||0; const cp=Number(s.coef_charges_perso); const coef=isFinite(cp)&&cp>0?cp:_coefOrg; return x.h*taux*coef; };
   const sureffEur=sureffList.reduce((a,x)=>a+_eurOf(x),0);
   const rallongeEur=rallongeList.reduce((a,x)=>a+_eurOf(x),0);   // la rallonge est PAYÉE plein tarif (pas ±0€)
-  const phase3={rallongeH, sureffH, transferH, sureffList, transferList, rallongeList, sureffEur, rallongeEur, overflowList};
+  const phase3={rallongeH, sureffH, transferH, sureffList, transferList, rallongeList, suggestList, sureffEur, rallongeEur, overflowList};
   if(opt.silent) return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
   const distrib=rallongeH+sureffH+transferH;
