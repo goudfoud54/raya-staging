@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.50 · sureffectif = SUGGESTIONS par défaut (le patron décide ; mode auto conservé via réglage), classées par jour le plus chargé + alerte de sur-couverture basée sur la présence SIMULTANÉE réelle (fin des fausses alertes sur relais)';
+const VERSION='v0.51 · badges d\'effectif + ligne « Effectifs cibles » des Vérifications basés sur la présence SIMULTANÉE (source unique _effStatus) : plus de faux « 4/3 » quand des salariés se relaient ; couleur/alerte = sur- ou sous-couverture réelle, jamais le nombre de têtes';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -284,6 +284,15 @@ function _coverAt(date,svc,role,hh,excl){ let n=0; for(const c of (S.creneaux||[
 // Ajouter la présence de qqn sur [deb,fin) (absolus) sur-couvrirait-il une demi-heure vs le besoin ?
 // excl = salariés dont la présence ne compte pas (le salarié étendu ; un donneur qui quitte ces demi-heures).
 function _wouldOvercover(date,svc,role,jt,deb,fin,excl){ for(let hh=deb; hh<fin; hh+=30){ if(_coverAt(date,svc,role,hh,excl) >= _needAt(jt,svc,role,hh)) return true; } return false; }
+// Statut d'effectif fondé sur la PRÉSENCE SIMULTANÉE (jamais le nombre de têtes) : scanne chaque demi-heure
+// de la journée (jusqu'à 06:00 du lendemain pour les services à cheval sur minuit) et compare la couverture
+// réelle au besoin. Source UNIQUE des badges d'effectif ET du panneau Vérifications → fin des faux « 4/3 »
+// quand 4 personnes se relaient sans jamais être plus de 3 en même temps (cas Grand Cœur mardi 28/07).
+// peak = max de présents en simultané ; under = un creux sous le besoin ; over = un pic au-dessus.
+function _effStatus(date,jt,svc,role){ let peak=0, under=false, over=false;
+  for(let hh=0; hh<1800; hh+=30){ const need=_needAt(jt,svc,role,hh), cov=_coverAt(date,svc,role,hh);
+    if(need<=0 && cov<=0) continue; if(cov>peak)peak=cov; if(cov<need)under=true; if(cov>need)over=true; }
+  return {peak, under, over}; }
 // ===== UNDO/REDO =====
 let UNDO=[], REDO=[], _txn=null;
 function beginTxn(){_txn=[];}
@@ -606,22 +615,29 @@ function renderEffectifs(){
     document.getElementById('effGrid').innerHTML='<div style="padding:16px;color:var(--muted);font-size:12.5px;line-height:1.5">Aucun rôle défini.<br>Crée tes rôles dans <b>Gestion Salariés › ⚙ Rôles</b>, puis règle les effectifs ici.</div>';
     return;
   }
-  const cls=(n,tgt)=>n===tgt?'cnt-ok':(n<tgt?'cnt-under':'cnt-over');
+  // Couleur pilotée par la présence SIMULTANÉE (_effStatus), jamais par le nombre de têtes : sur-couverture
+  // réelle → rouge, sous-couverture réelle → orange, conforme → vert (même si les têtes ≠ cible, cas relais).
+  const cls=st=>st.over?'cnt-over':(st.under?'cnt-under':'cnt-ok');
   const html=JOURS.map((j,i)=>{
     const date=fmtDate(dateOfDay(i));
+    const jt=dayJourType(i);
     const svcHTML=['midi','soir'].map(svc=>{
       const t=targetFor(i,svc);
       const parts=S.orgRoles.map(r=>{
         const tgt=t[r.cle]||{cible:0,exp:0};
         if(!tgt.cible) return '';
         const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
-        const n=assigned.length;
+        const heads=assigned.length;
+        const st=_effStatus(date,jt,svc,r.cle);
+        // Chiffre affiché = présents au pic (compare la cible, elle-même exprimée en simultané) ; l'info-bulle
+        // donne les deux repères pour lever toute ambiguïté (pic simultané vs nombre de personnes du service).
         const ini=escP((r.nom||'?').trim().charAt(0).toUpperCase());
+        const tip=`${escP(r.nom)} · ${st.peak} en simultané au pic · ${heads} personne(s) sur le service`;
         // Expérimentés : même source unique que le panneau Vérifications (matching par couverture tolérant
         // à la rallonge phase 3), pour ne jamais diverger de lui.
-        const expMiss=expUncoveredPosts(assigned, dayJourType(i), svc, r.cle).length;
+        const expMiss=expUncoveredPosts(assigned, jt, svc, r.cle).length;
         const expBad=expMiss>0?` <span class="cnt-under" title="${expMiss} créneau(x) « expérimenté requis » non couvert(s)">★!${expMiss}</span>`:'';
-        return `<span class="${cls(n,tgt.cible)}" title="${escP(r.nom)}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${roleCol(r.cle)};margin-right:3px;vertical-align:middle"></span>${n}/${tgt.cible}${ini}</span>${expBad}`;
+        return `<span class="${cls(st)}" title="${tip}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${roleCol(r.cle)};margin-right:3px;vertical-align:middle"></span>${st.peak}/${tgt.cible}${ini}</span>${expBad}`;
       }).filter(Boolean).join(' ');
       return `<div class="eff-svc"><span class="lbl">${svc==='midi'?'Midi':'Soir'}</span><span class="cnt">${parts||'<span style="color:var(--muted)">—</span>'}</span></div>`;
     }).join('');
@@ -1052,8 +1068,15 @@ function renderChecks(){
     S.orgRoles.forEach(r=>{
       const tgt=t[r.cle]||{cible:0};
       const assigned=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===r.cle&&c.heure_debut&&onRoster(salById(c.salarie_id)));
-      const n=assigned.length;
-      if(_exact ? (n!==tgt.cible) : (n<tgt.cible)) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${n}/${tgt.cible}`);
+      if(tgt.cible){
+        // Signalement fondé sur la présence SIMULTANÉE (même source que les badges) : plus de faux positif
+        // quand des salariés se relaient. effectifs_exacts ON → sur- ET sous-couverture ; OFF → sous seulement.
+        // under et over signalés INDÉPENDAMMENT (profils de besoin variables : un rôle peut être sur-couvert
+        // sur une demi-heure ET sous-couvert sur une autre). Sinon le badge (rouge) et la liste divergeraient.
+        const st=_effStatus(date,dayJourType(i),svc,r.cle);
+        if(st.under) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${st.peak} en simultané pour ${tgt.cible} requis (sous-couverture)`);
+        if(_exact && st.over) eff.push(`${JOURS[i]} ${svc} · ${r.nom} : ${st.peak} en simultané pour ${tgt.cible} requis (sur-couverture)`);
+      }
       // Expérimenté requis : matching TOLÉRANT à la rallonge phase 3 (couverture d'horaire, appariement
       // glouton) via la source unique expUncoveredPosts — plus d'égalité stricte du début (cf. bug Cali).
       expUncoveredPosts(assigned, dayJourType(i), svc, r.cle).forEach(post=>{
