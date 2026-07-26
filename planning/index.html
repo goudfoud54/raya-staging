@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.51 · badges d\'effectif + ligne « Effectifs cibles » des Vérifications basés sur la présence SIMULTANÉE (source unique _effStatus) : plus de faux « 4/3 » quand des salariés se relaient ; couleur/alerte = sur- ou sous-couverture réelle, jamais le nombre de têtes';
+const VERSION='v0.52 · transfert INTER-snack (déplacer un salarié vers un autre restaurant) = réglage opt-in désactivé par défaut, joué en dernier recours ; OFF → suggestion non appliquée. Rapport : chaque ligne (transfert/rallonge/suggestion) indique le restaurant + encart déplacement inter-établissement. Donneur garde le cœur du service (pic _needAt)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1481,7 +1481,8 @@ const RULE_META={
   couverture_continue:{lbl:'Couverture continue 1 cuisine + 1 réception',type:'bool'},
   departs_echelonnes:{lbl:'Départs échelonnés (éviter les pics)',type:'bool'},
   effectifs_exacts:{lbl:'Compteurs = objectif exact',type:'bool'},
-  sureffectif_minimum:{lbl:'Compléter automatiquement les minimums en sureffectif (coût supplémentaire)',type:'bool',help:'ACTIVÉ : l\'auto-fill pose lui-même des créneaux au-delà de la cible pour amener chaque salarié à son minimum (coût supplémentaire, créneaux en fond doré). DÉSACTIVÉ (défaut) : l\'app ne dépense rien — elle PROPOSE des créneaux plaçables dans le rapport et vous décidez lesquels poser.'}
+  sureffectif_minimum:{lbl:'Compléter automatiquement les minimums en sureffectif (coût supplémentaire)',type:'bool',help:'ACTIVÉ : l\'auto-fill pose lui-même des créneaux au-delà de la cible pour amener chaque salarié à son minimum (coût supplémentaire, créneaux en fond doré). DÉSACTIVÉ (défaut) : l\'app ne dépense rien — elle PROPOSE des créneaux plaçables dans le rapport et vous décidez lesquels poser.'},
+  transfert_inter_snack:{lbl:'Autoriser le déplacement d\'un salarié vers un autre restaurant pour compléter ses heures',type:'bool',help:'ACTIVÉ : en dernier recours (après rallonge et transferts internes), l\'auto-fill peut faire venir un salarié multi-restaurant sur un site où il n\'est PAS prioritaire pour atteindre son minimum. DÉSACTIVÉ (défaut) : aucun déplacement inter-établissement n\'est posé — le salarié apparaît sous son minimum avec le créneau distant en SUGGESTION, et vous décidez. Les ajustements d\'horaires DANS un même restaurant restent toujours automatiques.'}
 };
 
 // ── Seuils LÉGAUX (France) ──────────────────────────────────────────────────────────────────────
@@ -1667,6 +1668,19 @@ function openReglages(){
       </label>
     </div>`;
   }
+  // Transfert inter-snack (phase 3) — même modèle que le sureffectif : toggle toujours présent, créé à la
+  // volée, défaut OFF (opt-in). Contrôle le SEUL cas « déplacement vers un autre restaurant » ; les
+  // ajustements d'horaires intra-snack restent automatiques quoi qu'il arrive.
+  {
+    const tr=S.regles.find(x=>x.cle==='transfert_inter_snack');
+    const on = tr ? tr.active!==false : false;
+    html+=`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line)">
+      <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
+        <input type="checkbox" ${on?'checked':''} onchange="toggleInterSnackRule(this.checked)" style="width:18px;height:18px;cursor:pointer">
+        <span style="font-size:13.5px">${RULE_META.transfert_inter_snack.lbl} <span style="color:var(--muted);font-size:11px">(phase 3 · dernier recours)</span></span>
+      </label>
+    </div>`;
+  }
   html+='</div></div>';
 
   // === ALERTES & COMPORTEMENT ===
@@ -1742,6 +1756,22 @@ async function toggleSureffRule(on){
     if(data)S.regles.push(data);
   }
   setSS('ok', on?'Sureffectif activé (phase 3)':'Sureffectif désactivé');
+}
+// Active/désactive 'transfert_inter_snack' — créée si absente. Absent = OFF → défaut « aucun déplacement »
+// pour les organisations existantes sans écriture. restaurant_id=SNACK.id (lu depuis le snack de destination :
+// c'est le site qui « aspire » un salarié qui décide de l'autoriser), cohérent avec le reste des règles.
+async function toggleInterSnackRule(on){
+  const existing=S.regles.find(r=>r.cle==='transfert_inter_snack');
+  if(existing){
+    const{error}=await sb.from('planning_regles').update({active:on}).eq('id',existing.id);
+    if(error){setSS('err','Erreur: '+error.message);return;}
+    existing.active=on;
+  } else {
+    const{data,error}=await sb.from('planning_regles').insert({restaurant_id:SNACK.id,cle:'transfert_inter_snack',libelle:'Transfert inter-snack (min. d\'heures)',active:on,valeur:'1',type_regle:'souple'}).select().single();
+    if(error){setSS('err','Erreur: '+error.message);return;}
+    if(data)S.regles.push(data);
+  }
+  setSS('ok', on?'Déplacement inter-restaurant autorisé (dernier recours)':'Déplacement inter-restaurant désactivé');
 }
 async function saveRegle(id,field,val){
   const{error}=await sb.from('planning_regles').update({[field]:val}).eq('id',id);
@@ -2307,10 +2337,10 @@ function showMultiSolveReport(results, underMin){
   const p3agg={ rallongeH:_sum('rallongeH'), sureffH:_sum('sureffH'), transferH:_sum('transferH'),
     sureffEur:_sum('sureffEur'), rallongeEur:_sum('rallongeEur'),
     sureffList:_cat('sureffList'), transferList:_cat('transferList'), rallongeList:_cat('rallongeList'), suggestList:_cat('suggestList'), overflowList:_cat('overflowList') };
-  const {sureffWarn, overflowWarn, phase3Section}=buildPhase3Report(p3agg, true);
+  const {sureffWarn, overflowWarn, interWarn, phase3Section}=buildPhase3Report(p3agg, true);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${buildLegalWarn()}${sureffWarn}${overflowWarn}
+    ${buildLegalWarn()}${interWarn}${sureffWarn}${overflowWarn}
     <div style="font-size:13px;margin-bottom:6px">✓ <b>${totalAdded}</b> créneau(x) placé(s) sur ${results.filter(r=>!r.skipped).length} snack(s)</div>
     ${perSnack}${phase3Section}${postesSection}${minSection}</div></div>`;
   setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
@@ -2665,11 +2695,11 @@ function showSolveReport(report, underMin, phase3){
       <div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">${_sugg.length?'Le sureffectif automatique est désactivé (réglage) : l\'app <b>suggère</b> des créneaux réellement plaçables, tu décides. ':''}Pas assez de créneaux disponibles pour atteindre le minimum contractuel (<b>heures_min</b>) sans dépense non voulue. Augmente les effectifs cibles, élargis les disponibilités, ou pose les suggestions ci-dessous. (Total tous snacks pour les multi-snack.)</div>
       ${umRows}
     </div>` : '';
-  const {sureffWarn, overflowWarn, phase3Section}=buildPhase3Report(phase3||{}, (report.length||underMin.length));
+  const {sureffWarn, overflowWarn, interWarn, phase3Section}=buildPhase3Report(phase3||{}, (report.length||underMin.length));
   const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : (underMin.length?'Salariés sous leur minimum':'Rapport auto-fill');
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${buildLegalWarn()}${sureffWarn}${overflowWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
+    ${buildLegalWarn()}${interWarn}${sureffWarn}${overflowWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
 }
 // Bloc rapport phase 3 partagé (mono showSolveReport + multi showMultiSolveReport) : l'AVERTISSEMENT
 // sureffectif (masse salariale ajoutée) est un encart WARNING en HAUT du rapport, avec estimation € ;
@@ -2680,13 +2710,16 @@ function showSolveReport(report, underMin, phase3){
 function suggestFor(sid, suggestList){
   const arr=(suggestList||[]).filter(x=>x.sid===sid); if(!arr.length)return null;
   const seen=new Set(), cands=[];
-  arr.flatMap(x=>x.cands||[]).forEach(c=>{ const k=`${c.jour}|${c.svc}|${c.deb}|${c.fin}`; if(seen.has(k))return; seen.add(k); cands.push(c); });
+  arr.flatMap(x=>x.cands||[]).forEach(c=>{ const k=`${c.snackId||''}|${c.jour}|${c.svc}|${c.deb}|${c.fin}`; if(seen.has(k))return; seen.add(k); cands.push(c); });
   cands.sort((a,b)=>(b.cible||0)-(a.cible||0));
   return {cands:cands.slice(0,4), eur:Math.max(0,...arr.map(x=>x.eur||0))};
 }
+// Restaurant affiché seulement si l'org a plusieurs snacks (sinon redondant) — sans « Raya » pour rester court.
+function _multiSnackOrg(){ return ((S.restos||[]).length>1); }
+function _snkSuffix(nom){ return (_multiSnackOrg() && nom) ? ` · ${escP(String(nom).replace('Raya ',''))}` : ''; }
 function suggestLineHtml(sg){
   if(!sg||!sg.cands.length)return '';
-  const list=sg.cands.map(c=>`${escP(c.jour)} ${c.svc} (${escP((c.deb||'').slice(0,5))}→${escP((c.fin||'').slice(0,5))})`).join(' · ');
+  const list=sg.cands.map(c=>`${escP(c.jour)} ${c.svc} (${escP((c.deb||'').slice(0,5))}→${escP((c.fin||'').slice(0,5))})${_snkSuffix(c.snack)}`).join(' · ');
   return `<div style="color:var(--info,#4a7fbd);font-size:11.5px;margin-top:3px">Plaçable sur : ${list} · ≈ +${Math.round(sg.eur)} € chargé</div>`;
 }
 function buildPhase3Report(p3, hasPrev){
@@ -2706,15 +2739,25 @@ function buildPhase3Report(p3, hasPrev){
     <div style="color:var(--warn);font-weight:700;font-size:13.5px">⚠ ${oList.length} service(s) en SUR-COUVERTURE horaire (plus de présents SIMULTANÉS que nécessaire)</div>
     <div style="color:var(--muted);font-size:12px;margin-top:4px">Sur au moins une demi-heure, il y a plus de monde en même temps que l'effectif cible du profil. Retire un créneau ou décale une borne.</div>
     ${oList.map(o=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">▲ ${escP(o.snack||'')} · ${escP(o.jour)} ${o.svc} · ${escP(o.role)} → ${o.cover} présents en même temps pour ${o.need} requis</div>`).join('')}</div>` : '';
-  const tAgg={}; (tList||[]).forEach(x=>{const k=x.from+'|'+x.to+'|'+x.date+'|'+x.svc; (tAgg[k]=tAgg[k]||{...x,h:0}).h+=x.h;});
-  const tRows=Object.values(tAgg).map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">↔ <b>${escP(x.to)}</b> reçoit ${fmtH1(x.h)}h de <b>${escP(x.from)}</b> · ${escP(jl(x.date))} ${x.svc} <span style="color:var(--muted)">(±0 €)</span></div>`).join('');
-  const rRows=(rList||[]).map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">➕ <b>${escP(x.name)}</b> · ${escP(jl(x.date))} ${x.svc} · ${escP((x.oldDeb||'').slice(0,5))}→${escP((x.oldFin||'').slice(0,5))} ⇒ <b>${escP((x.newDeb||'').slice(0,5))}→${escP((x.newFin||'').slice(0,5))}</b> (+${fmtH1(x.h)}h payée)</div>`).join('');
-  const sRows=(sList||[]).map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px">🟡 <b>${escP(x.name)}</b> · ${escP(jl(x.date))} ${escP(x.date)} ${x.svc} · ${fmtH1(x.h)}h sureffectif</div>`).join('');
+  // Déplacements INTER-établissement : encart WARNING dédié (même traitement visuel que le sureffectif). C'est
+  // une décision de gestion — le patron doit la voir en tête, pas la découvrir dans le détail des lignes.
+  const interList=(tList||[]).filter(x=>x.inter);
+  const interNames=[...new Set(interList.map(x=>x.to))];
+  const interWarn = interList.length ? `<div style="background:rgba(224,169,58,.12);border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:var(--warn);font-weight:700;font-size:13.5px">🔄 ${interNames.length} salarié(s) déplacé(s) vers un autre restaurant pour compléter leurs heures</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">Déplacement inter-établissement (dernier recours, autorisé dans les Réglages). Détail ci-dessous. Pour l'interdire : décoche « Autoriser le déplacement d'un salarié vers un autre restaurant ».</div></div>` : '';
+  // Agrégation par (donneur, receveur, jour, service, SNACK, inter) — le snack fait partie de l'identité de la ligne.
+  const tAgg={}; (tList||[]).forEach(x=>{const k=[x.from,x.to,x.date,x.svc,x.snackId||'',x.inter?1:0].join('|'); (tAgg[k]=tAgg[k]||{...x,h:0}).h+=x.h;});
+  const tRows=Object.values(tAgg).map(x=> x.inter
+    ? `<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">🔄 <b>${escP(x.to)}</b> reçoit ${fmtH1(x.h)}h de <b>${escP(x.from)}</b> · ${escP(jl(x.date))} ${x.svc} · <b style="color:var(--warn)">⚠ à ${escP(String(x.snack||'').replace('Raya ',''))}</b> — déplacement inter-établissement <span style="color:var(--muted)">(±0 €)</span></div>`
+    : `<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">↔ <b>${escP(x.to)}</b> reçoit ${fmtH1(x.h)}h de <b>${escP(x.from)}</b> · ${escP(jl(x.date))} ${x.svc}${_snkSuffix(x.snack)} <span style="color:var(--muted)">(±0 €)</span></div>`).join('');
+  const rRows=(rList||[]).map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">➕ <b>${escP(x.name)}</b> · ${escP(jl(x.date))} ${x.svc}${_snkSuffix(x.snack)} · ${escP((x.oldDeb||'').slice(0,5))}→${escP((x.oldFin||'').slice(0,5))} ⇒ <b>${escP((x.newDeb||'').slice(0,5))}→${escP((x.newFin||'').slice(0,5))}</b> (+${fmtH1(x.h)}h payée)</div>`).join('');
+  const sRows=(sList||[]).map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px">🟡 <b>${escP(x.name)}</b> · ${escP(jl(x.date))} ${escP(x.date)} ${x.svc}${_snkSuffix(x.snack)} · ${fmtH1(x.h)}h sureffectif</div>`).join('');
   const phase3Section = (rH+sH+tH>0.05) ? `<div style="margin-top:${hasPrev?'18px':'0'};padding-top:${hasPrev?'14px':'0'};${hasPrev?'border-top:1px solid var(--line-2)':''}">
     <h3 style="margin:0 0 6px">⚖️ Phase 3 — distribution : +${fmtH1(rH+sH+tH)}h${totalEur>0.5?` <span style="color:var(--warn)">≈ +${Math.round(totalEur)} € chargé ajouté</span>`:''}</h3>
     <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5"><b>${fmtH1(tH)}h de transfert</b> (±0 € : heures déplacées d'un surplus, couverture identique) + <b style="color:var(--warn)">${fmtH1(rH)}h de rallonge ≈ +${Math.round(rEur)} €</b> (heures PAYÉES plein tarif — extension de créneaux existants) + <b style="color:var(--warn)">${fmtH1(sH)}h de sureffectif ≈ +${Math.round(sEur)} €</b>.</div>
     ${tRows}${rRows}${sRows}</div>` : '';
-  return {sureffWarn, overflowWarn, phase3Section};
+  return {sureffWarn, overflowWarn, interWarn, phase3Section};
 }
 async function autoFillCore(dayIndices, opt={}){
   if(_autofillRunning)return;            // anti double-clic
@@ -2859,6 +2902,7 @@ async function autoFillCore(dayIndices, opt={}){
     const svcEnvelope=(jt,svc)=>{ let mn=Infinity,mx=-Infinity; for(const _r of S.orgRoles){ for(const v of getShifts(jt,svc,_r.cle)){ const d=_pmin(v.deb); if(d==null)continue; let f=_pmin(v.fin); if(f==null)continue; if(f<=d)f+=1440; if(d<mn)mn=d; if(f>mx)mx=f; } } return mn===Infinity?null:{mn,mx}; };
     const SUREFF_ON=rg.on('sureffectif_minimum',false); // opt-in (défaut OFF, activable dans les Réglages)
     const SUREFF_MAX=Math.max(0,Math.round(rg.num('sureffectif_minimum',2))); // créneaux sureffectif max / salarié
+    const INTER_ON=rg.on('transfert_inter_snack',false); // opt-in (défaut OFF) : déplacement vers un autre restaurant
     const sureffCount={};
     // Cibles : salariés du snack courant SOUS leur min proratisé (mêmes absences ponctuelles que underMin).
     const targets=[];
@@ -2918,7 +2962,7 @@ async function autoFillCore(dayIndices, opt={}){
           }
           if(!moved)break;
         }
-        if(curDur>oldDur+0.001){ const w=await updateCreTimes(row,absToHHMM(curDeb),absToHHMM(curFin)); if(w){ rallongeH+=(curDur-oldDur); rallongeList.push({name:fullName(t.sal),sid,date:row.date,svc:row.service,oldDeb:absToHHMM(debM),oldFin:absToHHMM(finM),newDeb:absToHHMM(curDeb),newFin:absToHHMM(curFin),h:curDur-oldDur}); } }
+        if(curDur>oldDur+0.001){ const w=await updateCreTimes(row,absToHHMM(curDeb),absToHHMM(curFin)); if(w){ rallongeH+=(curDur-oldDur); rallongeList.push({name:fullName(t.sal),sid,date:row.date,svc:row.service,oldDeb:absToHHMM(debM),oldFin:absToHHMM(finM),newDeb:absToHHMM(curDeb),newFin:absToHHMM(curFin),h:curDur-oldDur,snack:(SNACK&&SNACK.nom)||'',snackId:SNACK.id}); } }
       }
     }
 
@@ -2933,19 +2977,42 @@ async function autoFillCore(dayIndices, opt={}){
     // Garde-fous création : dépassement d'effectif plafonné à +1 personne/service (cible via targetFor) ET
     // anti-CHAÎNE (un poste déjà entamé par un transfert n'est pas re-découpé par un AUTRE receveur → jamais
     // 3 personnes sur un poste). Tout dépassement est signalé dans le rapport (visibilité = sureffectif).
-    // NON gaté par le temps. Pas de gate priorité (cost-neutral, donneur en surplus). Le transfert INTER-SNACK
-    // est couvert sans code dédié : un multi sous son min est déjà une CIBLE au passage de CHACUN de ses snacks
-    // (worksAt), donc il reçoit d'un donneur de son snack secondaire lors du passage de ce snack.
+    // NON gaté par le temps. Pas de gate priorité (cost-neutral, donneur en surplus).
+    // TRANSFERT INTRA-SNACK vs INTER-SNACK (doctrine patron, run S31 — Moumouni amené à Lobau pour 3,5h) :
+    //   • INTRA = simple ajustement d'horaires DANS le restaurant courant : le receveur y est déjà ce jour-là
+    //     (extension), OU c'est SON restaurant principal (priorité 1). Personne ne se déplace → TOUJOURS auto.
+    //   • INTER = on fait VENIR le receveur sur un restaurant où il n'est PAS prioritaire (priorité > 1) et où
+    //     il n'a aucun créneau ce jour-là : c'est un déplacement inter-établissement, une décision de gestion.
+    //     Réservé au réglage 'transfert_inter_snack' (défaut OFF) et joué en DERNIER (2ᵉ passe), après épuisement
+    //     de tous les transferts intra du snack. OFF → le manque remonte en SUGGESTION (PASS C), non appliqué.
+    // Un transfert n'est INTER que pour une CRÉATION (l'extension implique une présence déjà acquise ce jour).
+    const _isInterSnack=(R,date)=> snackPrioriteOf(salById(R),SNACK.id)>1
+        && !S.creneaux.some(c=>c.salarie_id===R && c.date===date && c.heure_debut);
+    // Segment cédé : on veut que le DONNEUR garde le cœur du service (pic de besoin _needAt) — l'expérimenté
+    // reste pour le coup de feu, le receveur prend l'extrémité. Tiebreaker de DERNIER rang (ne détourne jamais
+    // vers un moins bon donneur ; départage seulement la borne start/end d'un même donneur).
+    const _peakHH=(jt,svc,role)=>{ const vs=getShifts(jt,svc,role); let mn=Infinity,mx=-Infinity;
+      vs.forEach(v=>{let d=_pmin(v.deb),f=_pmin(v.fin);if(d==null||f==null)return;if(f<=d)f+=1440;if(d<mn)mn=d;if(f>mx)mx=f;});
+      if(mn===Infinity)return null; let ph=mn,pn=-1; for(let hh=mn;hh<mx;hh+=30){ const n=_needAt(jt,svc,role,hh); if(n>pn){pn=n;ph=hh;} } return ph; };
+    const _keepsPeak=(dDeb,dFin,boundary,sz,peakHH)=>{ if(peakHH==null)return true;   // pas de profil → neutre
+      const kd=boundary==='start'?dDeb+sz:dDeb, kf=boundary==='start'?dFin:dFin-sz;    // segment CONSERVÉ par le donneur
+      return kd<=peakHH && peakHH<kf; };
     const _betterTransfer=(c,b)=>{ if(!b)return true; const rk=x=>x.kind==='ext'?0:1;   // extension préférée (borne la fragmentation)
       if(rk(c)!==rk(b))return rk(c)<rk(b);
       if(Math.abs(c.surplus-b.surplus)>1e-6)return c.surplus>b.surplus;                  // puis plus gros surplus donneur
-      return (c.sz||0)>(b.sz||0); };
+      if((c.sz||0)!==(b.sz||0))return (c.sz||0)>(b.sz||0);                               // puis plus gros bloc
+      const kp=x=>x.keepsPeak?0:1; return kp(c)<kp(b); };                                // DERNIER : donneur garde le pic
     const carvedBy={};                 // id créneau donneur → receveur qui l'a entamé (anti-fragmentation en chaîne)
     // Plafond de TÊTES (≤ cible+1) : limite le nb de personnes qui se relaient sur un service (vestiaires,
     // encadrement). Invariant opérationnel conservé. L'ALERTE de sur-couverture, elle, est basée sur la
     // présence SIMULTANÉE réelle (calculée a posteriori plus bas) — 4 têtes qui se relaient ≠ dépassement.
     const _persons=(date,svc,role)=>S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut&&onRoster(salById(c.salarie_id))).length;
-    for(const t of targets){
+    // DEUX passes : 'intra' (toujours) puis 'inter' (seulement si le réglage l'autorise) → l'inter-snack est
+    // un vrai dernier recours après épuisement de tous les transferts intra du snack.
+    for(const sweep of ['intra','inter']){
+      if(sweep==='inter' && !INTER_ON)break;
+      const allowInter=(sweep==='inter');
+      for(const t of targets){
       const R=t.sid;
       let guard=0;
       while(weekHoursOf(R)<t.target-0.01 && guard++<64){
@@ -2962,11 +3029,12 @@ async function autoFillCore(dayIndices, opt={}){
               if(Dsurplus<30-1e-6)continue;
               if(getShifts(jt,svc,role).some(v=>v.exp && _creCoversMin(dRow,_pmin(v.deb))) && !isExp(R,role))continue; // poste ★exp → receveur exp
               let dDeb=_pmin(dRow.heure_debut), dFin=_pmin(dRow.heure_fin); if(dFin<=dDeb)dFin+=1440;
-              const dDur=dFin-dDeb;
+              const dDur=dFin-dDeb; const peakHH=_peakHH(jt,svc,role);
               for(const boundary of ['start','end']){
                 if(Rrow){
-                  // (b) EXTENSION de 30 min d'un créneau adjacent — résidu donneur ≥ SEG_MIN
-                  if(dDur-30<SEG_MIN-1e-6)continue;
+                  // (b) EXTENSION de 30 min d'un créneau adjacent — TOUJOURS intra (R est déjà là ce jour/service).
+                  if(allowInter)continue;                                                  // passe inter : les intra ont déjà été épuisées
+                  if(dDur-30<SEG_MIN-1e-6)continue;                                         // résidu donneur ≥ SEG_MIN
                   let rd=_pmin(Rrow.heure_debut), rf=_pmin(Rrow.heure_fin); if(rf<=rd)rf+=1440;
                   const fDeb=boundary==='start'?dDeb:dFin-30, fFin=boundary==='start'?dDeb+30:dFin;
                   let Rnew=null;
@@ -2974,11 +3042,13 @@ async function autoFillCore(dayIndices, opt={}){
                   else if(boundary==='end' && rd===fFin) Rnew={deb:absToHHMM(fDeb),fin:absToHHMM(rf)}; // R commence où le segment finit
                   else continue;
                   if(checkPlacement(R,{deb:Rnew.deb,fin:Rnew.fin,role},date,svc,di,{rg,excludeSelf:true})!==null)continue;
-                  const cand={kind:'ext',dRow,D,role,date,svc,di,boundary,Rrow,Rnew,sz:30,surplus:Dsurplus};
+                  const cand={kind:'ext',dRow,D,role,date,svc,di,boundary,Rrow,Rnew,sz:30,surplus:Dsurplus,inter:false,keepsPeak:_keepsPeak(dDeb,dFin,boundary,30,peakHH)};
                   if(_betterTransfer(cand,best))best=cand;
                 } else {
                   // (c) CRÉATION d'un bloc ≥ SEG_MIN — seulement si le manque le justifie
                   if(gapMin<SEG_MIN-1e-6)continue;                                          // manque < seuil → jamais de création
+                  const inter=_isInterSnack(R,date);                                        // déplacement vers un restaurant non prioritaire ?
+                  if(allowInter!==inter)continue;                                           // passe intra → seulement intra ; passe inter → seulement inter
                   const giveable=Math.min(_floor30(Dsurplus), _floor30(dDur-SEG_MIN));      // le donneur garde ≥ SEG_MIN
                   const sz=Math.min(_round30(gapMin), giveable);
                   if(sz<SEG_MIN-1e-6)continue;                                               // bloc impossible ≥ seuil (donneur trop court)
@@ -2987,7 +3057,7 @@ async function autoFillCore(dayIndices, opt={}){
                   const fDeb=boundary==='start'?dDeb:dFin-sz, fFin=boundary==='start'?dDeb+sz:dFin;
                   const seg={deb:absToHHMM(fDeb),fin:absToHHMM(fFin)};
                   if(checkPlacement(R,{deb:seg.deb,fin:seg.fin,role},date,svc,di,{rg})!==null)continue;
-                  const cand={kind:'crea',dRow,D,role,date,svc,di,boundary,seg,sz,surplus:Dsurplus,cible};
+                  const cand={kind:'crea',dRow,D,role,date,svc,di,boundary,seg,sz,surplus:Dsurplus,cible,inter,keepsPeak:_keepsPeak(dDeb,dFin,boundary,sz,peakHH)};
                   if(_betterTransfer(cand,best))best=cand;
                 }
               }
@@ -3004,7 +3074,8 @@ async function autoFillCore(dayIndices, opt={}){
         if(!wr){ await updateCreTimes(b.dRow,oldD.deb,oldD.fin); break; }              // pose receveur échouée → rollback donneur (pas de trou)
         carvedBy[b.dRow.id]=R;
         transferH+=b.sz/60;
-        transferList.push({from:fullName(salById(b.D)),to:fullName(t.sal),date:b.date,svc:b.svc,h:b.sz/60});
+        transferList.push({from:fullName(salById(b.D)),to:fullName(t.sal),date:b.date,svc:b.svc,h:b.sz/60,snack:(SNACK&&SNACK.nom)||'',snackId:SNACK.id,inter:!!b.inter});
+      }
       }
     }
     // ── PASS C : SUREFFECTIF / SUGGESTIONS pour les targets ENCORE sous leur min après rallonge + transfert ──
@@ -3048,7 +3119,7 @@ async function autoFillCore(dayIndices, opt={}){
           const w=await placeCre(sid,{deb:best.v.deb,fin:best.v.fin,role:best.role},best.date,best.svc,{sureffectif:true});
           if(!w)break;
           added++; sureffH+=best.nd; sureffCount[sid]=(sureffCount[sid]||0)+1;
-          sureffList.push({name:fullName(t.sal),sid,date:best.date,svc:best.svc,role:best.role,h:best.nd});
+          sureffList.push({name:fullName(t.sal),sid,date:best.date,svc:best.svc,role:best.role,h:best.nd,snack:(SNACK&&SNACK.nom)||'',snackId:SNACK.id});
         }
       }
     } else {
@@ -3061,7 +3132,7 @@ async function autoFillCore(dayIndices, opt={}){
         const gap=target-weekHoursOf(sid); if(gap<=0.01)continue;
         const cands=_rankedCandidates(sid,cap,target); if(!cands.length)continue;
         const seen=new Set(), top=[];
-        for(const c of cands){ const k=`${c.date}|${c.svc}`; if(seen.has(k))continue; seen.add(k); top.push({jour:JOURS[c.di],svc:c.svc,deb:c.v.deb,fin:c.v.fin,cible:c.cible}); if(top.length>=3)break; }
+        for(const c of cands){ const k=`${c.date}|${c.svc}`; if(seen.has(k))continue; seen.add(k); top.push({jour:JOURS[c.di],svc:c.svc,deb:c.v.deb,fin:c.v.fin,cible:c.cible,snack:(SNACK&&SNACK.nom)||'',snackId:SNACK.id}); if(top.length>=3)break; }
         const s=salById(sid)||{}; const taux=Number(s.taux_horaire_brut)||0; const cp=Number(s.coef_charges_perso); const coef=isFinite(cp)&&cp>0?cp:_coef;
         suggestList.push({sid, name:fullName(t.sal), gap, eur:gap*taux*coef, cands:top});
       }
