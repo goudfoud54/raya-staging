@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.46 · phase 3 : étape TRANSFERT (coût nul, vol d\'heures à un surplus) avant rallonge/sureffectif + avertissement sureffectif (€) en haut du rapport';
+const VERSION='v0.47 · phase 3 réordonnée (rallonge→transfert→sureffectif) : transfert anti-fragmentation (créneau créé ≥ règle durée_creneau_min_h, défaut 3h), garde anti-chaîne, plafond dépassement effectif +1 signalé';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -2171,10 +2171,11 @@ function showMultiSolveReport(results, underMin){
   const p3Eur=results.reduce((a,r)=>a+((r.phase3&&r.phase3.sureffEur)||0),0);
   const p3List=results.flatMap(r=>(r.phase3&&r.phase3.sureffList)||[]);
   const p3TList=results.flatMap(r=>(r.phase3&&r.phase3.transferList)||[]);
-  const {sureffWarn, phase3Section}=buildPhase3Report(p3R,p3S,p3T,p3List,p3TList,p3Eur,true);
+  const p3OList=results.flatMap(r=>(r.phase3&&r.phase3.overflowList)||[]);
+  const {sureffWarn, overflowWarn, phase3Section}=buildPhase3Report(p3R,p3S,p3T,p3List,p3TList,p3Eur,true,p3OList);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${sureffWarn}
+    ${sureffWarn}${overflowWarn}
     <div style="font-size:13px;margin-bottom:6px">✓ <b>${totalAdded}</b> créneau(x) placé(s) sur ${results.filter(r=>!r.skipped).length} snack(s)</div>
     ${perSnack}${phase3Section}${postesSection}${minSection}</div></div>`;
   setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
@@ -2473,20 +2474,25 @@ function showSolveReport(report, underMin, phase3){
       <div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">Pas assez de créneaux disponibles cette semaine pour atteindre leur minimum contractuel (<b>heures_min</b>). Augmente les effectifs cibles, élargis leurs disponibilités, ou revois ce salarié. (Total tous snacks pour les multi-snack.)</div>
       ${umRows}
     </div>` : '';
-  const p3=phase3||{}; const rH=p3.rallongeH||0, sH=p3.sureffH||0, tH=p3.transferH||0, sList=p3.sureffList||[], tList=p3.transferList||[], sEur=p3.sureffEur||0;
-  const {sureffWarn, phase3Section}=buildPhase3Report(rH,sH,tH,sList,tList,sEur,(report.length||underMin.length));
+  const p3=phase3||{}; const rH=p3.rallongeH||0, sH=p3.sureffH||0, tH=p3.transferH||0, sList=p3.sureffList||[], tList=p3.transferList||[], sEur=p3.sureffEur||0, oList=p3.overflowList||[];
+  const {sureffWarn, overflowWarn, phase3Section}=buildPhase3Report(rH,sH,tH,sList,tList,sEur,(report.length||underMin.length),oList);
   const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : (underMin.length?'Salariés sous leur minimum':'Rapport auto-fill');
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${sureffWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
+    ${sureffWarn}${overflowWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
 }
 // Bloc rapport phase 3 partagé (mono showSolveReport + multi showMultiSolveReport) : l'AVERTISSEMENT
 // sureffectif (masse salariale ajoutée) est un encart WARNING en HAUT du rapport, avec estimation € ;
 // la ligne « +Xh (transfert ±0€ + rallonge + sureffectif) » et les détails suivent.
-function buildPhase3Report(rH,sH,tH,sList,tList,sEur,hasPrev){
+function buildPhase3Report(rH,sH,tH,sList,tList,sEur,hasPrev,oList){
   const sureffWarn = (sH>0.05) ? `<div style="background:rgba(224,169,58,.12);border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:14px">
     <div style="color:var(--warn);font-weight:700;font-size:13.5px">⚠ L'auto-fill a ajouté ${sList.length} créneau(x) en SUREFFECTIF (+${fmtH1(sH)}h ≈ +${Math.round(sEur)} € chargé)</div>
     <div style="color:var(--muted);font-size:12px;margin-top:4px">Dernier recours pour atteindre des minimums, faute de transfert/rallonge possible. Repérables en fond doré dans la grille — supprimables d'un clic si tu n'es pas d'accord.</div></div>` : '';
+  // Dépassement d'effectif dû aux transferts : MÊME visibilité que le sureffectif (encart WARNING en haut).
+  const overflowWarn = (oList&&oList.length) ? `<div style="background:rgba(224,169,58,.12);border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:var(--warn);font-weight:700;font-size:13.5px">⚠ ${oList.length} service(s) dépassent l'effectif cible (+1 personne) suite à des transferts</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">Un transfert a amené un salarié sous son minimum sur un service déjà à sa cible (dépassement plafonné à +1). Vérifie la faisabilité sur la feuille de service.</div>
+    ${oList.map(o=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">▲ ${escP(o.snack||'')} · ${escP(o.jour)} ${o.svc} · ${escP(o.role)} → ${o.cible+1}/${o.cible} personnes</div>`).join('')}</div>` : '';
   const tAgg={}; (tList||[]).forEach(x=>{const k=x.from+'|'+x.to+'|'+x.date+'|'+x.svc; (tAgg[k]=tAgg[k]||{...x,h:0}).h+=x.h;});
   const tRows=Object.values(tAgg).map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">↔ <b>${escP(x.to)}</b> reçoit ${fmtH1(x.h)}h de <b>${escP(x.from)}</b> · ${escP(JOURS[(new Date(x.date).getDay()+6)%7]||'')} ${x.svc}</div>`).join('');
   const sRows=(sList||[]).map(x=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px">🟡 <b>${escP(x.name)}</b> · ${escP(JOURS[(new Date(x.date).getDay()+6)%7]||'')} ${escP(x.date)} ${x.svc} · ${fmtH1(x.h)}h sureffectif</div>`).join('');
@@ -2494,7 +2500,7 @@ function buildPhase3Report(rH,sH,tH,sList,tList,sEur,hasPrev){
     <h3 style="margin:0 0 6px">⚖️ Phase 3 — distribution : +${fmtH1(rH+sH+tH)}h</h3>
     <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5"><b>${fmtH1(tH)}h de transfert</b> (±0 € : heures déplacées d'un salarié en surplus vers un sous-min, couverture identique) + <b>${fmtH1(rH)}h de rallonge</b> (extension dans l'enveloppe des services) + <b style="color:var(--warn)">${fmtH1(sH)}h de sureffectif</b> (⚠ coût).</div>
     ${tRows}${sRows}</div>` : '';
-  return {sureffWarn, phase3Section};
+  return {sureffWarn, overflowWarn, phase3Section};
 }
 async function autoFillCore(dayIndices, opt={}){
   if(_autofillRunning)return;            // anti double-clic
@@ -2503,7 +2509,7 @@ async function autoFillCore(dayIndices, opt={}){
   setSS('busy','Remplissage en cours…');
   beginTxn();
   let added=0; const report=[]; const unfilled=[]; // unfilled = postes RÉELS non comblés (role cle + exp) pour la non-nuisance de la phase 3 globale
-  let rallongeH=0, sureffH=0, transferH=0; const sureffList=[], transferList=[]; // bilan phase 3 (transfert/rallonge/sureffectif)
+  let rallongeH=0, sureffH=0, transferH=0; const sureffList=[], transferList=[]; let overflowList=[]; // bilan phase 3 (transfert/rallonge/sureffectif + dépassements d'effectif)
   try{
   // opt.phase3only : mode « phase 3 seule » (auto-fill MULTI, étape B globale) — on saute la purge des
   // orphelins + les holes + phases 1&2 (déjà faites à l'étape A) et on ne fait QUE la distribution.
@@ -2657,58 +2663,20 @@ async function autoFillCore(dayIndices, opt={}){
     // SUREFFECTIF (expensive, opt-in, budgété) — sinon la recherche de sureffectif d'un target affamait les
     // rallonges des suivants. Deux passes distinctes.
     const _t3=_now(), over3=()=>_now()-_t3>6000;
-    // ── PASS 0 : TRANSFERT (coût ~NUL) — AVANT rallonge/sureffectif (ordre par coût) ──
-    // Pour un receveur sous son min, prendre un segment de 30 min à un DONNEUR au-dessus de SON PROPRE min,
-    // sur le même (jour, service, rôle, snack), en déplaçant la frontière : le donneur raccourcit son
-    // créneau (début retardé OU fin avancée) et le receveur couvre EXACTEMENT le segment libéré (extension
-    // adjacente préférée, sinon petit segment dédié). Couverture INSTANTANÉE identique, masse salariale
-    // INCHANGÉE (transfert d'heures, pas d'ajout). NON gaté par le temps (comme la rallonge — tier « toujours
-    // exécuté » ; seul le sureffectif est budgété). PAS de gate priorité (cost-neutral, donneur en surplus).
-    const TRANSFER_MIN_RESIDUAL=120;   // le créneau réduit du donneur garde ≥ 2h (pas de résidu de 30 min)
+    // Créneau minimum (heures) : un créneau CRÉÉ (segment de transfert) ou le RÉSIDU d'un donneur ne descend
+    // jamais sous ce seuil — « on ne fait venir / on ne laisse personne pour moins de N heures ». Paramétrable
+    // (planning_regles.duree_creneau_min_h, défaut 3h). NE S'APPLIQUE PAS aux rallonges ni aux extensions d'un
+    // créneau EXISTANT (déplacer une borne de 30 min reste valide et souhaitable) — cf. la règle des 3h.
+    const SEG_MIN=Math.max(0, rg.num('duree_creneau_min_h',3))*60;   // minutes
     const proratedMinOf=s=>{ const b=_wd.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length; return Math.min((s.heures_min||0)*(7-b)/7, plafondOf(s,rg)); };
-    for(const t of targets){
-      const R=t.sid, target=t.target;
-      let guard=0;
-      while(weekHoursOf(R)<target-0.01 && guard++<48){
-        let best=null; // meilleur transfert de 30 min : plus gros surplus donneur, puis extension adjacente
-        for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
-          for(const svc of ['midi','soir']){
-            const Rrow=getCreneau(R,date,svc);
-            for(const dRow of S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.restaurant_id===SNACK.id&&c.salarie_id!==R&&c.heure_debut&&c.heure_fin)){
-              const D=dRow.salarie_id, role=dRow.role;
-              if(!rolesOf(R).includes(role))continue;
-              const Dsurplus=weekHoursOf(D)-proratedMinOf(salById(D));
-              if(Dsurplus<0.5-1e-9)continue;                                   // pas d'au moins 30 min de surplus
-              if(getShifts(jt,svc,role).some(v=>v.exp && _creCoversMin(dRow,_pmin(v.deb))) && !isExp(R,role))continue; // poste ★exp → receveur exp requis
-              let dDeb=_pmin(dRow.heure_debut), dFin=_pmin(dRow.heure_fin); if(dFin<=dDeb)dFin+=1440;
-              if((dFin-dDeb)-30<TRANSFER_MIN_RESIDUAL)continue;                 // résidu < 2h après −30 min
-              for(const boundary of ['start','end']){
-                const fDeb=boundary==='start'?dDeb:dFin-30, fFin=boundary==='start'?dDeb+30:dFin;
-                let Rnew, useRrow=false;
-                if(Rrow){ let rd=_pmin(Rrow.heure_debut), rf=_pmin(Rrow.heure_fin); if(rf<=rd)rf+=1440;
-                  if(boundary==='start' && rf===fDeb){ Rnew={deb:absToHHMM(rd),fin:absToHHMM(fFin)}; useRrow=true; }   // R finit où le segment commence → étend la fin
-                  else if(boundary==='end' && rd===fFin){ Rnew={deb:absToHHMM(fDeb),fin:absToHHMM(rf)}; useRrow=true; } // R commence où le segment finit → étend le début
-                  else continue;                                               // créneau R non adjacent → dbl_svc impossible
-                } else Rnew={deb:absToHHMM(fDeb),fin:absToHHMM(fFin)};          // pas de créneau R → segment dédié
-                if(checkPlacement(R,{deb:Rnew.deb,fin:Rnew.fin,role},date,svc,di,{rg,excludeSelf:useRrow})!==null)continue;
-                if(!best||Dsurplus>best.surplus+1e-9||(Math.abs(Dsurplus-best.surplus)<1e-9 && useRrow && !best.useRrow))
-                  best={dRow,D,role,date,svc,di,boundary,Rrow:useRrow?Rrow:null,useRrow,Rnew,surplus:Dsurplus};
-              }
-            }
-          }
-        }
-        if(!best)break;
-        // APPLIQUER : raccourcir le donneur, puis étendre/créer R ; si R échoue → rollback donneur (pas de trou).
-        const b=best, oldD={deb:b.dRow.heure_debut,fin:b.dRow.heure_fin};
-        const nDeb=b.boundary==='start'?absToHHMM(_pmin(b.dRow.heure_debut)+30):b.dRow.heure_debut;
-        const nFin=b.boundary==='end'?absToHHMM(_pmin(b.dRow.heure_fin)-30):b.dRow.heure_fin;
-        if(!await updateCreTimes(b.dRow,nDeb,nFin))break;
-        const wr = b.Rrow ? await updateCreTimes(b.Rrow,b.Rnew.deb,b.Rnew.fin) : await placeCre(R,{deb:b.Rnew.deb,fin:b.Rnew.fin,role:b.role},b.date,b.svc);
-        if(!wr){ await updateCreTimes(b.dRow,oldD.deb,oldD.fin); break; }
-        transferH+=0.5; transferList.push({from:fullName(salById(b.D)),to:fullName(t.sal),date:b.date,svc:b.svc,h:0.5});
-      }
-    }
-    // ── PASS A : RALLONGE des créneaux existants pour TOUS les targets (un seul write par créneau) ──
+    const _round30=m=>Math.round(m/30)*30, _floor30=m=>Math.floor(m/30)*30;
+
+    // ── PASS A : RALLONGE des créneaux EXISTANTS — geste le MOINS coûteux opérationnellement (on allonge
+    // quelqu'un déjà présent : aucune fragmentation, aucun nouveau venu, aucun dépassement d'effectif). En
+    // PREMIER, avant le transfert : ordre voulu par le patron (a) rallonge → (b) transfert-extension →
+    // (c) transfert-création (≥ SEG_MIN) → (d) sureffectif. La règle des N heures NE s'applique PAS ici
+    // (ajustement de borne, pas de créneau créé) : une rallonge de 30 min reste valide (cas BELEM/SY, 5f24032).
+    // NON gaté par le temps (tier « toujours exécuté » ; seul le sureffectif est budgété). Un seul write/créneau.
     for(const t of targets){
       const sid=t.sid, cap=t.cap, target=t.target;
       const myCre=S.creneaux.filter(c=>c.salarie_id===sid && c.restaurant_id===SNACK.id && c.heure_debut && c.heure_fin);
@@ -2737,7 +2705,95 @@ async function autoFillCore(dayIndices, opt={}){
         if(curDur>oldDur+0.001){ const w=await updateCreTimes(row,absToHHMM(curDeb),absToHHMM(curFin)); if(w) rallongeH+=(curDur-oldDur); }
       }
     }
-    // ── PASS B : SUREFFECTIF (opt-in) pour les targets ENCORE sous leur min après rallonge — budgété (over3) ──
+
+    // ── PASS B : TRANSFERT (masse salariale INCHANGÉE — vol d'heures à un surplus) pour les targets ENCORE
+    // sous leur min après rallonge. DEUX gestes ; la règle des N heures ne concerne QUE la création :
+    //   (b) EXTENSION — le receveur a déjà un créneau ADJACENT ce jour/service : on lui transfère 30 min du
+    //       bord d'un donneur en surplus (qui recule sa fin / avance son début). Aucun créneau créé → PAS de
+    //       seuil sur les 30 min ; seul le RÉSIDU du donneur doit rester ≥ SEG_MIN.
+    //   (c) CRÉATION — le receveur n'a RIEN ce jour/service : on lui crée UN créneau d'un bloc ≥ SEG_MIN (jamais
+    //       30 min), au bord d'un donneur qui garde ≥ SEG_MIN. Uniquement si le manque ≥ SEG_MIN (un manque de
+    //       30 min ne crée JAMAIS un créneau). Bloc validé EN ENTIER par checkPlacement (amplitude/coupure/repos).
+    // Garde-fous création : dépassement d'effectif plafonné à +1 personne/service (cible via targetFor) ET
+    // anti-CHAÎNE (un poste déjà entamé par un transfert n'est pas re-découpé par un AUTRE receveur → jamais
+    // 3 personnes sur un poste). Tout dépassement est signalé dans le rapport (visibilité = sureffectif).
+    // NON gaté par le temps. Pas de gate priorité (cost-neutral, donneur en surplus). Le transfert INTER-SNACK
+    // est couvert sans code dédié : un multi sous son min est déjà une CIBLE au passage de CHACUN de ses snacks
+    // (worksAt), donc il reçoit d'un donneur de son snack secondaire lors du passage de ce snack.
+    const _betterTransfer=(c,b)=>{ if(!b)return true; const rk=x=>x.kind==='ext'?0:1;   // extension préférée (borne la fragmentation)
+      if(rk(c)!==rk(b))return rk(c)<rk(b);
+      if(Math.abs(c.surplus-b.surplus)>1e-6)return c.surplus>b.surplus;                  // puis plus gros surplus donneur
+      return (c.sz||0)>(b.sz||0); };
+    const carvedBy={};                 // id créneau donneur → receveur qui l'a entamé (anti-fragmentation en chaîne)
+    const overflowMap=new Map();       // `date|svc|role` → dépassement d'effectif (+1) causé par un transfert
+    const _persons=(date,svc,role)=>S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut&&onRoster(salById(c.salarie_id))).length;
+    for(const t of targets){
+      const R=t.sid;
+      let guard=0;
+      while(weekHoursOf(R)<t.target-0.01 && guard++<64){
+        const gapMin=(t.target-weekHoursOf(R))*60;
+        let best=null;
+        for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
+          for(const svc of ['midi','soir']){
+            const Rrow=getCreneau(R,date,svc);
+            for(const dRow of S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.restaurant_id===SNACK.id&&c.salarie_id!==R&&c.heure_debut&&c.heure_fin)){
+              const D=dRow.salarie_id, role=dRow.role;
+              if(!rolesOf(R).includes(role))continue;
+              if(carvedBy[dRow.id] && carvedBy[dRow.id]!==R)continue;                       // anti-chaîne : poste déjà entamé par un AUTRE
+              const Dsurplus=(weekHoursOf(D)-proratedMinOf(salById(D)))*60;                 // surplus donneur (minutes)
+              if(Dsurplus<30-1e-6)continue;
+              if(getShifts(jt,svc,role).some(v=>v.exp && _creCoversMin(dRow,_pmin(v.deb))) && !isExp(R,role))continue; // poste ★exp → receveur exp
+              let dDeb=_pmin(dRow.heure_debut), dFin=_pmin(dRow.heure_fin); if(dFin<=dDeb)dFin+=1440;
+              const dDur=dFin-dDeb;
+              for(const boundary of ['start','end']){
+                if(Rrow){
+                  // (b) EXTENSION de 30 min d'un créneau adjacent — résidu donneur ≥ SEG_MIN
+                  if(dDur-30<SEG_MIN-1e-6)continue;
+                  let rd=_pmin(Rrow.heure_debut), rf=_pmin(Rrow.heure_fin); if(rf<=rd)rf+=1440;
+                  const fDeb=boundary==='start'?dDeb:dFin-30, fFin=boundary==='start'?dDeb+30:dFin;
+                  let Rnew=null;
+                  if(boundary==='start' && rf===fDeb) Rnew={deb:absToHHMM(rd),fin:absToHHMM(fFin)};   // R finit où le segment commence
+                  else if(boundary==='end' && rd===fFin) Rnew={deb:absToHHMM(fDeb),fin:absToHHMM(rf)}; // R commence où le segment finit
+                  else continue;
+                  if(checkPlacement(R,{deb:Rnew.deb,fin:Rnew.fin,role},date,svc,di,{rg,excludeSelf:true})!==null)continue;
+                  const cand={kind:'ext',dRow,D,role,date,svc,di,boundary,Rrow,Rnew,sz:30,surplus:Dsurplus};
+                  if(_betterTransfer(cand,best))best=cand;
+                } else {
+                  // (c) CRÉATION d'un bloc ≥ SEG_MIN — seulement si le manque le justifie
+                  if(gapMin<SEG_MIN-1e-6)continue;                                          // manque < seuil → jamais de création
+                  const giveable=Math.min(_floor30(Dsurplus), _floor30(dDur-SEG_MIN));      // le donneur garde ≥ SEG_MIN
+                  const sz=Math.min(_round30(gapMin), giveable);
+                  if(sz<SEG_MIN-1e-6)continue;                                               // bloc impossible ≥ seuil (donneur trop court)
+                  const cible=(targetFor(di,svc)[role]||{cible:0}).cible;
+                  if(_persons(date,svc,role) > cible)continue;                               // déjà à cible+1 → pas un 2e dépassement
+                  const fDeb=boundary==='start'?dDeb:dFin-sz, fFin=boundary==='start'?dDeb+sz:dFin;
+                  const seg={deb:absToHHMM(fDeb),fin:absToHHMM(fFin)};
+                  if(checkPlacement(R,{deb:seg.deb,fin:seg.fin,role},date,svc,di,{rg})!==null)continue;
+                  const cand={kind:'crea',dRow,D,role,date,svc,di,boundary,seg,sz,surplus:Dsurplus,cible};
+                  if(_betterTransfer(cand,best))best=cand;
+                }
+              }
+            }
+          }
+        }
+        if(!best)break;
+        const b=best, oldD={deb:b.dRow.heure_debut,fin:b.dRow.heure_fin};
+        const nDeb=b.boundary==='start'?absToHHMM(_pmin(b.dRow.heure_debut)+b.sz):b.dRow.heure_debut;
+        const nFin=b.boundary==='end'?absToHHMM(_pmin(b.dRow.heure_fin)-b.sz):b.dRow.heure_fin;
+        if(!await updateCreTimes(b.dRow,nDeb,nFin))break;
+        const wr = b.kind==='ext' ? await updateCreTimes(b.Rrow,b.Rnew.deb,b.Rnew.fin)
+                                  : await placeCre(R,{deb:b.seg.deb,fin:b.seg.fin,role:b.role},b.date,b.svc);
+        if(!wr){ await updateCreTimes(b.dRow,oldD.deb,oldD.fin); break; }              // pose receveur échouée → rollback donneur (pas de trou)
+        carvedBy[b.dRow.id]=R;
+        transferH+=b.sz/60;
+        transferList.push({from:fullName(salById(b.D)),to:fullName(t.sal),date:b.date,svc:b.svc,h:b.sz/60});
+        if(b.kind==='crea' && _persons(b.date,b.svc,b.role)>b.cible){
+          overflowMap.set(`${b.date}|${b.svc}|${b.role}`,{jour:JOURS[b.di],svc:b.svc,role:(S.orgRoles.find(r=>r.cle===b.role)||{}).nom||b.role,snack:SNACK.nom,cible:b.cible});
+        }
+      }
+    }
+    overflowList=[...overflowMap.values()];
+    // ── PASS C : SUREFFECTIF (opt-in) pour les targets ENCORE sous leur min après rallonge — budgété (over3) ──
     // NON-NUISANCE (phase 3 globale) : pas de sureffectif sur un snack ≠ P1 du salarié tant qu'un poste
     // RÉGULIER non comblé compatible (rôle+exp) existe sur un snack PLUS prioritaire pour lui (opt.globalUnfilled
     // = non-comblés de TOUS les snacks après phases 1&2) → un bonus ne vole plus la capacité de son principal.
@@ -2802,16 +2858,17 @@ async function autoFillCore(dayIndices, opt={}){
   // Estimation € du sureffectif (taux horaire brut × coef charges perso/org) pour l'avertissement du rapport.
   const _coefOrg=Number(ORG.coef_charges)||1.420;
   const sureffEur=sureffList.reduce((a,x)=>{ const s=salById(x.sid)||{}; const taux=Number(s.taux_horaire_brut)||0; const cp=Number(s.coef_charges_perso); const coef=isFinite(cp)&&cp>0?cp:_coefOrg; return a+x.h*taux*coef; },0);
-  const phase3={rallongeH, sureffH, transferH, sureffList, transferList, sureffEur};
+  const phase3={rallongeH, sureffH, transferH, sureffList, transferList, sureffEur, overflowList};
   if(opt.silent) return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
   const distrib=rallongeH+sureffH+transferH;
   if(distrib>0.05) msg+=` · +${fmtH1(distrib)}h distribuées`;
   if(sureffH>0.05) msg+=` · ⚠ ${sureffList.length} sureffectif(s) (+${Math.round(sureffEur)}€)`;   // signalé aussi dans le statut
+  if(overflowList.length) msg+=` · ▲ ${overflowList.length} dépassement(s) d'effectif`;
   if(report.length) msg+=` · ${report.length} poste(s) non comblé(s)`;
   if(underMin.length) msg+=` · ${underMin.length} sous leur minimum`;
   if(report.length||underMin.length||distrib>0.05) msg+=' — voir rapport';
-  setSS((report.length||underMin.length||sureffH>0.05)?'warn':'ok', msg);
+  setSS((report.length||underMin.length||sureffH>0.05||overflowList.length)?'warn':'ok', msg);
   if(report.length||underMin.length||distrib>0.05) showSolveReport(report, underMin, phase3);
   return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
   }catch(err){
