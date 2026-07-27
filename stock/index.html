@@ -8,6 +8,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
+<link rel="stylesheet" href="../ui.css?v=1">
+<script src="../ui.js?v=1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -129,11 +131,11 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Stock · v0.5</small></div>
+    <div class="brand">Eatime360 <small>· Stock · v0.6 — info-bulles maison (socle ui.css/ui.js)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
-      <button class="btn ghost sm" onclick="logout()">↩</button>
+      <button class="btn ghost sm" onclick="logout()" data-tip="Déconnexion" aria-label="Déconnexion">↩</button>
     </div>
   </div>
   <div class="tabs">
@@ -295,7 +297,7 @@ async function renderSaisie(el){
       const maxQ=m?Number(m.quantite_max):null;
       const cmtOnly=(m&&m.mode_commentaire)==='obligatoire';
       const cmt=cur&&cur.commentaire?String(cur.commentaire):''; const cmtA=cmt.replace(/"/g,'&quot;');
-      const cmtBadge=cmt?` <span title="${cmtA}" data-c="${cmtA}" onclick="toast('💬 '+this.getAttribute('data-c'))" style="cursor:pointer;font-size:12px" aria-label="Commentaire salarié">💬</span>`:'';
+      const cmtBadge=cmt?` <span data-tip="${cmtA}" data-c="${cmtA}" onclick="toast('💬 '+this.getAttribute('data-c'))" style="cursor:pointer;font-size:12px" tabindex="0" aria-label="Commentaire salarié : ${cmtA}">💬</span>`:'';
       if(cmtOnly){
         // « Commentaire seul » : pas de quantité. On affiche la remarque du salarié (lecture) ; saisi = remarque présente.
         const saisieCell=cmt?`<span style="font-size:12.5px">📝 ${cmt.replace(/</g,'&lt;')}</span>`:'<span style="color:var(--muted);font-size:11px">— commentaire requis —</span>';
@@ -618,7 +620,7 @@ function renderProduits(el){
   </div>
   <table class="tbl"><thead><tr><th>Nom</th><th>Catégorie</th><th>Cond.</th><th>Coût unit.</th><th>Fournisseur 1</th><th></th></tr></thead><tbody id="prodTbody">`;
   S.produits.forEach(p=>{
-    html+=`<tr data-pname="${p.nom.toLowerCase()}" data-pcat="${p.categorie||''}"><td><b>${p.nom}</b>${p.note?`<div style="color:var(--muted);font-size:11px">${p.note}</div>`:''}</td><td>${p.categorie||'—'}</td><td style="color:var(--muted);font-size:12px">${p.conditionnement||''}</td><td>${eur(p.cout_unitaire)}</td><td style="font-size:12px">${nameFourn(p.fournisseur_principal_id)}</td><td><button class="btn ghost sm" onclick='openProduit(${JSON.stringify(p).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delProduit('${p.id}')">✕</button></td></tr>`;
+    html+=`<tr data-pname="${p.nom.toLowerCase()}" data-pcat="${p.categorie||''}"><td><b>${p.nom}</b>${p.note?`<div style="color:var(--muted);font-size:11px">${p.note}</div>`:''}</td><td>${p.categorie||'—'}</td><td style="color:var(--muted);font-size:12px">${p.conditionnement||''}</td><td>${eur(p.cout_unitaire)}</td><td style="font-size:12px">${nameFourn(p.fournisseur_principal_id)}</td><td><button class="btn ghost sm" onclick='openProduit(${JSON.stringify(p).replace(/'/g,"&#39;")})' data-tip="Modifier le produit" aria-label="Modifier le produit">✎</button> <button class="btn ghost sm" onclick="delProduit('${p.id}')" data-tip="Supprimer le produit" aria-label="Supprimer le produit">✕</button></td></tr>`;
   });
   html+='</tbody></table>';
   el.innerHTML=html;
@@ -671,7 +673,7 @@ function renderFournisseurs(el){
     <table class="tbl"><thead><tr><th>Nom</th><th>Produits référencés</th><th></th></tr></thead><tbody>`;
   S.fournisseurs.forEach(f=>{
     const nb=S.produits.filter(p=>p.fournisseur_principal_id===f.id||p.fournisseur_secondaire_id===f.id).length;
-    html+=`<tr><td><b>${f.nom}</b></td><td>${nb}</td><td><button class="btn ghost sm" onclick='openFourn(${JSON.stringify(f).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delFourn('${f.id}')">✕</button></td></tr>`;
+    html+=`<tr><td><b>${f.nom}</b></td><td>${nb}</td><td><button class="btn ghost sm" onclick='openFourn(${JSON.stringify(f).replace(/'/g,"&#39;")})' data-tip="Modifier le fournisseur" aria-label="Modifier le fournisseur">✎</button> <button class="btn ghost sm" onclick="delFourn('${f.id}')" data-tip="Supprimer le fournisseur" aria-label="Supprimer le fournisseur">✕</button></td></tr>`;
   });
   html+='</tbody></table>';
   el.innerHTML=html;
@@ -783,7 +785,7 @@ async function renderHistorique(el){
     <button class="btn sm" onclick="renderHistorique(document.getElementById('content'))">Filtrer</button>
     <input id="hist_search" placeholder="🔍 Rechercher un produit…" oninput="filterHistorique()">
     <div style="flex:1"></div>
-    <button class="btn ghost sm" onclick="genererSnapshotMensuel()" title="Agrège les saisies du mois précédent en snapshot et libère stock_saisies">📸 Snapshot mensuel</button>
+    <button class="btn ghost sm" onclick="genererSnapshotMensuel()" data-tip="Agrège les saisies du mois précédent en snapshot et libère stock_saisies">📸 Snapshot mensuel</button>
   </div><div id="histList">Chargement…</div>`;
   let q=sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',val('hist_from')).lte('date_saisie',val('hist_to')).order('date_saisie',{ascending:false}).limit(500);
   if(val('hist_prod')) q=q.eq('produit_id',val('hist_prod'));

@@ -7,6 +7,8 @@
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=1"></script>
+<link rel="stylesheet" href="../ui.css?v=1">
+<script src="../ui.js?v=1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{
@@ -1691,7 +1693,7 @@ async function openDocsMenu(id, ev){
   else inner=files.map(f=>{ const kind=f.name.replace(/\.pdf$/i,''); const lbl=KIND_LABELS[kind]||kind;
     return `<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--border)"><span style="flex:1;font-size:13px">📄 ${esc(lbl)}</span>
       <button class="btn" style="padding:5px 10px;font-size:12px" onclick="viewDocFile('${esc(id)}/${esc(f.name)}')">👁 Voir</button>
-      <button class="btn" style="padding:5px 10px;font-size:12px" onclick="dlDocFile('${esc(id)}/${esc(f.name)}','${esc(lbl)}.pdf')">⬇</button></div>`;
+      <button class="btn" style="padding:5px 10px;font-size:12px" onclick="dlDocFile('${esc(id)}/${esc(f.name)}','${esc(lbl)}.pdf')" data-tip="Télécharger le courrier (PDF)" aria-label="Télécharger le courrier (PDF)">⬇</button></div>`;
   }).join('');
   const ov=document.createElement('div'); ov.className='modal-bg'; ov.style.display='flex';
   ov.innerHTML=`<div class="modal" style="max-width:440px"><h2 style="margin-top:0">📄 Courriers du dossier</h2>${inner}<div class="modal-foot"><div></div><div class="right"><button class="btn ghost" onclick="this.closest('.modal-bg').remove()">Fermer</button></div></div></div>`;

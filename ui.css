@@ -1,0 +1,33 @@
+/* ui.css — socle graphique commun Eatime360.
+   Première brique : l'info-bulle personnalisée (voir ui.js pour le moteur de positionnement).
+   Chargé par chaque module :  <link rel="stylesheet" href="../ui.css?v=1">
+   Vocation : accueillir ensuite les autres éléments partagés (boutons, champs, tableaux, modales)
+   pour cesser de les redéfinir module par module.
+
+   L'info-bulle NE dépend PAS de l'attribut natif `title` (rendu incohérent sous Safari, délai
+   d'1–2 s non maîtrisable, style imposé par l'OS). On l'utilise via l'attribut `data-tip="texte"`.
+   Le nœud est unique, ajouté sur <body> par ui.js, et positionné en `fixed` — il n'est donc jamais
+   coupé par un conteneur en overflow (tableaux `.tbl{overflow:hidden}`, modale `overflow-y:auto`)
+   ni par le bord de la fenêtre. */
+
+.ui-tip{
+  position:fixed; left:0; top:0; z-index:99999;
+  max-width:240px;
+  padding:5px 9px;
+  background:#22222c;                 /* fond sombre, volontairement constant dans les deux thèmes */
+  color:#f2f2f5;                      /* texte clair, lisible sur clair comme sur sombre */
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:7px;                  /* petit rayon */
+  box-shadow:0 4px 14px rgba(0,0,0,.28); /* ombre légère */
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
+  font-size:12px; line-height:1.35; font-weight:500;
+  white-space:normal; text-align:center;
+  pointer-events:none;               /* n'intercepte jamais le curseur (sinon scintillement) */
+  opacity:0;                         /* toujours dans le flux (donc mesurable) mais invisible */
+}
+/* Apparition douce quand ui.js pose `.show` ; le retrait de la classe fait disparaître
+   la bulle INSTANTANÉMENT (aucune transition définie hors de l'état `.show`). */
+.ui-tip.show{ opacity:1; transition:opacity .1s ease; }
+
+/* Pas d'info-bulle au survol sur les appareils sans survol réel (tactile) : elle resterait collée. */
+@media (hover:none){ .ui-tip{ display:none; } }

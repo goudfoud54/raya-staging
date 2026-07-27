@@ -8,6 +8,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
+<link rel="stylesheet" href="../ui.css?v=1">
+<script src="../ui.js?v=1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -92,7 +94,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.3 — fix double comptage de l'encaissé (source unique fact_paiements) + info-bulles boutons</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.4 — info-bulles maison (socle ui.css/ui.js, remplacent l'attribut title)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -221,7 +223,7 @@ function renderFacturesList(){
   else list.forEach(f=>{
     const paye=encaisseFacture(f);
     const stat=f.statut==='paye'?'ok':f.statut==='partiel'?'warn':f.statut==='annulee'?'bad':'info';
-    html+=`<tr><td><b>${f.numero||'?'}</b></td><td>${fmtD(f.date_facture)}</td><td>${f.clients?.nom||'—'}</td><td>${eur(f.total_ht)}</td><td><b>${eur(f.total_ttc)}</b></td><td style="color:${paye>=Number(f.total_ttc)?'var(--ok)':'var(--warn)'}">${eur(paye)}</td><td><span class="badge ${stat}">${STATUTS[f.statut]||f.statut}</span></td><td><button class="btn ghost sm" onclick="openFacture('${f.id}')" title="Voir la facture">👁</button> <button class="btn ghost sm" onclick="downloadFacturePDF('${f.id}')" title="Télécharger PDF">📄</button></td></tr>`;
+    html+=`<tr><td><b>${f.numero||'?'}</b></td><td>${fmtD(f.date_facture)}</td><td>${f.clients?.nom||'—'}</td><td>${eur(f.total_ht)}</td><td><b>${eur(f.total_ttc)}</b></td><td style="color:${paye>=Number(f.total_ttc)?'var(--ok)':'var(--warn)'}">${eur(paye)}</td><td><span class="badge ${stat}">${STATUTS[f.statut]||f.statut}</span></td><td><button class="btn ghost sm" onclick="openFacture('${f.id}')" data-tip="Voir la facture" aria-label="Voir la facture">👁</button> <button class="btn ghost sm" onclick="downloadFacturePDF('${f.id}')" data-tip="Télécharger le PDF" aria-label="Télécharger le PDF">📄</button></td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('facList').innerHTML=html;
@@ -257,7 +259,7 @@ async function openFacture(id){
     </div>
     <div class="section"><h3>Paiements (${paiements.length})</h3>
       <table class="tbl"><thead><tr><th>Date</th><th>Mode</th><th>Référence</th><th>Montant</th><th></th></tr></thead><tbody>
-      ${paiements.map(p=>`<tr><td>${fmtD(p.date_paiement)}</td><td>${MODES[p.mode]||p.mode}</td><td style="color:var(--muted);font-size:12px">${p.reference||''}</td><td><b>${eur(p.montant)}</b></td><td><button class="btn ghost sm" onclick="delPaiement('${p.id}','${f.id}')" title="Supprimer ce paiement">✕</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:14px">Aucun paiement enregistré</td></tr>'}
+      ${paiements.map(p=>`<tr><td>${fmtD(p.date_paiement)}</td><td>${MODES[p.mode]||p.mode}</td><td style="color:var(--muted);font-size:12px">${p.reference||''}</td><td><b>${eur(p.montant)}</b></td><td><button class="btn ghost sm" onclick="delPaiement('${p.id}','${f.id}')" data-tip="Supprimer ce paiement" aria-label="Supprimer ce paiement">✕</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:14px">Aucun paiement enregistré</td></tr>'}
       </tbody></table>
       ${f.statut!=='annulee'&&restant>0?`<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
         <div style="font-weight:600;font-size:13px;margin-bottom:8px">+ Ajouter un paiement</div>
@@ -345,7 +347,7 @@ function renderLignes(){
       <input type="number" step="0.01" value="${l.prix_unitaire_ht||0}" onchange="updateLigne(${i},'prix_unitaire_ht',this.value)">
       <select onchange="updateLigne(${i},'tva_pct',this.value)">${TVA_TAUX.map(t=>`<option value="${t}" ${Number(l.tva_pct)===t?'selected':''}>${t}%</option>`).join('')}</select>
       <div style="text-align:right;font-weight:600">${eur(totHT)}</div>
-      <button class="btn ghost sm" onclick="removeLigne(${i})" title="Supprimer la ligne">✕</button>
+      <button class="btn ghost sm" onclick="removeLigne(${i})" data-tip="Supprimer la ligne" aria-label="Supprimer la ligne">✕</button>
     </div>`;
   });
   html+=`<datalist id="prodList">${S.produits.map(p=>`<option value="${p.nom}" data-pu="${p.prix_revente||0}" data-tva="${p.tva||5.5}"></option>`).join('')}</datalist>`;
@@ -617,7 +619,7 @@ async function renderBLs(el){
 function renderClients(el){
   let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openClient()">+ Nouveau client</button></div>
     <table class="tbl"><thead><tr><th>Nom</th><th>Référence</th><th>Adresse</th><th>Ville</th><th></th></tr></thead><tbody>`;
-  S.clients.forEach(c=>{html+=`<tr><td><b>${c.nom}</b></td><td>${c.ref||'—'}</td><td style="color:var(--muted);font-size:12px">${c.adr||''}</td><td>${c.ville||''}</td><td><button class="btn ghost sm" onclick='openClient(${JSON.stringify(c).replace(/'/g,"&#39;")})' title="Modifier le client">✎</button> <button class="btn ghost sm" onclick="delClient('${c.id}')" title="Supprimer le client">✕</button></td></tr>`;});
+  S.clients.forEach(c=>{html+=`<tr><td><b>${c.nom}</b></td><td>${c.ref||'—'}</td><td style="color:var(--muted);font-size:12px">${c.adr||''}</td><td>${c.ville||''}</td><td><button class="btn ghost sm" onclick='openClient(${JSON.stringify(c).replace(/'/g,"&#39;")})' data-tip="Modifier le client" aria-label="Modifier le client">✎</button> <button class="btn ghost sm" onclick="delClient('${c.id}')" data-tip="Supprimer le client" aria-label="Supprimer le client">✕</button></td></tr>`;});
   if(!S.clients.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucun client</td></tr>';
   html+='</tbody></table>';
   el.innerHTML=html;
@@ -649,7 +651,7 @@ async function delClient(id){if(!confirm('Supprimer ce client ?'))return;const{e
 function renderCatalogue(el){
   let html=`<div class="toolbar"><input id="prod_q" placeholder="Rechercher…" oninput="filterCat()"><div style="flex:1"></div><button class="btn" onclick="openProd()">+ Nouveau produit</button></div>
     <table class="tbl"><thead><tr><th>Nom</th><th>Catégorie</th><th>PU HT</th><th>TVA</th><th></th></tr></thead><tbody id="catTbody">`;
-  S.produits.forEach(p=>{html+=`<tr data-pn="${p.nom.toLowerCase()}"><td><b>${p.nom}</b></td><td style="color:var(--muted);font-size:12px">${p.cat||'—'}</td><td><b>${eur(p.prix_revente)}</b></td><td>${p.tva||5.5}%</td><td><button class="btn ghost sm" onclick='openProd(${JSON.stringify(p).replace(/'/g,"&#39;")})' title="Modifier le produit">✎</button> <button class="btn ghost sm" onclick="delProd('${p.id}')" title="Supprimer le produit">✕</button></td></tr>`;});
+  S.produits.forEach(p=>{html+=`<tr data-pn="${p.nom.toLowerCase()}"><td><b>${p.nom}</b></td><td style="color:var(--muted);font-size:12px">${p.cat||'—'}</td><td><b>${eur(p.prix_revente)}</b></td><td>${p.tva||5.5}%</td><td><button class="btn ghost sm" onclick='openProd(${JSON.stringify(p).replace(/'/g,"&#39;")})' data-tip="Modifier le produit" aria-label="Modifier le produit">✎</button> <button class="btn ghost sm" onclick="delProd('${p.id}')" data-tip="Supprimer le produit" aria-label="Supprimer le produit">✕</button></td></tr>`;});
   html+='</tbody></table>';
   el.innerHTML=html;
 }
