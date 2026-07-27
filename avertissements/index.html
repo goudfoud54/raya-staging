@@ -126,7 +126,7 @@ textarea{resize:vertical;min-height:80px}
 
 <div class="container">
   <div class="disclaimer">
-    <b>⚖️ Information juridique</b> — Ce module facilite la procédure mais ne se substitue pas à un conseil juridique. Pour toute sanction lourde (licenciement, mise à pied), consulter un avocat ou votre OPCO. Les délais légaux sont calculés en jours ouvrables (hors jours fériés) selon le Code du travail français.
+    <b>⚖️ Information juridique</b> — Ce module facilite la procédure mais ne se substitue pas à un conseil juridique. Pour toute sanction lourde (licenciement, mise à pied), consulter un avocat ou votre OPCO. Les délais légaux sont calculés en <b>jours ouvrables</b> (le samedi compte ; dimanche et jours fériés — mobiles inclus — exclus). Garde-fous intégrés : adresses obligatoires de la convocation (R.1232-1), distinction mise à pied conservatoire / disciplinaire, exclusion des sanctions de plus de 3 ans (L.1332-5), alerte sur les formulations à risque. Les modèles restent à faire valider par un avocat avant usage.
   </div>
 
   <div class="subtabs" id="subtabs">
@@ -170,6 +170,7 @@ textarea{resize:vertical;min-height:80px}
         <label>Salarié concerné *</label>
         <select id="ed_salarie" onchange="onSalarieChange()"><option value="">— Sélectionner —</option></select>
       </div>
+      <div id="vulnBanner"></div>
       <div class="field">
         <label>Type de sanction *</label>
         <select id="ed_type" onchange="onTypeChange()">
@@ -625,6 +626,16 @@ function conservatoireImmediateteAlertes(faitsDate, conservatoireDate, convocDat
   if(d2!=null && d2>6) out.push({niveau:'alerte', msg:`${d2} jours entre la mise à pied conservatoire et la convocation : engagez la procédure sans tarder.`});
   return out;
 }
+// Cas HORS périmètre de la procédure standard. Le salarié PROTÉGÉ (élu CSE, délégué syndical) exige
+// l'AUTORISATION de l'inspection du travail ; la salariée enceinte / en congé maternité, le salarié MINEUR,
+// l'arrêt de travail en cours relèvent de règles spécifiques. On DÉTECTE ce qui est déductible de la fiche
+// (l'âge mineur) et on AVERTIT pour le reste (données non présentes en fiche). PURE (âge) → testée.
+function ageAt(dateNaissance, ref){
+  if(!dateNaissance)return null; const n=new Date(dateNaissance), r=ref?new Date(ref):new Date();
+  if(isNaN(n)||isNaN(r))return null; let a=r.getFullYear()-n.getFullYear();
+  const m=r.getMonth()-n.getMonth(); if(m<0||(m===0&&r.getDate()<n.getDate()))a--; return a;
+}
+function estMineur(sal, ref){ const a=ageAt(sal&&sal.date_naissance, ref); return a!=null && a>=0 && a<18; }
 // Affiche les suggestions de reformulation sous les champs de motivation (jamais bloquant).
 function checkRiskTerms(){
   const box=document.getElementById('riskWarn'); if(!box)return;
@@ -711,6 +722,7 @@ function blankFields(){
   { const e=document.getElementById('ed_conservatoire_declined'); if(e) e.checked=false; }
   { const b=document.getElementById('conservatoireAlertes'); if(b) b.innerHTML=''; }
   { const b=document.getElementById('riskWarn'); if(b) b.innerHTML=''; }
+  { const b=document.getElementById('vulnBanner'); if(b) b.innerHTML=''; }
   document.getElementById('ed_preavis_eff').checked=false;
   document.getElementById('ed_entretien_held').checked=false;
   document.getElementById('ed_faits_date').value=new Date().toISOString().slice(0,10);
@@ -816,8 +828,29 @@ function onConservatoireChange(){
   al.innerHTML=alertes.map(a=>`<div style="border-radius:8px;padding:8px 11px;margin-top:6px;font-size:12px;line-height:1.5;${a.niveau==='alerte'?'background:rgba(196,90,90,.10);border:1px solid var(--danger,#c45a5a);color:var(--danger,#c45a5a)':'background:rgba(224,169,58,.10);border:1px solid var(--warn,#e0a93a)'}">${a.niveau==='alerte'?'⛔':'⏱'} ${esc(a.msg)}</div>`).join('');
 }
 async function onSalarieChange(){
-  await loadAntecedents(document.getElementById('ed_salarie').value, document.getElementById('ed_id').value);
+  const sid=document.getElementById('ed_salarie').value;
+  renderVulnBanner(sid);
+  await loadAntecedents(sid, document.getElementById('ed_id').value);
   renderWorkflow();
+}
+// Avertissement « cas particulier » : détecte le mineur (âge en fiche) et rappelle les situations qui
+// SORTENT de la procédure standard (salarié protégé, enceinte/maternité, arrêt) — non déductibles de la fiche.
+function renderVulnBanner(sid){
+  const box=document.getElementById('vulnBanner'); if(!box)return;
+  const sal=S.salaries.find(x=>x.id===sid);
+  if(!sal){ box.innerHTML=''; return; }
+  const mineur=estMineur(sal);
+  box.innerHTML=`<div style="background:rgba(196,90,90,.10);border:1px solid var(--danger,#c45a5a);border-radius:8px;padding:10px 12px;margin:2px 0 10px;font-size:12px;line-height:1.55">
+    <b style="color:var(--danger,#c45a5a)">⚠ Vérifier les situations particulières avant de dérouler la procédure standard</b>
+    ${mineur?`<div style="margin-top:5px;color:var(--danger,#c45a5a)"><b>Salarié MINEUR détecté</b> (d'après la date de naissance) — règles protectrices spécifiques.</div>`:''}
+    <div style="color:var(--muted);margin-top:5px">Ces cas relèvent de règles dérogatoires et ne sont <b>pas</b> détectables depuis la fiche — à vérifier manuellement :
+    <ul style="margin:4px 0 0 16px;padding:0">
+      <li><b>Salarié protégé</b> (élu CSE, délégué syndical) : le licenciement exige l'<b>autorisation de l'inspection du travail</b> — la procédure standard ne s'applique pas.</li>
+      <li><b>Salariée enceinte / en congé maternité</b> : protection renforcée.</li>
+      <li><b>Arrêt de travail en cours</b> : précautions spécifiques.</li>
+    </ul>
+    <div style="margin-top:5px">En présence de l'une de ces situations, <b>consultez un avocat</b> avant de poursuivre.</div></div>
+  </div>`;
 }
 
 // ─────────── ANTÉCÉDENTS ───────────
