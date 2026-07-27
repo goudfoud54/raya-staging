@@ -69,16 +69,8 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <input type="password" id="loginPw" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
     <button class="btn" onclick="login()">Se connecter</button>
     <div class="err" id="err"></div>
-    <div class="alt">Pas de compte ? <a onclick="showSignup()">Créer un compte</a></div>
+    <div class="alt" style="color:var(--muted);font-size:12.5px">🔒 L'accès se fait sur invitation. Demande un lien à ton administrateur.</div>
     <div class="alt">Mot de passe oublié ? <a onclick="showForgot()">Réinitialiser</a></div>
-  </div>
-  <div id="signupBlock" class="auth hidden">
-    <input type="text" id="signupName" placeholder="Nom complet">
-    <input type="email" id="signupEmail" placeholder="Email" autocomplete="email">
-    <input type="password" id="signupPw" placeholder="Mot de passe (8 caractères min)" autocomplete="new-password">
-    <button class="btn" onclick="signup()">Créer mon compte</button>
-    <div class="err" id="err2"></div>
-    <div class="alt">Déjà inscrit ? <a onclick="showLogin()">Se connecter</a></div>
   </div>
   <div id="forgotBlock" class="auth hidden">
     <div style="color:var(--muted);font-size:12.5px;text-align:center;margin-bottom:2px">Reçois un lien par email pour choisir un nouveau mot de passe.</div>
@@ -104,7 +96,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <div class="kiosk-head">📟 Kiosques terrain <span>· tablette PIN, à installer en salle</span></div>
     <div class="modules kiosk-grid" id="kioskModules"></div>
   </div>
-  <div class="footer">Eatime360 · v9.6 · Bandeau « alerte non configurée » (se referme une fois réglé)</div>
+  <div class="footer">Eatime360 · v9.7 · Sécurité : inscription publique retirée (accès sur invitation)</div>
 </div>
 
 <script>
@@ -148,9 +140,8 @@ const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salari
 // Defaults + logique d'accès : source de vérité unique dans access.js (EatimeAccess).
 const DEFAULT_PERMS=EatimeAccess.DEFAULT_PERMS;
 
-function showSignup(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('forgotBlock').classList.add('hidden');document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Créer un compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
-function showLogin(){document.getElementById('signupBlock').classList.add('hidden');document.getElementById('forgotBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';document.getElementById('err2').textContent='';}
-function showForgot(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('signupBlock').classList.add('hidden');document.getElementById('forgotBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Mot de passe oublié';document.getElementById('err3').textContent='';const fe=document.getElementById('forgotEmail');const le=document.getElementById('loginEmail').value.trim();if(le)fe.value=le;}
+function showLogin(){document.getElementById('forgotBlock').classList.add('hidden');document.getElementById('loginBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Connexion à ton compte';document.getElementById('err').textContent='';}
+function showForgot(){document.getElementById('loginBlock').classList.add('hidden');document.getElementById('forgotBlock').classList.remove('hidden');document.getElementById('lblView').textContent='Mot de passe oublié';document.getElementById('err3').textContent='';const fe=document.getElementById('forgotEmail');const le=document.getElementById('loginEmail').value.trim();if(le)fe.value=le;}
 async function sendReset(){
   const email=document.getElementById('forgotEmail').value.trim();
   if(!email){document.getElementById('err3').textContent='Email requis';return;}
@@ -172,17 +163,7 @@ async function login(){
   if(error){document.getElementById('err').textContent=error.message;return;}
   await loadProfileAndShow();
 }
-async function signup(){
-  const email=document.getElementById('signupEmail').value.trim();
-  const password=document.getElementById('signupPw').value;
-  const name=document.getElementById('signupName').value.trim();
-  if(!email||!password||password.length<8){document.getElementById('err2').textContent='Email + mdp 8+ caractères requis';return;}
-  document.getElementById('err2').textContent='Création du compte…';
-  const{error}=await sb.auth.signUp({email,password,options:{data:{full_name:name}}});
-  if(error){document.getElementById('err2').textContent=error.message;return;}
-  await sb.auth.signInWithPassword({email,password});
-  await loadProfileAndShow();
-}
+// Inscription publique retirée (sécurité C6) : l'accès se fait uniquement sur invitation.
 let ORG=null;
 async function loadProfileAndShow(){
   const{data:{session}}=await sb.auth.getSession();

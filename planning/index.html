@@ -178,14 +178,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
     <input type="email" id="loginEmail" placeholder="Email" autocomplete="email" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
     <input type="password" id="loginPw" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
     <button class="btn" onclick="login()" style="width:260px">Se connecter</button>
-    <div style="color:var(--muted);font-size:12px">Pas de compte ? <a href="#" style="color:var(--gold)" onclick="showSignup();return false">Créer un compte</a></div>
-  </div>
-  <div id="signupBlock" style="display:none;flex-direction:column;gap:10px;align-items:center">
-    <input type="text" id="signupName" placeholder="Nom complet" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
-    <input type="email" id="signupEmail" placeholder="Email" autocomplete="email" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
-    <input type="password" id="signupPw" placeholder="Mot de passe (8 caractères min)" autocomplete="new-password" style="width:260px;padding:11px 16px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:14px;text-align:center;outline:none">
-    <button class="btn" onclick="signup()" style="width:260px">Créer mon compte</button>
-    <div style="color:var(--muted);font-size:12px">Déjà inscrit ? <a href="#" style="color:var(--gold)" onclick="showLogin();return false">Se connecter</a></div>
+    <div style="color:var(--muted);font-size:12px">🔒 Accès sur invitation. Demande un lien à ton administrateur.</div>
   </div>
   <div class="err" id="pwerr"></div>
   <a href="../" style="font-size:12px;color:var(--muted);margin-top:6px">← Portail</a>
@@ -285,7 +278,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.54 · vue MOBILE (< 820px) : rendu par JOUR (sélecteur de jour, couverture, cartes salarié éditables au tap) ou par SALARIÉ (ses 7 jours), mêmes helpers/badges que la grille ; la vue bureau reste inchangée. PDF soigné (v0.53) + couleurs salarié distinctes (salaries v0.17)';
+const VERSION='v0.55 · sécurité : formulaire d\'inscription publique retiré (accès sur invitation uniquement)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -522,8 +515,7 @@ let zoom=parseFloat(localStorage.getItem('pl_zoom')||'1');
 function setZoom(z){zoom=Math.max(0.5,Math.min(1.6,Math.round(z*10)/10));localStorage.setItem('pl_zoom',zoom);document.documentElement.style.setProperty('--zoom',zoom);const l=document.getElementById('zLabel');if(l)l.textContent=Math.round(zoom*100)+' %';}
 function normTime(v){if(!v)return '';v=String(v).trim().replace(/[^0-9:hH]/g,'').replace(/[hH]/,':');let m=v.match(/^(\d{1,2}):(\d{2})$/);if(m){const h=+m[1],mn=+m[2];if(h<24&&mn<60)return String(h).padStart(2,'0')+':'+String(mn).padStart(2,'0');}m=v.match(/^(\d{1,2})$/);if(m){const h=+m[1];if(h<24)return String(h).padStart(2,'0')+':00';}return null;}
 
-function showSignup(){document.getElementById('loginBlock').style.display='none';document.getElementById('signupBlock').style.display='flex';document.getElementById('lockSub').textContent='Créer un compte';document.getElementById('pwerr').textContent='';}
-function showLogin(){document.getElementById('signupBlock').style.display='none';document.getElementById('loginBlock').style.display='flex';document.getElementById('lockSub').textContent='Connexion à ton compte';document.getElementById('pwerr').textContent='';}
+// Inscription publique retirée (sécurité C6) : accès sur invitation uniquement.
 async function login(){
   const email=document.getElementById('loginEmail').value.trim();
   const password=document.getElementById('loginPw').value;
@@ -531,17 +523,6 @@ async function login(){
   document.getElementById('pwerr').textContent='Connexion…';
   const{error}=await sb.auth.signInWithPassword({email,password});
   if(error){document.getElementById('pwerr').textContent=error.message;return;}
-  await loadProfileAndShow();
-}
-async function signup(){
-  const email=document.getElementById('signupEmail').value.trim();
-  const password=document.getElementById('signupPw').value;
-  const name=document.getElementById('signupName').value.trim();
-  if(!email||!password||password.length<8){document.getElementById('pwerr').textContent='Email + mdp 8+ caractères requis';return;}
-  document.getElementById('pwerr').textContent='Création du compte…';
-  const{error}=await sb.auth.signUp({email,password,options:{data:{full_name:name}}});
-  if(error){document.getElementById('pwerr').textContent=error.message;return;}
-  await sb.auth.signInWithPassword({email,password});
   await loadProfileAndShow();
 }
 async function loadProfileAndShow(){

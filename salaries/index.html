@@ -179,14 +179,7 @@ button{cursor:pointer;border:none;background:none}
     <input type="email" id="loginEmail" placeholder="Email" autocomplete="email" style="width:280px">
     <input type="password" id="loginPw" placeholder="Mot de passe" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()" style="width:280px">
     <button class="btn" onclick="login()" style="width:280px">Se connecter</button>
-    <div style="color:var(--muted);font-size:12px">Pas de compte ? <a href="#" style="color:var(--gold)" onclick="showSignup();return false">Créer un compte</a></div>
-  </div>
-  <div id="signupBlock" class="hidden" style="display:none;flex-direction:column;gap:10px;align-items:center">
-    <input type="text" id="signupName" placeholder="Nom complet" style="width:280px">
-    <input type="email" id="signupEmail" placeholder="Email" autocomplete="email" style="width:280px">
-    <input type="password" id="signupPw" placeholder="Mot de passe (8 caractères min)" autocomplete="new-password" style="width:280px">
-    <button class="btn" onclick="signup()" style="width:280px">Créer mon compte</button>
-    <div style="color:var(--muted);font-size:12px">Déjà inscrit ? <a href="#" style="color:var(--gold)" onclick="showLogin();return false">Se connecter</a></div>
+    <div style="color:var(--muted);font-size:12px">🔒 Accès sur invitation. Demande un lien à ton administrateur.</div>
   </div>
   <div class="err" id="loginErr"></div>
   <a href="../" style="font-size:12px;color:var(--muted);margin-top:6px">← Retour au portail</a>
@@ -243,7 +236,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.18 · section « Ponctualité » dans l\'onglet Badgeuse : historique des retards & sorties non pointées (date, service, heure prévue, heure réelle, écart, restaurant) sur 90 jours, exploitable comme éléments factuels';
+const VERSION='v0.19 · sécurité : formulaire d\'inscription publique retiré (accès sur invitation uniquement)';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -311,8 +304,7 @@ let currentFiche=null, currentTab='infos';
 let snackPri={};  // affectation restos de la fiche courante : { restaurant_id: priorité }
 
 // ===== AUTH SUPABASE =====
-function showSignup(){document.getElementById('loginBlock').style.display='none';document.getElementById('signupBlock').style.display='flex';document.getElementById('signupBlock').classList.remove('hidden');document.getElementById('lockSub').textContent='Créer un compte';document.getElementById('loginErr').textContent='';}
-function showLogin(){document.getElementById('signupBlock').style.display='none';document.getElementById('loginBlock').style.display='flex';document.getElementById('lockSub').textContent='Connexion à ton compte';document.getElementById('loginErr').textContent='';}
+// Inscription publique retirée (sécurité C6) : accès sur invitation uniquement.
 async function login(){
   const email=document.getElementById('loginEmail').value.trim();
   const password=document.getElementById('loginPw').value;
@@ -320,17 +312,6 @@ async function login(){
   document.getElementById('loginErr').textContent='Connexion…';
   const{error}=await sb.auth.signInWithPassword({email,password});
   if(error){document.getElementById('loginErr').textContent=error.message;return;}
-  await loadProfileAndShow();
-}
-async function signup(){
-  const email=document.getElementById('signupEmail').value.trim();
-  const password=document.getElementById('signupPw').value;
-  const name=document.getElementById('signupName').value.trim();
-  if(!email||!password||password.length<8){document.getElementById('loginErr').textContent='Email + mdp 8+ caractères requis';return;}
-  document.getElementById('loginErr').textContent='Création du compte…';
-  const{error}=await sb.auth.signUp({email,password,options:{data:{full_name:name}}});
-  if(error){document.getElementById('loginErr').textContent=error.message;return;}
-  await sb.auth.signInWithPassword({email,password});
   await loadProfileAndShow();
 }
 async function loadProfileAndShow(){
