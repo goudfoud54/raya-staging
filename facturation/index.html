@@ -92,7 +92,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.2 — PDF facture refondu (logo, couleurs, regroupement par livraison, TVA par taux) + correctif champs paiement</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.2.1 — PDF facture : pénalités de retard centrées comme le pied de page légal</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -568,7 +568,7 @@ async function downloadFacturePDF(id){
   const N=doc.getNumberOfPages();
   for(let i=1;i<=N;i++){
     doc.setPage(i);
-    if(i===N&&penal){doc.setFontSize(6.6);doc.setTextColor(120);doc.setFont(undefined,'normal');const pl=doc.splitTextToSize(penal,R-L);let pyy=PH-20-pl.length*2.6;pl.forEach(t=>{doc.text(t,L,pyy);pyy+=2.6;});}
+    if(i===N&&penal){doc.setFontSize(6.6);doc.setTextColor(120);doc.setFont(undefined,'normal');const pl=doc.splitTextToSize(penal,R-L);let pyy=PH-20-pl.length*2.6;pl.forEach(t=>{doc.text(t,PW/2,pyy,{align:'center'});pyy+=2.6;});}
     doc.setDrawColor(accent[0],accent[1],accent[2]);doc.setLineWidth(0.3);doc.line(L,PH-15,R,PH-15);
     doc.setFontSize(6.8);doc.setTextColor(130);
     if(legal1)doc.text(legal1,PW/2,PH-11,{align:'center'});
