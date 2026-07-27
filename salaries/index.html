@@ -200,6 +200,7 @@ button{cursor:pointer;border:none;background:none}
       <button class="btn ghost" id="demandesBtn" onclick="openDemandes()" style="position:relative">🔔 Demandes <span id="demandesBadge" style="display:none;background:var(--bad);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:4px;font-weight:700"></span></button>
       <button class="btn ghost" onclick="openExportModal()">Export pointages</button>
       <button class="btn ghost" onclick="openRolesModal()">⚙ Rôles</button>
+      <button class="btn ghost" onclick="openColorBackfill()" title="Attribuer une couleur distincte et lisible aux salariés sans couleur, en doublon ou illisible">🎨 Couleurs</button>
       <button class="btn" onclick="openFiche(null)">+ Nouveau salarié</button>
       <a href="../" class="btn ghost">Portail</a>
       <button class="btn ghost" onclick="logout()" title="Déconnexion">↩</button>
@@ -242,7 +243,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.16 · contraintes individuelles : saisie guidée (libellés FR, champ typé, jour en liste) + phrases lisibles';
+const VERSION='v0.17 · couleur distincte + lisible par salarié : palette générée (angle d\'or, contraste AA), attribution unique à la création, bouton « 🎨 Couleurs » de rattrapage avec aperçu, avertissement si couleur trop claire, texte auto noir/blanc sur les avatars';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -404,6 +405,57 @@ const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.ro
 const rolesFullOf=sid=>S.roles.filter(x=>x.salarie_id===sid);
 const roleName=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return r?r.nom:cle;};
 const roleColor=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return (r&&r.couleur)?r.couleur:'#8b94a3';};
+
+// ════════ COULEURS SALARIÉS — génération, contraste, attribution ════════════════════════════════════
+// Objectif : chaque salarié d'une org a une couleur DISTINCTE et LISIBLE (grille, PDF, vue mobile).
+// Ces fonctions sont PURES (testées dans tests/palette_test.js) ; la version « lecture seule » (relLum,
+// textColorFor) est dupliquée à l'identique dans planning/index.html pour le PDF/mobile.
+const COLOR_DEFAULTS=['#888888','#000000','#ffffff','#666666','#444444']; // couleurs « non choisies » remplaçables
+function _hexToRgb(hex){const m=String(hex||'').match(/^#?([0-9a-f]{6})$/i);if(!m)return null;const n=parseInt(m[1],16);return[(n>>16)&255,(n>>8)&255,n&255];}
+function _relLum(hex){const rgb=_hexToRgb(hex);if(!rgb)return 1;const f=c=>{c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);};return 0.2126*f(rgb[0])+0.7152*f(rgb[1])+0.0722*f(rgb[2]);}
+function _contrastRatio(L1,L2){const a=Math.max(L1,L2),b=Math.min(L1,L2);return (a+0.05)/(b+0.05);}
+// Meilleur texte (noir ou blanc) posé SUR cette couleur, celui qui maximise le contraste.
+function textColorFor(hex){const L=_relLum(hex);return _contrastRatio(L,0)>=_contrastRatio(L,1)?'#111111':'#ffffff';}
+// Lisible = le meilleur texte atteint AA 4.5:1 ET la couleur se distingue du papier blanc (pas quasi-blanche).
+function isReadableColor(hex){const rgb=_hexToRgb(hex);if(!rgb)return false;const L=_relLum(hex);
+  const bestText=Math.max(_contrastRatio(L,0),_contrastRatio(L,1)), vsPaper=_contrastRatio(L,1);
+  return bestText>=4.5 && vsPaper>=1.30;}
+function _hslToHex(h,s,l){h=((h%360)+360)%360/360;const a=s*Math.min(l,1-l);
+  const f=n=>{const k=(n+h*12)%12;const c=l-a*Math.max(-1,Math.min(k-3,9-k,1));return Math.round(255*c).toString(16).padStart(2,'0');};
+  return '#'+f(0)+f(8)+f(4);}
+// Couleur i de la palette : teinte à l'angle d'or (≈137.5°, teintes bien réparties, jamais deux voisines
+// proches avant longtemps), saturation/luminosité contrôlées → texte lisible + distinct du papier. On saute
+// la zone jaune pur (≈50–68°) qui tourne au terne/illisible. tier>0 = palier plus foncé si la palette est épuisée.
+function paletteColor(i,tier){
+  let h=(i*137.508)%360; if(h>=50&&h<68) h=(h+26)%360;
+  const s=0.52, l=(tier?[0.68,0.55,0.78][Math.min(tier,2)]:0.68);
+  return _hslToHex(h,s,l);
+}
+// Attribue des couleurs UNIQUES en marchant la palette et en SAUTANT celles déjà prises (stateless : survit
+// aux suppressions, préserve les couleurs manuelles). Épuisement → palier de luminosité suivant.
+function assignUniqueColor(takenSet){
+  for(let tier=0;tier<3;tier++){ for(let i=0;i<400;i++){ const c=paletteColor(i,tier).toLowerCase();
+    if(!takenSet.has(c) && isReadableColor(c)) return c; } }
+  return paletteColor(Math.floor(Math.random()*400),0); // filet ultime (ne devrait jamais arriver < ~1000 salariés)
+}
+// Une couleur doit-elle être (ré)attribuée ? NULL, couleur par défaut, ou illisible → oui. Une couleur unique
+// ET lisible est un choix DÉLIBÉRÉ → on n'y touche jamais sans confirmation (le rattrapage exclut ces cas).
+function colorNeedsAssign(hex){ if(!hex) return true; const h=String(hex).toLowerCase();
+  return COLOR_DEFAULTS.includes(h) || !isReadableColor(h); }
+// Plan de rattrapage pour une liste de salariés {id,couleur} : rend [{id, from, to}] SANS écrire.
+// Réattribue les NULL/défaut/illisibles ET les DOUBLONS (on garde la 1re occurrence d'une couleur lisible,
+// les suivantes sont réattribuées). N'écrase jamais une couleur unique+lisible.
+function planColorBackfill(sals){
+  const taken=new Set(); const plan=[];
+  // 1re passe : geler les couleurs déjà lisibles ET uniques (choix délibérés) comme « prises ».
+  const seen=new Set();
+  for(const s of sals){ const h=(s.couleur||'').toLowerCase();
+    if(h && isReadableColor(h) && !COLOR_DEFAULTS.includes(h) && !seen.has(h)){ taken.add(h); seen.add(h); s._keep=true; } }
+  // 2e passe : tout le reste (NULL/défaut/illisible/doublon) reçoit une couleur unique.
+  for(const s of sals){ if(s._keep){ delete s._keep; continue; }
+    const to=assignUniqueColor(taken); taken.add(to); plan.push({id:s.id, from:s.couleur||null, to}); }
+  return plan;
+}
 function escH(s){return (s||'').toString().replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
 function roleAssignHTML(sid){
   if(!S.orgRoles.length) return '<div style="color:var(--muted);font-size:12.5px">Aucun rôle créé pour ton établissement. <a onclick="openRolesModal()" style="color:var(--gold);cursor:pointer;font-weight:600">⚙ Gérer les rôles</a> pour en créer.</div>';
@@ -706,7 +758,7 @@ function render(){
     if(s.email) sub.push(s.email);
     if(s.telephone) sub.push(s.telephone);
     return `<tr class="row" onclick="openFiche('${s.id}')">
-      <td><div class="namecell"><div class="avatar" style="background:${s.couleur||'#444'}">${initials(s)}</div>
+      <td><div class="namecell"><div class="avatar" style="background:${s.couleur||'#444'};color:${textColorFor(s.couleur||'#444')}">${initials(s)}</div>
         <div><div class="fullname">${fullName(s)||s.nom}${s.est_mineur?' <span class="chip off">mineur</span>':''}${!s.actif?' <span class="chip off">inactif</span>':''}</div>
         ${sub.length?'<div class="subline">'+sub.join(' · ')+'</div>':''}</div></div></td>
       <td>${s.est_multi?'<span class="chip multi">MULTI</span>':snackName(s.snack_origine_id)}</td>
@@ -719,7 +771,12 @@ function render(){
 
 // ===== FICHE =====
 function openFiche(id){
-  currentFiche=id?{...S.salaries.find(x=>x.id===id)}:{actif:true,plafond_heures:48};
+  if(id){ currentFiche={...S.salaries.find(x=>x.id===id)}; }
+  else {
+    // Nouveau salarié : couleur UNIQUE attribuée d'emblée (plus jamais de NULL ni de gris #888888 partagé).
+    const taken=new Set(S.salaries.map(s=>(s.couleur||'').toLowerCase()).filter(Boolean));
+    currentFiche={actif:true,plafond_heures:48,couleur:assignUniqueColor(taken)};
+  }
   initSnackPri(currentFiche);
   currentTab='infos';
   document.getElementById('listView').classList.add('hidden');
@@ -731,6 +788,48 @@ function closeFiche(){
   document.getElementById('ficheView').classList.add('hidden');
   document.getElementById('listView').classList.remove('hidden');
   currentFiche=null;
+}
+// Avertissement live sous le sélecteur de couleur de la fiche.
+function checkColorReadable(hex){
+  const w=document.getElementById('f_couleur_warn'); if(!w)return;
+  w.textContent=isReadableColor(hex)?'':'⚠ couleur peu lisible (trop claire) — le nom risque d\'être illisible en grille/PDF';
+}
+// ── Rattrapage des couleurs manquantes/en doublon (bouton dans la liste des salariés) ──
+// Aperçu AVANT écriture ; n'écrase jamais une couleur unique + lisible choisie volontairement.
+function openColorBackfill(){
+  const sals=S.salaries.filter(s=>s.actif!==false);
+  const plan=planColorBackfill(sals.map(s=>({id:s.id,couleur:s.couleur})));
+  const nameOf=id=>{const s=S.salaries.find(x=>x.id===id);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
+  if(!plan.length){
+    document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:460px">
+      <h2>🎨 Couleurs des salariés</h2>
+      <div style="color:var(--muted);font-size:13px;margin:10px 0 4px">Toutes les couleurs sont déjà attribuées, distinctes et lisibles. Rien à faire.</div>
+      <div class="actions"><button class="btn" onclick="closeModal()">Fermer</button></div></div></div>`;
+    return;
+  }
+  const rows=plan.map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12.5px">
+      <span style="flex:1">${escH(nameOf(p.id))}</span>
+      <span title="${p.from||'aucune'}" style="display:inline-block;width:34px;height:16px;border-radius:4px;border:1px solid var(--line-2);background:${p.from||'repeating-linear-gradient(45deg,#ddd,#ddd 3px,#fff 3px,#fff 6px)'}"></span>
+      <span style="color:var(--muted)">→</span>
+      <span style="display:inline-block;width:34px;height:16px;border-radius:4px;border:1px solid var(--line-2);background:${p.to};color:${textColorFor(p.to)};font-size:9px;text-align:center;line-height:16px">Aa</span>
+    </div>`).join('');
+  window._colorPlan=plan;
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:520px">
+    <h2>🎨 Attribuer les couleurs manquantes</h2>
+    <div style="color:var(--muted);font-size:12.5px;margin:8px 0 12px;line-height:1.5">${plan.length} salarié(s) sans couleur, en gris par défaut, en double ou avec une couleur illisible vont recevoir une couleur <b>distincte et lisible</b>. Les couleurs choisies manuellement (uniques et lisibles) ne sont <b>pas</b> modifiées.</div>
+    <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:8px 12px;max-height:46vh;overflow:auto">${rows}</div>
+    <div class="actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyColorBackfill()">Appliquer (${plan.length})</button></div></div></div>`;
+}
+async function applyColorBackfill(){
+  const plan=window._colorPlan||[]; if(!plan.length){closeModal();return;}
+  closeModal(); toast('Attribution des couleurs…');
+  let done=0;
+  for(const p of plan){
+    const{error}=await sb.from('salaries').update({couleur:p.to}).eq('id',p.id);
+    if(error){toast('Erreur: '+error.message);return;}
+    const s=S.salaries.find(x=>x.id===p.id); if(s)s.couleur=p.to; done++;
+  }
+  toast(`✓ ${done} couleur(s) attribuée(s)`); render();
 }
 function setTab(t){currentTab=t;renderFiche();}
 
@@ -747,7 +846,7 @@ function renderFiche(){
   <div class="fiche-head">
     <button class="back" onclick="closeFiche()">← Liste</button>
     <div class="fiche-name">
-      <div class="avatar" style="background:${s.couleur||'#444'}">${initials(s)||'?'}</div>
+      <div class="avatar" style="background:${s.couleur||'#444'};color:${textColorFor(s.couleur||'#444')}">${initials(s)||'?'}</div>
       <div>
         <div class="nm">${isNew?'Nouveau salarié':(fullName(s)||s.nom)}</div>
         <div class="meta">
@@ -819,7 +918,9 @@ function renderFiche(){
           <div class="fld" id="fldSortie" style="${(((s.type_contrat||'').toUpperCase().includes('CDD'))||s.actif===false||s.date_sortie)?'':'display:none'}"><label>Date de sortie</label><input type="date" id="f_sortie" value="${s.date_sortie||''}"></div>
           <div class="fld"><label>Taux horaire brut (€/h)</label><input type="number" step="0.01" min="0" id="f_taux" value="${s.taux_horaire_brut??''}" placeholder="11.88"></div>
           <div class="fld"><label>Coef charges perso <small style="color:var(--muted);font-weight:400">(vide = coef de l'org)</small></label><input type="number" step="0.001" min="1" id="f_coefperso" value="${s.coef_charges_perso??''}" placeholder="1.000 (alternant), 1.420 (CDI)…"></div>
-          <div class="fld"><label>Couleur</label><input type="color" id="f_couleur" value="${s.couleur||'#888888'}"></div>
+          <div class="fld"><label>Couleur <small style="color:var(--muted);font-weight:400">(identifie le salarié dans la grille et le PDF)</small></label>
+            <div style="display:flex;align-items:center;gap:8px"><input type="color" id="f_couleur" value="${s.couleur||'#888888'}" oninput="checkColorReadable(this.value)"><span id="f_couleur_warn" style="font-size:11.5px;color:var(--warn)">${isReadableColor(s.couleur||'#888888')?'':'⚠ couleur peu lisible (trop claire) — le nom risque d\'être illisible en grille/PDF'}</span></div>
+          </div>
         </div>
         <div class="chkrow">
           <label class="chk"><input type="checkbox" id="f_actif" ${(s.actif??true)?'checked':''}> Salarié actif</label>
