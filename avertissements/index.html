@@ -207,6 +207,7 @@ textarea{resize:vertical;min-height:80px}
         <textarea id="ed_motif_detail" placeholder="Décrire précisément les faits, dates, témoins, antécédents. Plus c'est précis, plus la sanction sera défendable en cas de contestation." oninput="checkRiskTerms()"></textarea>
       </div>
       <div id="riskWarn"></div>
+      <div id="faitsCoherence"></div>
       <div class="field">
         <label>Impact / préjudice subi par l'entreprise <small style="color:var(--muted);font-weight:400;text-transform:none">(lien de causalité)</small></label>
         <textarea id="ed_faits_impact" placeholder="Ex : cette absence a désorganisé le service du midi, contraint deux collègues à effectuer des heures supplémentaires, et entraîné une perte de chiffre d'affaires estimée à 400 € sur la journée." oninput="checkRiskTerms()"></textarea>
@@ -318,6 +319,8 @@ textarea{resize:vertical;min-height:80px}
       </div>
       <div class="actions" id="pdfButtons"></div>
       <div id="pdfHint" style="color:var(--muted);font-size:11px;margin-top:6px"></div>
+      <!-- #2 — Suivi de remise par document généré (date qui fait courir les délais + preuve) -->
+      <div id="remiseZone"></div>
     </div>
 
     <!-- Bouton avancer dans le workflow -->
@@ -651,10 +654,51 @@ function convocDelaiAnchor(sendDate, presentationDate){
   x.setDate(x.getDate()+2);
   return _isoDate(x);
 }
+// ══════ LOT 2 — cohérence des faits entre documents / marge des délais / titre signataire (fonctions PURES) ══════
+// #1 — Les faits sont une donnée UNIQUE du dossier. Chaque document en rend le niveau de détail qui lui est propre :
+// la CONVOCATION ne détaille pas les faits (choix de modèle explicite) ; la notification / le licenciement les
+// détaillent. À la génération d'un document on mémorise la SIGNATURE des seuls champs qu'il a rendus ; il devient
+// INCOHÉRENT si l'un de ces champs change ensuite. Un changement de motif_detail ne périme donc PAS la convocation.
+function _faitsFieldsForKind(kind){
+  if(kind==='convocation') return ['motif_court'];
+  return ['motif_court','motif_detail','faits_date','faits_heure','faits_lieu','faits_impact'];
+}
+function faitsSignature(faits, kind){
+  faits=faits||{}; return _faitsFieldsForKind(kind).map(k=>String(faits[k]==null?'':faits[k]).trim()).join('␟');
+}
+// records = { [kind]: {sig, at, ...} } → liste des kinds dont la signature mémorisée diffère des faits actuels.
+function documentsIncoherents(faits, records){
+  records=records||{}; const out=[];
+  for(const kind of Object.keys(records)){ const r=records[kind]; if(!r||r.sig==null)continue;
+    if(faitsSignature(faits,kind)!==r.sig) out.push(kind); }
+  return out;
+}
+// #2 — MARGE d'un délai (jours ouvrables au-delà du minimum). 0 = conforme mais SANS marge (une contestation de
+// la date de remise ferait basculer). null si indéterminable.
+function delaiMargeConvoc(anchorDate, entretienDate, min){ min=(min==null?5:min); const j=joursOuvrables(anchorDate,entretienDate); return j==null?null:(j-min); }
+// Remise d'un document renseignée ? (mode + date de remise/présentation).
+function remiseComplete(rec){ rec=rec||{}; return !!(rec.mode && rec.date_remise); }
+// #4 — Titre du signataire dérivé de la FORME juridique du représentant légal. Normalise le texte libre existant.
+// Titre INDICATIF, reste éditable (délégation de pouvoir : un DRH peut signer). null = forme inconnue → rien imposer.
+function _normForme(f){ return String(f||'').toUpperCase().replace(/[^A-Z]/g,''); }
+function titreSignataire(forme){
+  const map={ SAS:'Président', SASU:'Président', SARL:'Gérant', EURL:'Gérant', SNC:'Gérant', SCI:'Gérant', SELARL:'Gérant',
+    SA:'Président directeur général', EI:"L'exploitant", ENTREPRISEINDIVIDUELLE:"L'exploitant", EIRL:"L'exploitant",
+    MICROENTREPRISE:"L'exploitant", AUTOENTREPRENEUR:"L'exploitant" };
+  return map[_normForme(forme)]||null;
+}
+function _familleTitre(t){ const n=_normForme(t); if(n.includes('GERANT'))return 'gerant'; if(n.includes('PRESIDENT')||n.includes('DIRECTEUR'))return 'president'; return n; }
+// Incohérence titre saisi vs forme → {attendu, saisi} pour AVERTIR (jamais bloquer). null si OK / inconnu / vide.
+function titreIncoherent(forme, qualiteSaisie){
+  const attendu=titreSignataire(forme); if(!attendu) return null;
+  if(!_normForme(qualiteSaisie)) return null;
+  return _familleTitre(attendu)!==_familleTitre(qualiteSaisie) ? {attendu, saisi:qualiteSaisie} : null;
+}
 // Affiche les suggestions de reformulation sous les champs de motivation (jamais bloquant).
 function checkRiskTerms(){
   const box=document.getElementById('riskWarn'); if(!box)return;
   const g=id=>(document.getElementById(id)||{}).value||'';
+  checkFaitsCoherence();   // les faits ont peut-être changé → réévalue la cohérence avec les documents déjà générés
   const hits=detectRiskTerms(g('ed_motif_court')+' \n '+g('ed_motif_detail')+' \n '+g('ed_faits_impact'));
   if(!hits.length){ box.innerHTML=''; return; }
   box.innerHTML=`<div style="background:rgba(224,169,58,.10);border:1px solid var(--warn,#e0a93a);border-radius:8px;padding:10px 12px;margin:2px 0 6px;font-size:12px;line-height:1.55">
@@ -738,6 +782,9 @@ function blankFields(){
   { const b=document.getElementById('conservatoireAlertes'); if(b) b.innerHTML=''; }
   { const b=document.getElementById('riskWarn'); if(b) b.innerHTML=''; }
   { const b=document.getElementById('vulnBanner'); if(b) b.innerHTML=''; }
+  { const b=document.getElementById('faitsCoherence'); if(b) b.innerHTML=''; }
+  { const b=document.getElementById('remiseZone'); if(b) b.innerHTML=''; }
+  S._docRecords={};   // nouveau dossier : aucun document généré
   document.getElementById('ed_preavis_eff').checked=false;
   document.getElementById('ed_entretien_held').checked=false;
   document.getElementById('ed_faits_date').value=new Date().toISOString().slice(0,10);
@@ -770,7 +817,9 @@ function fillFields(d){
   set('ed_faits_heure',(d.faits_heure||'').slice(0,5)); set('ed_faits_impact',d.faits_impact);
   set('ed_conservatoire_date',d.conservatoire_date); set('ed_conservatoire_note',d.conservatoire_declined_note);
   { const e=document.getElementById('ed_conservatoire_declined'); if(e) e.checked=!!d.conservatoire_declined; }
+  S._docRecords = (d.pdfs && typeof d.pdfs==='object') ? d.pdfs : {};   // #1/#2 : signatures + remises des documents générés
   checkRiskTerms(); // signale d'emblée les formulations à risque d'un dossier existant
+  checkFaitsCoherence(); renderRemiseZone();
   const _rsel=document.getElementById('ed_faits_restaurant'), _man=document.getElementById('ed_faits_lieu');
   if(d.faits_restaurant_id){ _rsel.value=d.faits_restaurant_id; _man.style.display='none'; }
   else if(d.faits_lieu){ _rsel.value='__autre__'; _man.style.display=''; }
@@ -1046,11 +1095,85 @@ function requiredForPdf(kind,type){
 function missingFieldsFor(kind,type){
   return requiredForPdf(kind,type).filter(id=>{ const el=document.getElementById(id); return !el || !((el.value||'').trim()); }).map(id=>PDF_FIELD_LABELS[id]||id);
 }
+// #1 — les faits, lus une seule fois depuis le dossier (form = reflet du dossier après persistDossier).
+function _currentFaits(){ const g=id=>(document.getElementById(id)||{}).value||'';
+  return { motif_court:g('ed_motif_court'), motif_detail:g('ed_motif_detail'), faits_date:g('ed_faits_date'),
+    faits_heure:g('ed_faits_heure'), faits_lieu:g('ed_faits_lieu'), faits_impact:g('ed_faits_impact') }; }
+// Bannière d'incohérence : un document déjà généré dont les faits qu'il a rendus ont changé depuis.
+function checkFaitsCoherence(){
+  const box=document.getElementById('faitsCoherence'); if(!box)return;
+  const recs=S._docRecords||{};
+  const stale=documentsIncoherents(_currentFaits(), recs);
+  if(!stale.length){ box.innerHTML=''; return; }
+  box.innerHTML=`<div style="background:rgba(196,90,90,.10);border:1px solid var(--danger,#c45a5a);border-radius:8px;padding:10px 12px;margin:2px 0 8px;font-size:12px;line-height:1.55">
+    <b style="color:var(--danger,#c45a5a)">⚠ Faits modifiés après génération</b> — ${stale.map(k=>esc(KIND_LABELS[k]||k)).join(', ')} : ce(s) document(s) déjà généré(s) ne correspond(ent) plus aux faits du dossier. Une incohérence entre documents d'un même dossier est exploitable en contentieux. <b>Régénère-le(s)</b> après avoir figé les faits.</div>`;
+}
+// #1 — après génération réussie : mémorise la signature des faits rendus par ce document (donnée unique du dossier).
+async function recordDocGenerated(kind){
+  const id=document.getElementById('ed_id').value; if(!id)return;
+  S._docRecords=S._docRecords||{};
+  const prev=S._docRecords[kind]||{};
+  S._docRecords[kind]={ ...prev, sig:faitsSignature(_currentFaits(),kind), at:new Date().toISOString() };
+  await sb.from('disciplinary_actions').update({pdfs:S._docRecords}).eq('id',id);
+  checkFaitsCoherence(); renderRemiseZone();
+}
 function onGenClick(kind){
   const type=document.getElementById('ed_type').value;
   const miss=missingFieldsFor(kind,type);
   if(miss.length){ alert(`Impossible de générer ce document — champs à compléter :\n\n• ${miss.join('\n• ')}`); return; }
-  generatePDF(kind);
+  // #1 — persist-then-render : le document rend le dossier PERSISTÉ, jamais un champ non enregistré (source unique).
+  // recordDocGenerated est appelé À LA FIN de generatePDF (après doc.save) → aucun snapshot pour un document qui a
+  // avorté (convocation bloquée, salarié manquant), sinon le suivi référencerait un document fantôme.
+  persistDossier(false).then(okId=>{ if(!okId)return; generatePDF(kind); });
+}
+// #2 — suivi de remise par document : le mode + la date de remise/1ʳᵉ présentation (+ suivi LRAR) font courir
+// les délais et sont la 1ʳᵉ pièce réclamée en contentieux. Tant qu'ils manquent, le dossier reste incomplet.
+function renderRemiseZone(){
+  const box=document.getElementById('remiseZone'); if(!box)return;
+  const recs=S._docRecords||{};
+  const kinds=Object.keys(recs);
+  if(!kinds.length){ box.innerHTML=''; return; }
+  const rows=kinds.map(k=>{ const r=recs[k]||{}; const done=remiseComplete(r);
+    return `<div style="border-top:1px solid var(--border);padding:8px 0">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:6px"><b>${esc(KIND_LABELS[k]||k)}</b>
+        <span style="font-size:11px;padding:1px 7px;border-radius:6px;${done?'background:rgba(63,184,127,.15);color:var(--ok,#3fb87f)':'background:rgba(224,169,58,.15);color:var(--warn,#e0a93a)'}">${done?'✓ remise enregistrée':'⚠ remise à confirmer'}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <select onchange="saveRemise('${k}','mode',this.value)" style="font-size:12px;padding:4px 6px">
+          <option value="">Mode…</option>
+          <option value="main_propre"${r.mode==='main_propre'?' selected':''}>Main propre / décharge</option>
+          <option value="lrar"${r.mode==='lrar'?' selected':''}>LR/AR</option>
+          <option value="simple"${r.mode==='simple'?' selected':''}>Lettre simple</option>
+        </select>
+        <input type="date" value="${r.date_remise||''}" onchange="saveRemise('${k}','date_remise',this.value)" title="Date de remise / 1ʳᵉ présentation" style="font-size:12px;padding:3px 6px">
+        ${r.mode==='lrar'?`<input placeholder="N° de suivi LRAR" value="${esc(r.tracking||'')}" onchange="saveRemise('${k}','tracking',this.value)" style="font-size:12px;padding:3px 6px">`:''}
+        <label class="btn ghost" style="font-size:11px;padding:3px 8px;cursor:pointer">📎 Décharge signée<input type="file" accept="image/*,.pdf" onchange="uploadRemiseScan('${k}',event)" style="display:none"></label>
+        ${r.scan_path?'<span style="font-size:11px;color:var(--ok,#3fb87f)">✓ jointe</span>':''}
+      </div></div>`; }).join('');
+  const incomplete=kinds.filter(k=>!remiseComplete(recs[k]));
+  box.innerHTML=`<div style="background:var(--panel2,#1c1c28);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-top:12px">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)">📬 Suivi de remise ${incomplete.length?`<span style="color:var(--warn,#e0a93a)">— ${incomplete.length} à confirmer</span>`:''}</div>
+    <div style="font-size:11px;color:var(--muted);margin:4px 0 2px;line-height:1.5">La date de remise / 1ʳᵉ présentation fait courir tous les délais et est la 1ʳᵉ pièce réclamée en contentieux. Tant qu'elle manque, les calculs de délai reposent sur une date NON confirmée.</div>
+    ${rows}</div>`;
+}
+async function saveRemise(kind, field, value){
+  const id=document.getElementById('ed_id').value; if(!id)return;
+  S._docRecords=S._docRecords||{}; S._docRecords[kind]=S._docRecords[kind]||{};
+  S._docRecords[kind][field]=value||null;
+  // La date de 1ʳᵉ présentation de la CONVOCATION alimente le champ unique convocation_presentation_date (pas de 2e source).
+  const patch={pdfs:S._docRecords};
+  if(kind==='convocation' && field==='date_remise'){ patch.convocation_presentation_date=value||null;
+    const e=document.getElementById('ed_presentation_date'); if(e){ e.value=value||''; checkConvocDelai&&checkConvocDelai(); } }
+  await sb.from('disciplinary_actions').update(patch).eq('id',id);
+  renderRemiseZone();
+}
+async function uploadRemiseScan(kind, ev){
+  const f=ev.target.files&&ev.target.files[0]; ev.target.value=''; if(!f)return;
+  const id=document.getElementById('ed_id').value; if(!id)return;
+  const ext=(f.name.split('.').pop()||'bin').toLowerCase();
+  const path=`${id}/decharge_${kind}.${ext}`;
+  const{error}=await sb.storage.from('disciplinary-docs').upload(path, f, {upsert:true});
+  if(error){ alert('Échec de l\'upload : '+error.message); return; }
+  await saveRemise(kind,'scan_path',path);
 }
 function refreshPdfButtons(){ if(S._cur) renderPdfButtons(S._cur, document.getElementById('ed_type').value, S._locked); }
 // Panneau (étape Notification) : rappel légal + mini-calendrier des échéances à respecter
@@ -1243,10 +1366,17 @@ function checkConvocDelai(){
   if ((!c&&!pres)||!e){ box.innerHTML=''; return; }
   const anchor=convocDelaiAnchor(c, pres);
   const j=joursOuvrables(anchor, e);
+  const marge=delaiMargeConvoc(anchor, e, 5);
   const src = pres ? 'à compter de la 1ʳᵉ présentation' : 'à compter de la présentation ESTIMÉE (envoi + 2 j — renseigne la présentation réelle)';
-  box.innerHTML = j<5
-    ? `<div class="warn-box">⛔ <b>Délai non respecté</b> : ${j} jour(s) ouvrable(s) ${src} jusqu'à l'entretien. Minimum légal = <b>5 jours ouvrables</b>.</div>`
-    : `<div class="ok-box">✓ Délai respecté (${j} jours ouvrables ${src}).</div>`;
+  const noteEstim = pres ? '' : ' <b>Le calcul repose sur une date de présentation NON confirmée</b> — renseigne la 1ʳᵉ présentation réelle.';
+  if (j<5){
+    box.innerHTML = `<div class="warn-box">⛔ <b>Délai non respecté</b> : ${j} jour(s) ouvrable(s) ${src} jusqu'à l'entretien. Minimum légal = <b>5 jours ouvrables</b>.${noteEstim}</div>`;
+  } else if (marge===0){
+    // #2 — conforme n'est pas synonyme de sûr : marge nulle = une contestation de la date de remise fait basculer.
+    box.innerHTML = `<div class="warn-box" style="border-color:var(--warn,#e0a93a)">⚠ <b>Délai respecté, mais SANS marge</b> (5 jours ouvrables pile ${src}). Une contestation de la date de remise ferait basculer la procédure — <b>assure-toi d'avoir la décharge signée / l'avis de réception</b>.${noteEstim}</div>`;
+  } else {
+    box.innerHTML = `<div class="ok-box">✓ Délai respecté (${j} jours ouvrables ${src}, marge de ${marge} j).${noteEstim}</div>`;
+  }
 }
 function checkNotifDelai(){
   const box=document.getElementById('warnNotif'); if(!box) return;
@@ -1290,7 +1420,13 @@ function generatePDF(kind){
   const o = S.profile.organizations || {}, pp = S.params || {};
   const org = { nom: pp.raison_sociale || o.nom, forme: pp.forme_juridique, capital: pp.capital_social,
     adresse: pp.adresse, code_postal: pp.code_postal, ville: pp.ville, siret: pp.siret, rcs: pp.rcs,
-    tva: pp.num_tva, tel: pp.telephone, email: pp.email, rep: pp.representant_legal, rep_qualite: pp.representant_qualite, signature: pp.signature_data };
+    tva: pp.num_tva, tel: pp.telephone, email: pp.email, rep: pp.representant_legal,
+    // #4 — qualité du signataire : celle saisie, sinon dérivée de la forme juridique (SAS→Président, SARL→Gérant…).
+    rep_qualite: (pp.representant_qualite||'').trim() || titreSignataire(pp.forme_juridique) || '', signature: pp.signature_data };
+  // #4 — cohérence titre/forme (SAS signée « Gérant » = le cas du test) → avertissement NON bloquant à la génération.
+  { const inc=titreIncoherent(pp.forme_juridique, (pp.representant_qualite||'').trim());
+    if(inc && !window._titreWarnShown){ window._titreWarnShown=true;
+      alert(`⚠ Titre du signataire à vérifier.\n\nLa forme juridique est « ${pp.forme_juridique} » : le représentant légal porte normalement le titre de « ${inc.attendu} », or « ${inc.saisi} » est renseigné (« Gérant » est le titre d'une SARL/EURL, « Président » celui d'une SAS).\n\nÀ corriger dans Paramètres › Société si ce n'est pas une signature sur délégation de pouvoir.`); } }
   const sal = S.salaries.find(x=>x.id===document.getElementById('ed_salarie').value);
   if (!sal){ alert('Sélectionne un salarié d\'abord'); return; }
   const type=document.getElementById('ed_type').value;
@@ -1496,7 +1632,12 @@ function generatePDF(kind){
     doc.setFont('helvetica','bold'); doc.text('Je reconnais avoir pris connaissance de son contenu.',tx,dy); doc.setFont('helvetica','normal'); dy+=8;
     // lieu (pré-rempli ville entreprise) + date manuscrite jour/mois/année
     doc.text(winAnsi(`Lieu de remise : ${org.ville||'.............................'}`),tx,dy);
-    doc.text(`Date : ${dline}`,tx+90,dy); dy+=9;
+    doc.text(`Date : ${dline}`,tx+90,dy); dy+=5;
+    // #2 — la date écrite EN TOUTES LETTRES par le salarié rend la contestation difficile (valeur probatoire).
+    doc.setFont('helvetica','italic').setFontSize(7.5).setTextColor(90);
+    doc.text(winAnsi("Date à recopier en toutes lettres par le salarié (ex. « le treize juillet deux mille vingt-six ») :"),tx,dy); dy+=4;
+    doc.text('.........................................................................................................',tx,dy); dy+=6;
+    doc.setFont('helvetica','normal').setFontSize(9).setTextColor(0);
     // deux signatures côte à côte
     doc.setFont('helvetica','bold').setFontSize(9).setTextColor(0);
     doc.text('Le salarié', colL, dy);
@@ -1534,6 +1675,9 @@ function generatePDF(kind){
         .then(({error})=>{ if(error){ console.warn('[avert] archivage PDF:', error.message); alert('⚠️ Le PDF a bien été téléchargé sur cet appareil, mais son ARCHIVAGE dans le dossier a échoué :\n'+error.message+'\n\nLe courrier ne sera pas disponible dans « 📄 PDF ». Vérifie ta connexion et régénère le document (enjeu de preuve).'); } });
     }catch(e){ console.warn('[avert] archivage PDF:', e.message||e); alert('⚠️ PDF téléchargé mais NON archivé dans le dossier : '+(e.message||e)+'\nRégénère le document (enjeu de preuve).'); }
   }
+  // #1 — snapshot des faits + ligne de suivi de remise : UNIQUEMENT après une génération RÉELLE (ici, en fin de
+  // fonction) — jamais sur un chemin qui a avorté (convocation bloquée, salarié manquant → return anticipé plus haut).
+  recordDocGenerated(kind);
 }
 // ── Accès rapide aux courriers générés (bucket disciplinary-docs) ──
 const KIND_LABELS={ convocation:'Convocation à entretien', avertissement:'Avertissement / Blâme', sanction:'Notification de sanction', licenciement:'Lettre de licenciement', rupture:'Convention de rupture' };

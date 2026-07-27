@@ -184,7 +184,15 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       <div style="color:var(--muted);font-size:11.5px;margin-bottom:12px">Ces informations apparaissent sur les documents officiels : courriers disciplinaires (avertissements, convocations, licenciements) et factures.</div>
       <div class="grid2">
         <div class="fld"><label>Raison sociale *</label><input id="soc_raison_sociale" placeholder="Ex: RAYA GROUP"></div>
-        <div class="fld"><label>Forme juridique</label><input id="soc_forme" placeholder="SAS, SARL, EI…"></div>
+        <div class="fld"><label>Forme juridique</label>
+          <select id="soc_forme" onchange="onFormeChange()">
+            <option value="">— Choisir —</option>
+            <option value="SAS">SAS</option><option value="SASU">SASU</option>
+            <option value="SARL">SARL</option><option value="EURL">EURL</option>
+            <option value="SA">SA</option><option value="SNC">SNC</option><option value="SCI">SCI</option>
+            <option value="EI">Entreprise individuelle</option><option value="Micro-entreprise">Micro-entreprise</option>
+            <option value="Autre">Autre</option>
+          </select></div>
         <div class="fld"><label>SIRET</label><input id="soc_siret" placeholder="123 456 789 00012"></div>
         <div class="fld"><label>RCS</label><input id="soc_rcs" placeholder="Ex: Nancy B 123 456 789"></div>
         <div class="fld"><label>N° TVA intracommunautaire</label><input id="soc_tva" placeholder="FR…"></div>
@@ -198,7 +206,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       <h3>Représentant légal (signataire des courriers)</h3>
       <div class="grid2">
         <div class="fld"><label>Nom du dirigeant</label><input id="soc_rep" placeholder="Ex: Rayan AZZI"></div>
-        <div class="fld"><label>Qualité</label><input id="soc_rep_qualite" placeholder="Gérant, Président, Directeur…"></div>
+        <div class="fld"><label>Qualité</label><input id="soc_rep_qualite" placeholder="Gérant, Président, Directeur…" oninput="checkTitreCoherence()"><small id="soc_titre_warn" style="font-size:11px;color:var(--warn,#e0a93a)"></small></div>
       </div>
     </div>
     <div class="section">
@@ -216,7 +224,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
         <input type="checkbox" id="soc_cse" style="width:17px;height:17px;cursor:pointer">
         <span>L'entreprise dispose d'un CSE / de représentants du personnel<br><small style="color:var(--muted)">Si coché, la mention du conseiller extérieur et les adresses ne sont pas requises.</small></span>
       </label>
-      <div class="fld"><label>Adresse de l'inspection du travail compétente (unité territoriale de la DREETS)</label><input id="soc_insp" placeholder="Ex: DREETS — Unité territoriale des Vosges, 4 rue des …, 88000 Épinal"></div>
+      <div class="fld"><label>Adresse de l'inspection du travail compétente</label><input id="soc_insp" placeholder="Ex: DDETS des Vosges (ex-DIRECCTE), Cité administrative, 4 rue …, 88000 Épinal"><small style="color:var(--muted);font-size:11px">Dénominations en vigueur depuis 2021 : <b>DREETS</b> au niveau régional, <b>DDETS</b> / <b>DDETSPP</b> au niveau départemental (ex-DIRECCTE, ex-DDTEFP). Indique la structure départementale compétente pour l'établissement.</small></div>
       <div class="fld"><label>Adresse de la mairie du lieu de l'établissement</label><input id="soc_mairie" placeholder="Ex: Mairie d'Épinal, 9 rue du Général Leclerc, 88000 Épinal"></div>
     </div>
     <div class="section">
@@ -500,11 +508,14 @@ async function loadSociete(){
   const{data}=await sb.from('fact_parametres').select('*').eq('organization_id',ORG.id).maybeSingle();
   SOC=data||{};
   const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=(v==null?'':v);};
-  set('soc_raison_sociale',SOC.raison_sociale); set('soc_forme',SOC.forme_juridique);
+  set('soc_raison_sociale',SOC.raison_sociale);
+  // Forme : select ; une valeur historique en texte libre qui ne correspond à aucune option est ajoutée pour ne pas la perdre.
+  { const fs=document.getElementById('soc_forme'), fv=SOC.forme_juridique||'';
+    if(fs){ if(fv && ![...fs.options].some(o=>o.value===fv)) fs.add(new Option(fv,fv)); fs.value=fv; } }
   set('soc_siret',SOC.siret); set('soc_rcs',SOC.rcs); set('soc_tva',SOC.num_tva);
   set('soc_ape',SOC.ape_code); set('soc_capital',SOC.capital_social);
   set('soc_tel',SOC.telephone); set('soc_email',SOC.email);
-  set('soc_rep',SOC.representant_legal); set('soc_rep_qualite',SOC.representant_qualite);
+  set('soc_rep',SOC.representant_legal); set('soc_rep_qualite',SOC.representant_qualite); checkTitreCoherence();
   set('soc_adresse',SOC.adresse); set('soc_cp',SOC.code_postal); set('soc_ville',SOC.ville);
   set('soc_insp',SOC.adresse_inspection_travail); set('soc_mairie',SOC.adresse_mairie);
   { const e=document.getElementById('soc_cse'); if(e) e.checked=!!SOC.presence_cse; }
@@ -534,6 +545,23 @@ function uploadSig(ev){
   const rd=new FileReader();
   rd.onload=()=>{const img=new Image();img.onload=()=>{const c=document.getElementById('sigPad'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);const r=Math.min(c.width/img.width,c.height/img.height);const w=img.width*r,h=img.height*r;ctx.drawImage(img,(c.width-w)/2,(c.height-h)/2,w,h);sigData=c.toDataURL('image/png');renderSig();};img.src=rd.result;};
   rd.readAsDataURL(f);
+}
+// #4 — titre du signataire dérivé de la forme juridique (miroir des fonctions testées d'avertissements).
+function _normForme(f){ return String(f||'').toUpperCase().replace(/[^A-Z]/g,''); }
+function titreSignataire(forme){ const map={ SAS:'Président', SASU:'Président', SARL:'Gérant', EURL:'Gérant', SNC:'Gérant', SCI:'Gérant', SELARL:'Gérant', SA:'Président directeur général', EI:"L'exploitant", ENTREPRISEINDIVIDUELLE:"L'exploitant", EIRL:"L'exploitant", MICROENTREPRISE:"L'exploitant", AUTOENTREPRENEUR:"L'exploitant" }; return map[_normForme(forme)]||null; }
+function _familleTitre(t){ const n=_normForme(t); if(n.includes('GERANT'))return 'gerant'; if(n.includes('PRESIDENT')||n.includes('DIRECTEUR'))return 'president'; return n; }
+function titreIncoherent(forme, q){ const a=titreSignataire(forme); if(!a||!_normForme(q))return null; return _familleTitre(a)!==_familleTitre(q)?{attendu:a,saisi:q}:null; }
+function onFormeChange(){
+  const forme=(document.getElementById('soc_forme')||{}).value||'';
+  const q=document.getElementById('soc_rep_qualite');
+  const def=titreSignataire(forme);
+  if(q && !q.value.trim() && def){ q.value=def; }   // qualité vide → propose le titre par défaut (modifiable)
+  checkTitreCoherence();
+}
+function checkTitreCoherence(){
+  const w=document.getElementById('soc_titre_warn'); if(!w)return;
+  const inc=titreIncoherent((document.getElementById('soc_forme')||{}).value||'', (document.getElementById('soc_rep_qualite')||{}).value||'');
+  w.textContent = inc ? `⚠ Pour une ${(document.getElementById('soc_forme')||{}).value}, le titre attendu est « ${inc.attendu} » (sauf signature sur délégation de pouvoir).` : '';
 }
 async function saveSociete(){
   const v=id=>{const e=document.getElementById(id);return (e&&e.value.trim())?e.value.trim():null;};
