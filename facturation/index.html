@@ -18,8 +18,11 @@ html,body{height:100%}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 a{color:var(--gold);text-decoration:none}
 .hidden{display:none!important}
-input,select,textarea,button{font-family:inherit;color:var(--text)}
-button{cursor:pointer;border:none;background:none}
+/* Style de base commun à tous les champs du module : fond + texte du thème, lisible en clair comme en sombre.
+   Les classes spécifiques (.toolbar, .fld, .line-row, .lock…) ne surchargent que taille/largeur/alignement.
+   Corrige le bug d'illisibilité des conteneurs sans style dédié (ex. .grid4 du formulaire de paiement). */
+input,select,textarea{font-family:inherit;color:var(--text);background:var(--surface);border:1px solid var(--line-2);border-radius:7px;padding:9px 11px;font-size:13px;outline:none}
+button{font-family:inherit;color:var(--text);cursor:pointer;border:none;background:none}
 .btn{padding:9px 14px;border-radius:8px;background:var(--gold);color:#1a1a1a;font-weight:600;font-size:13px;border:none;display:inline-flex;align-items:center;gap:6px}
 .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line-2)}
 .btn.bad{background:var(--bad);color:#fff}
@@ -89,7 +92,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.1</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.2 — PDF facture refondu (logo, couleurs, regroupement par livraison, TVA par taux) + correctif champs paiement</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -383,60 +386,195 @@ async function saveFacture(){
   closeModal();renderFactures(document.getElementById('content'));
 }
 
-// ─────── PDF ───────
+// ─────── PDF (fonctions PURES, testables ; aucune dépendance jsPDF/DOM) ───────
+const _MOIS=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+function _dateLong(s){if(!s)return'';const[y,m,d]=String(s).split('-').map(Number);if(!m)return String(s);return `${d} ${_MOIS[m-1]} ${y}`;}
+function _hexToRgb(hex){hex=String(hex||'').trim().replace('#','');if(hex.length===3)hex=hex.split('').map(c=>c+c).join('');if(!/^[0-9a-fA-F]{6}$/.test(hex))return null;const n=parseInt(hex,16);return[(n>>16)&255,(n>>8)&255,n&255];}
+function _relLum(rgb){const a=rgb.map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);});return 0.2126*a[0]+0.7152*a[1]+0.0722*a[2];}
+function _contrast(a,b){const l1=_relLum(a),l2=_relLum(b);return (Math.max(l1,l2)+0.05)/(Math.min(l1,l2)+0.05);}
+function _textColorFor(rgb){return _relLum(rgb)>0.5?[17,17,17]:[255,255,255];} // noir/blanc lisible sur ce fond
+function _fmtTva(t){return String(t).replace('.',',')+' %';}
+// Formatage € SANS espace fine insécable (U+202F/U+00A0) que la police jsPDF rend « / » → espace simple.
+function _eurPdf(n){const s=(n==null||isNaN(n))?'0,00':Number(n).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});return s.replace(/[  ]/g,' ')+' €';}
+// Alerte de contraste pour l'interface (deux directions) :
+//  - texte auto (noir/blanc) sur le fond coloré ≥ 4.5 ; - couleur en TEXTE sur blanc ≥ 3.
+function _colorContrastIssue(hex){const rgb=_hexToRgb(hex);if(!rgb)return 'Couleur invalide';const onFill=_contrast(rgb,_textColorFor(rgb));const asText=_contrast(rgb,[255,255,255]);
+  // Seuil 3.0 : texte de facture large/gras (AA « grand texte »). Deux directions : texte sur le fond coloré, et couleur en TEXTE sur blanc (libellés, filets).
+  if(asText<3)return 'trop claire : peu lisible en texte/libellé sur fond blanc';if(onFill<3)return 'contraste faible du texte sur ce fond à l\'impression';return null;}
+
+// Modèle de facture : groupé par bon de livraison, TVA par ligne via le catalogue, ventilation par taux.
+// PUR : reçoit facture + BLs + produits + params ; ne touche ni au DOM ni à la base. `tR` fait foi pour la ligne.
+function factureModel(facture,bls,produits,par){
+  par=par||{};
+  const prod=new Map((produits||[]).map(p=>[p.nom,p]));
+  const defTva=par.tva_defaut!=null?Number(par.tva_defaut):5.5;
+  const tvaOf=nom=>{const p=prod.get(nom);return p&&p.tva!=null?Number(p.tva):defTva;};
+  const groups=[];
+  if(facture.bl_ids&&facture.bl_ids.length&&bls&&bls.length){
+    const ordered=[...bls].sort((a,b)=>String(a.date_livraison||'').localeCompare(String(b.date_livraison||'')));
+    for(const bl of ordered){
+      const lignes=(bl.lignes||[]).map(l=>{
+        const qte=Number(l.qte!=null?l.qte:(l.quantite||0));
+        const puHT=+Number(l.r!=null?l.r:(l.prix_unitaire_ht||l.pu_ht||0)).toFixed(2);
+        const totalHT=+Number(l.tR!=null?l.tR:((l.r||0)*qte)).toFixed(2); // tR = source de vérité de la ligne
+        // Taux : celui STOCKÉ sur la ligne (ce qui a été facturé) prioritaire ; sinon catalogue ; sinon défaut.
+        const tva=l.tva!=null?Number(l.tva):tvaOf(l.nom);
+        return {nom:l.nom||l.designation||'',qte,puHT,tva,totalHT,totalTTC:+(totalHT*(1+tva/100)).toFixed(2)};
+      });
+      groups.push({titre:'Livraison du '+_dateLong(bl.date_livraison),lignes});
+    }
+  }else{
+    const fl=facture._lignes||[];
+    const lignes=fl.map(l=>{
+      const qte=Number(l.quantite!=null?l.quantite:(l.qte||1));
+      const puHT=+Number(l.prix_unitaire_ht!=null?l.prix_unitaire_ht:(l.pu_ht||0)).toFixed(2);
+      const totalHT=+Number(l.total_ht!=null?l.total_ht:(qte*puHT)).toFixed(2);
+      const tva=Number(l.tva_pct!=null?l.tva_pct:(l.tva!=null?l.tva:defTva));
+      return {nom:l.designation||l.nom||'',qte,puHT,tva,totalHT,totalTTC:+(totalHT*(1+tva/100)).toFixed(2)};
+    });
+    if(lignes.length)groups.push({titre:null,lignes});
+  }
+  const tvaByRate={};
+  for(const g of groups)for(const l of g.lignes){const k=String(l.tva);if(!tvaByRate[k])tvaByRate[k]={taux:l.tva,base:0,montant:0};tvaByRate[k].base=+(tvaByRate[k].base+l.totalHT).toFixed(2);}
+  for(const k in tvaByRate)tvaByRate[k].montant=+(tvaByRate[k].base*tvaByRate[k].taux/100).toFixed(2);
+  const calcHT=+Object.values(tvaByRate).reduce((a,t)=>a+t.base,0).toFixed(2);
+  const calcTVA=+Object.values(tvaByRate).reduce((a,t)=>a+t.montant,0).toFixed(2);
+  const calcTTC=+(calcHT+calcTVA).toFixed(2);
+  // Total affiché = valeur STOCKÉE (autorité comptable + html archivé) ; le calcul peut différer d'1 centime (arrondis).
+  const totalHT=facture.total_ht!=null?Number(facture.total_ht):calcHT;
+  const totalTTC=facture.total_ttc!=null?Number(facture.total_ttc):calcTTC;
+  // La ventilation par taux n'est FIABLE que si elle se reconcilie avec la TVA stockée. Sur d'anciennes factures
+  // sans taux stocké sur la ligne et dont le catalogue a évolué depuis, elle serait fausse → on ne l'affiche pas.
+  const tvaStockee=+(totalTTC-totalHT).toFixed(2);
+  const tvaReconciles=Math.abs(calcTVA-tvaStockee)<=0.02;
+  return {groups,tvaByRate,calcHT,calcTVA,calcTTC,totalHT,totalTTC,tvaStockee,tvaReconciles};
+}
+
+// ─────── PDF (rendu jsPDF ; le logo est la seule image, tout le reste est du texte vectoriel) ───────
 async function downloadFacturePDF(id){
   toast('Génération PDF…');
   const{data:f}=await sb.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
   if(!f){toast('Facture introuvable');return;}
   const par=S.fparam||{};
+  // Lignes : soit via les bons de livraison (bl_ids), soit via factures_lignes (facture saisie à la main).
+  let bls=[];
+  if(f.bl_ids&&f.bl_ids.length){const{data}=await sb.from('bons_livraison').select('id,date_livraison,lignes').in('id',f.bl_ids);bls=data||[];}
+  else{const{data}=await sb.from('factures_lignes').select('*').eq('facture_id',id).order('ordre');f._lignes=data||[];}
+  const model=factureModel(f,bls,S.produits,par);
+
+  const accent=_hexToRgb(par.couleur_accent)||_hexToRgb(ORG.couleur_primaire)||[232,98,42];
+  const bandeau=_hexToRgb(par.couleur_bandeau)||[58,58,64];
+  const accentTxt=_textColorFor(accent), bandeauTxt=_textColorFor(bandeau);
   const{jsPDF}=window.jspdf;
-  const doc=new jsPDF({unit:'mm',format:'a4'});
-  // En-tête vendeur (gauche)
-  doc.setFontSize(18);doc.setFont(undefined,'bold');doc.text(par.raison_sociale||ORG.nom||'Eatime360',14,20);
-  doc.setFont(undefined,'normal');doc.setFontSize(9);doc.setTextColor(80);
-  let y=27;
-  if(par.adresse){doc.text(par.adresse,14,y);y+=4;}
-  if(par.code_postal||par.ville){doc.text(`${par.code_postal||''} ${par.ville||''}`.trim(),14,y);y+=4;}
-  if(par.telephone)doc.text(`Tél : ${par.telephone}`,14,y+=4);
-  if(par.email)doc.text(`Email : ${par.email}`,14,y+=4);
-  // En-tête facture (droite)
-  doc.setTextColor(0);doc.setFontSize(22);doc.setFont(undefined,'bold');doc.text('FACTURE',196,20,{align:'right'});
-  doc.setFontSize(11);doc.setFont(undefined,'normal');doc.text(`N° ${f.numero||'?'}`,196,28,{align:'right'});
-  doc.setFontSize(9);doc.setTextColor(80);doc.text(`Date : ${fmtD(f.date_facture)}`,196,34,{align:'right'});
-  // Client (droite)
-  doc.setTextColor(0);doc.setFontSize(10);doc.setFont(undefined,'bold');doc.text('Facturé à :',196,52,{align:'right'});
-  doc.setFont(undefined,'normal');doc.setFontSize(11);doc.text(f.clients?.nom||'—',196,58,{align:'right'});
-  doc.setFontSize(9);doc.setTextColor(80);
-  if(f.clients?.adr)doc.text(f.clients.adr,196,63,{align:'right'});
-  if(f.clients?.ville)doc.text(f.clients.ville,196,67,{align:'right'});
-  doc.setTextColor(0);
-  // Lignes depuis la table relationnelle (factures.lignes n'existe pas — A2)
-  const{data:fl}=await sb.from('factures_lignes').select('*').eq('facture_id',id).order('ordre');
-  const lignes=fl||[];
-  doc.autoTable({
-    startY:78,
-    head:[['Désignation','Qté','PU HT','TVA','Total HT']],
-    body:lignes.map(l=>[l.nom||l.designation||'',l.qte||l.quantite||1,(l.pu_ht||l.prix_unitaire_ht||0).toFixed(2)+' €',(l.tva||l.tva_pct||5.5)+'%',(((l.qte||l.quantite||1)*(l.pu_ht||l.prix_unitaire_ht||0)).toFixed(2)+' €')]),
-    theme:'grid',styles:{fontSize:9,cellPadding:3},headStyles:{fillColor:[200,160,53],textColor:[26,26,26]}
+  const doc=new jsPDF({unit:'mm',format:'a4',compress:true}); // compression → PDF de quelques dizaines de ko
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight();
+  const L=14, R=PW-14;
+
+  // ── En-tête : logo + identité (gauche), FACTURE + N° (droite) ──
+  let hx=L, topY=14;
+  if(par.logo_url){try{const pr=doc.getImageProperties(par.logo_url);const bw=30,bh=16,rr=Math.min(bw/pr.width,bh/pr.height);const fmt=/image\/png/i.test(par.logo_url)?'PNG':'JPEG';doc.addImage(par.logo_url,fmt,L,topY,pr.width*rr,pr.height*rr);hx=L+34;}catch(e){hx=L;}}
+  doc.setTextColor(30);doc.setFont(undefined,'bold');doc.setFontSize(13);doc.text(par.raison_sociale||ORG.nom||'',hx,topY+5);
+  doc.setFont(undefined,'normal');doc.setFontSize(8);doc.setTextColor(90);
+  let ay=topY+10;
+  if(par.adresse){doc.text(par.adresse,hx,ay);ay+=3.6;}
+  const cpv=`${par.code_postal||''} ${par.ville||''}`.trim();if(cpv){doc.text(cpv,hx,ay);ay+=3.6;}
+  if(par.telephone){doc.text(par.telephone,hx,ay);ay+=3.6;}
+  if(par.email){doc.text(par.email,hx,ay);ay+=3.6;}
+  doc.setTextColor(20);doc.setFont(undefined,'bold');doc.setFontSize(26);doc.text('FACTURE',R,topY+6,{align:'right'});
+  doc.setFont(undefined,'normal');doc.setFontSize(11);doc.setTextColor(90);doc.text('N° '+(f.numero||''),R,topY+13,{align:'right'});
+  // Filet d'accent sous l'en-tête
+  const ruleY=Math.max(ay,topY+22)+1;
+  doc.setDrawColor(accent[0],accent[1],accent[2]);doc.setLineWidth(1.1);doc.line(L,ruleY,R,ruleY);
+
+  // ── Blocs d'info : « Facturer à » (gauche) + tableau facture (droite) ──
+  let iy=ruleY+7;
+  doc.setFontSize(7.5);doc.setTextColor(accent[0],accent[1],accent[2]);doc.setFont(undefined,'bold');doc.text('FACTURER À',L,iy);
+  doc.setTextColor(20);doc.setFontSize(11);doc.text(f.clients?.nom||'—',L,iy+6);
+  doc.setFont(undefined,'normal');doc.setFontSize(8.5);doc.setTextColor(70);
+  let cy=iy+11;
+  if(f.clients?.adr){doc.text(String(f.clients.adr),L,cy);cy+=4;}
+  if(f.clients?.ville){doc.text(String(f.clients.ville),L,cy);cy+=4;}
+  if(f.clients?.ref){doc.text('Réf : '+f.clients.ref,L,cy);cy+=4;}
+  const infoRows=[['N° de facture',f.numero||''],['Date',fmtD(f.date_facture)],['Réf. client',f.clients?.ref||'—'],['Conditions',par.conditions_paiement||'—'],['Règlement',par.mode_reglement||'—']];
+  let ry2=iy;doc.setFontSize(8.5);
+  infoRows.forEach(([k,v])=>{doc.setTextColor(120);doc.setFont(undefined,'normal');doc.text(k,120,ry2);doc.setTextColor(20);doc.setFont(undefined,'bold');doc.text(doc.splitTextToSize(String(v),R-152)[0],R,ry2,{align:'right'});ry2+=5.2;});
+  // Bandeau d'info paiement pleine largeur
+  const stripY=Math.max(cy,ry2)+3;
+  const stripText=[par.conditions_paiement,par.mode_reglement?('Paiement par '+String(par.mode_reglement).toLowerCase()):'',(par.iban?'IBAN en bas de page':'')].filter(Boolean).join(' — ');
+  if(stripText){doc.setFillColor(244,244,246);doc.rect(L,stripY,R-L,7,'F');doc.setTextColor(90);doc.setFontSize(8);doc.setFont(undefined,'italic');doc.text(stripText,L+2,stripY+4.6);doc.setFont(undefined,'normal');}
+  const tableStartY=stripY+(stripText?11:4);
+
+  // ── Tableau : bandeaux de livraison intercalés comme lignes colSpan (autoTable gère la pagination) ──
+  const body=[];
+  model.groups.forEach(g=>{
+    if(g.titre)body.push([{content:g.titre,colSpan:6,styles:{fillColor:bandeau,textColor:bandeauTxt,fontStyle:'bold',halign:'left',fontSize:8.5}}]);
+    g.lignes.forEach(l=>body.push([l.nom,String(l.qte),_eurPdf(l.puHT),_fmtTva(l.tva),_eurPdf(l.totalHT),_eurPdf(l.totalTTC)]));
   });
-  let yt=doc.lastAutoTable.finalY+6;
-  // Totaux
-  doc.setFontSize(10);
-  doc.text(`Total HT : ${eur(f.total_ht)}`,196,yt,{align:'right'});yt+=5;
-  doc.text(`TVA : ${eur(Number(f.total_ttc)-Number(f.total_ht))}`,196,yt,{align:'right'});yt+=5;
-  doc.setFontSize(13);doc.setFont(undefined,'bold');doc.text(`Total TTC : ${eur(f.total_ttc)}`,196,yt,{align:'right'});
-  // Paiements
+  if(!body.length)body.push([{content:'Aucune ligne',colSpan:6,styles:{halign:'center',textColor:[150,150,150]}}]);
+  doc.autoTable({
+    startY:tableStartY,
+    head:[['DESCRIPTION','QTÉ','PRIX U. HT','TVA','TOTAL HT','TOTAL TTC']],
+    body,
+    theme:'plain',
+    styles:{fontSize:8.5,cellPadding:{top:1.7,bottom:1.7,left:2,right:2},textColor:[35,35,40],lineColor:[232,232,236],lineWidth:0.1},
+    headStyles:{fillColor:bandeau,textColor:bandeauTxt,fontStyle:'bold',fontSize:8},
+    alternateRowStyles:{fillColor:[248,248,250]},
+    columnStyles:{0:{cellWidth:64,halign:'left'},1:{cellWidth:16,halign:'center'},2:{cellWidth:28,halign:'right'},3:{cellWidth:18,halign:'center'},4:{cellWidth:28,halign:'right'},5:{cellWidth:28,halign:'right'}},
+    margin:{top:18,bottom:26,left:L,right:14},
+  });
+
+  // ── Blocs bas : coordonnées bancaires (gauche) + totaux (droite) ──
+  let by=doc.lastAutoTable.finalY+9;
+  const nRates=Object.keys(model.tvaByRate).length;
+  if(by+(16+nRates*5.5)+16>PH-20){doc.addPage();by=20;}
+  // Bancaire (gauche)
+  let ly=by;
+  if(par.iban||par.bic||par.banque){
+    doc.setFontSize(7.5);doc.setTextColor(accent[0],accent[1],accent[2]);doc.setFont(undefined,'bold');doc.text('COORDONNÉES BANCAIRES',L,ly);ly+=5;
+    doc.setFont(undefined,'normal');doc.setTextColor(60);doc.setFontSize(8.5);
+    if(par.banque){doc.text(String(par.banque),L,ly);ly+=4.5;}
+    if(par.iban){doc.text('IBAN : '+par.iban,L,ly);ly+=4.5;}
+    if(par.bic){doc.text('BIC : '+par.bic,L,ly);ly+=4.5;}
+  }
+  // Totaux (droite)
+  let ty=by;const lblX=118;
+  doc.setFontSize(9.5);doc.setFont(undefined,'normal');doc.setTextColor(50);
+  doc.text('Total HT',lblX,ty);doc.text(_eurPdf(model.totalHT),R,ty,{align:'right'});ty+=5.5;
+  if(model.tvaReconciles){
+    // Ventilation par taux (base + montant) — fiable car elle se reconcilie avec la TVA stockée.
+    Object.values(model.tvaByRate).sort((a,b)=>b.taux-a.taux).forEach(t=>{
+      doc.setTextColor(90);doc.text(`TVA ${_fmtTva(t.taux)} (base : ${_eurPdf(t.base)})`,lblX,ty);doc.setTextColor(50);doc.text(_eurPdf(t.montant),R,ty,{align:'right'});ty+=5.5;
+    });
+  }else{
+    // Taux de ligne non reconstituables de façon fiable → TVA globale (montant stocké exact), pas de détail faux.
+    doc.setTextColor(90);doc.text('TVA',lblX,ty);doc.setTextColor(50);doc.text(_eurPdf(model.tvaStockee),R,ty,{align:'right'});ty+=5.5;
+  }
+  ty+=1.5;
+  doc.setFillColor(accent[0],accent[1],accent[2]);doc.rect(lblX,ty-4,R-lblX,9,'F');
+  doc.setTextColor(accentTxt[0],accentTxt[1],accentTxt[2]);doc.setFont(undefined,'bold');doc.setFontSize(12);
+  doc.text('TOTAL TTC',lblX+3,ty+2);doc.text(_eurPdf(model.totalTTC),R-2,ty+2,{align:'right'});
+  doc.setFont(undefined,'normal');doc.setTextColor(0);
+  ty+=11;
+  // Encaissements éventuels
   const totPaye=(f.fact_paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0)+Number(f.montant_paye||0);
-  if(totPaye>0){yt+=6;doc.setFontSize(10);doc.setTextColor(40,160,90);doc.text(`Encaissé : ${eur(totPaye)}`,196,yt,{align:'right'});yt+=5;const rest=Math.max(0,Number(f.total_ttc)-totPaye);if(rest>0){doc.setTextColor(180,80,40);doc.text(`Reste dû : ${eur(rest)}`,196,yt,{align:'right'});}else{doc.text('Facture soldée',196,yt,{align:'right'});}}
-  doc.setTextColor(0);doc.setFont(undefined,'normal');
-  // Mentions légales (bas de page)
-  let yLeg=260;doc.setFontSize(7);doc.setTextColor(120);
-  if(par.conditions_paiement){doc.text(par.conditions_paiement,14,yLeg);yLeg+=3;}
-  if(par.penalites_retard){const lines=doc.splitTextToSize(par.penalites_retard,180);lines.forEach(l=>{doc.text(l,14,yLeg);yLeg+=3;});}
-  if(par.iban||par.bic){yLeg+=2;doc.setTextColor(0);doc.text(`IBAN : ${par.iban||''} · BIC : ${par.bic||''}`,14,yLeg);yLeg+=3;}
-  doc.setTextColor(120);
-  const legal=[par.siret?`SIRET : ${par.siret}`:'',par.rcs?`RCS : ${par.rcs}`:'',par.num_tva?`TVA : ${par.num_tva}`:'',par.ape_code?`APE : ${par.ape_code}`:'',par.capital_social?`Capital : ${par.capital_social} €`:''].filter(Boolean).join(' · ');
-  if(legal)doc.text(legal,105,290,{align:'center'});
+  if(totPaye>0){doc.setFontSize(9);doc.setTextColor(40,150,90);doc.text('Encaissé : '+_eurPdf(totPaye),R,ty,{align:'right'});ty+=5;const rest=Math.max(0,Number(f.total_ttc)-totPaye);doc.setTextColor(rest>0?190:40,rest>0?90:150,rest>0?40:90);doc.text(rest>0?('Reste dû : '+_eurPdf(rest)):'Facture soldée',R,ty,{align:'right'});doc.setTextColor(0);}
+
+  // ── Pénalités / mentions (juste au-dessus du pied), pied de page légal + pagination (2e passe) ──
+  const forme=par.forme_juridique||'';
+  const cap=par.capital_social?`${forme?forme+' ':''}au capital de ${_eurPdf(par.capital_social)}`:forme;
+  const legal1=[par.raison_sociale||ORG.nom,[par.adresse,cpv].filter(Boolean).join(' '),par.telephone?('Tél : '+par.telephone):''].filter(Boolean).join(' · ');
+  const legal2=[cap,par.rcs?('RCS '+par.rcs):'',par.siret?('SIRET '+par.siret):'',par.ape_code?('APE '+par.ape_code):'',par.num_tva?('TVA '+par.num_tva):'',par.email].filter(Boolean).join(' · ');
+  const penal=[par.penalites_retard,par.mentions_complementaires].filter(Boolean).join('  ');
+  const N=doc.getNumberOfPages();
+  for(let i=1;i<=N;i++){
+    doc.setPage(i);
+    if(i===N&&penal){doc.setFontSize(6.6);doc.setTextColor(120);doc.setFont(undefined,'normal');const pl=doc.splitTextToSize(penal,R-L);let pyy=PH-20-pl.length*2.6;pl.forEach(t=>{doc.text(t,L,pyy);pyy+=2.6;});}
+    doc.setDrawColor(accent[0],accent[1],accent[2]);doc.setLineWidth(0.3);doc.line(L,PH-15,R,PH-15);
+    doc.setFontSize(6.8);doc.setTextColor(130);
+    if(legal1)doc.text(legal1,PW/2,PH-11,{align:'center'});
+    if(legal2)doc.text(legal2,PW/2,PH-8,{align:'center'});
+    if(N>1)doc.text(`page ${i}/${N}`,R,PH-8,{align:'right'});
+  }
   doc.save(`Facture_${(f.numero||'').replace(/[^a-zA-Z0-9-]/g,'_')}.pdf`);
 }
 
@@ -543,17 +681,64 @@ function renderParametres(el){
     </div>
     <div class="fld"><label>BIC</label><input id="fp_bic" value="${p.bic||''}"></div>
   </div>
+  <div class="section"><h3>Apparence de la facture (PDF)</h3>
+    <div class="grid2">
+      <div class="fld"><label>Logo (affiché en haut à gauche)</label>
+        <input type="file" id="fp_logo_file" accept="image/*" onchange="onLogoPick(event)">
+        <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
+          <img id="fp_logo_prev" src="${p.logo_url||''}" alt="" style="max-height:48px;max-width:150px;border:1px solid var(--line-2);border-radius:6px;padding:4px;background:#fff;${p.logo_url?'':'display:none'}">
+          <div>
+            <div id="fp_logo_info" style="font-size:11.5px;color:var(--muted)">${p.logo_url?'Logo enregistré.':'Aucun logo — le nom de l\'entreprise s\'affichera à la place.'}</div>
+            <button class="btn ghost sm" type="button" onclick="removeLogo()" style="margin-top:5px">Retirer le logo</button>
+          </div>
+        </div>
+      </div>
+      <div class="fld"><label>Mode de règlement (bandeau d'info)</label><input id="fp_reglement" value="${p.mode_reglement||'Par virement'}" placeholder="Par virement"></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Couleur d'accent — filets, total TTC</label><input type="color" id="fp_accent" value="${p.couleur_accent||ORG.couleur_primaire||'#e8622a'}" onchange="checkColorContrast()" style="height:40px;padding:3px;width:100%"></div>
+      <div class="fld"><label>Couleur des bandeaux — regroupements, en-têtes</label><input type="color" id="fp_bandeau" value="${p.couleur_bandeau||'#3a3a40'}" onchange="checkColorContrast()" style="height:40px;padding:3px;width:100%"></div>
+    </div>
+    <div id="fp_color_warn" style="display:none;color:var(--warn);font-size:12px;background:rgba(224,169,58,.12);padding:8px 10px;border-radius:8px;margin-top:2px"></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px">Le texte (noir ou blanc) est choisi automatiquement selon la luminosité de chaque couleur, pour rester lisible à l'impression.</div>
+  </div>
   <div class="section"><h3>Mentions légales</h3>
     <div class="fld"><label>Conditions de paiement</label><input id="fp_cond" value="${p.conditions_paiement||'Paiement à 30 jours fin de mois'}"></div>
     <div class="fld"><label>Pénalités de retard (obligatoire)</label><textarea id="fp_pen" rows="2">${p.penalites_retard||'Pénalités de retard : 3× le taux d\'intérêt légal. Indemnité forfaitaire de recouvrement : 40 €'}</textarea></div>
     <div class="fld"><label>Mentions complémentaires</label><textarea id="fp_mt" rows="2">${p.mentions_complementaires||''}</textarea></div>
   </div>
   <div style="text-align:right"><button class="btn" onclick="saveFparam()">Enregistrer les paramètres</button></div>`;
+  LOGO_DATA=undefined; checkColorContrast();
+}
+// LOGO_DATA : undefined = inchangé, null = retiré, string = nouveau data URL (base64 PNG).
+let LOGO_DATA=undefined;
+function onLogoPick(ev){
+  const file=ev.target.files&&ev.target.files[0]; if(!file)return;
+  if(!/^image\//.test(file.type)){toast('Choisis un fichier image');return;}
+  const reader=new FileReader();
+  reader.onload=()=>{const img=new Image();img.onload=()=>{
+    const maxW=320, scale=Math.min(1,maxW/img.width);
+    const w=Math.max(1,Math.round(img.width*scale)), h=Math.max(1,Math.round(img.height*scale));
+    const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+    cv.getContext('2d').drawImage(img,0,0,w,h); // PNG → conserve la transparence (pas de fond noir)
+    LOGO_DATA=cv.toDataURL('image/png');
+    const prev=document.getElementById('fp_logo_prev');if(prev){prev.src=LOGO_DATA;prev.style.display='block';}
+    document.getElementById('fp_logo_info').textContent=`Nouveau logo prêt (~${Math.round(LOGO_DATA.length*0.75/1024)} ko).`;
+  };img.onerror=()=>toast('Image illisible');img.src=reader.result;};
+  reader.readAsDataURL(file);
+}
+function removeLogo(){LOGO_DATA=null;const prev=document.getElementById('fp_logo_prev');if(prev)prev.style.display='none';const i=document.getElementById('fp_logo_info');if(i)i.textContent='Logo retiré (sera enregistré au clic sur Enregistrer).';}
+function checkColorContrast(){
+  const el=document.getElementById('fp_color_warn');if(!el)return;
+  const msgs=[];const ia=_colorContrastIssue(val('fp_accent'));const ib=_colorContrastIssue(val('fp_bandeau'));
+  if(ia)msgs.push('Accent — '+ia);if(ib)msgs.push('Bandeau — '+ib);
+  el.innerHTML=msgs.length?('⚠️ '+msgs.join(' · ')):'';el.style.display=msgs.length?'block':'none';
 }
 async function saveFparam(){
-  const payload={organization_id:ORG.id,raison_sociale:val('fp_rs'),forme_juridique:val('fp_fj')||null,siret:val('fp_sir')||null,rcs:val('fp_rcs')||null,num_tva:val('fp_tva')||null,ape_code:val('fp_ape')||null,capital_social:num('fp_cap'),adresse:val('fp_adr')||null,code_postal:val('fp_cp')||null,ville:val('fp_vil')||null,telephone:val('fp_tel')||null,email:val('fp_em')||null,iban:val('fp_iban')||null,bic:val('fp_bic')||null,banque:val('fp_bk')||null,conditions_paiement:val('fp_cond')||null,penalites_retard:val('fp_pen')||null,mentions_complementaires:val('fp_mt')||null,prefix_numero:val('fp_pre')||''};
+  const payload={organization_id:ORG.id,raison_sociale:val('fp_rs'),forme_juridique:val('fp_fj')||null,siret:val('fp_sir')||null,rcs:val('fp_rcs')||null,num_tva:val('fp_tva')||null,ape_code:val('fp_ape')||null,capital_social:num('fp_cap'),adresse:val('fp_adr')||null,code_postal:val('fp_cp')||null,ville:val('fp_vil')||null,telephone:val('fp_tel')||null,email:val('fp_em')||null,iban:val('fp_iban')||null,bic:val('fp_bic')||null,banque:val('fp_bk')||null,conditions_paiement:val('fp_cond')||null,penalites_retard:val('fp_pen')||null,mentions_complementaires:val('fp_mt')||null,prefix_numero:val('fp_pre')||'',couleur_accent:val('fp_accent')||null,couleur_bandeau:val('fp_bandeau')||null,mode_reglement:val('fp_reglement')||null};
+  if(LOGO_DATA!==undefined) payload.logo_url=LOGO_DATA; // n'écrit le logo que s'il a changé (sinon préservé)
   const{error}=await sb.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
-  if(error){toast(error.message);return;}toast('✓ Paramètres enregistrés');await loadCommonData();
+  if(error){toast(error.message);return;}toast('✓ Paramètres enregistrés');LOGO_DATA=undefined;await loadCommonData();
 }
 
 function closeModal(){document.getElementById('modalHost').innerHTML='';}
