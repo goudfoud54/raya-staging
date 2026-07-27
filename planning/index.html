@@ -125,6 +125,48 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 .chk{padding:5px 11px;border-radius:6px;font-size:11.5px;display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line)}
 .chk.ok{border-color:rgba(63,184,127,.3);color:var(--ok)}
 .chk.ko{border-color:rgba(196,90,90,.4);color:var(--bad)}
+
+/* ════════ VUE MOBILE (< 820px) — une seule dimension à la fois : par JOUR ou par SALARIÉ ════════ */
+#mobileView{display:none}
+.mv-daybar{display:flex;align-items:center;gap:8px;position:sticky;top:0;z-index:15;background:var(--bg);padding:10px 12px;border-bottom:1px solid var(--line)}
+.mv-daybar .nav{width:44px;height:44px;flex-shrink:0;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:20px;display:flex;align-items:center;justify-content:center}
+.mv-daybar .lbl{flex:1;text-align:center;font-size:16px;font-weight:600}
+.mv-daybar .lbl small{display:block;font-size:11px;color:var(--muted);font-weight:400}
+.mv-daybar .act{width:44px;height:44px;flex-shrink:0;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:18px}
+.mv-modebar{display:flex;gap:8px;padding:10px 12px 4px}
+.mv-modebar button{flex:1;min-height:40px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);color:var(--muted);font-size:13px;font-weight:600}
+.mv-modebar button.on{background:var(--gold);color:#1a1a1a;border-color:transparent}
+.mv-cov{display:flex;gap:6px;flex-wrap:wrap;padding:6px 12px 10px}
+.mv-cov .b{font-size:11px;padding:4px 9px;border-radius:7px;border:1px solid var(--line);display:flex;align-items:center;gap:5px}
+.mv-cov .b .dt{width:7px;height:7px;border-radius:50%}
+.mv-cov .b.ok{background:rgba(63,184,127,.12)}.mv-cov .b.under{background:rgba(224,169,58,.14)}.mv-cov .b.over{background:rgba(196,90,90,.14)}
+.mv-cards{padding:4px 12px 24px;display:flex;flex-direction:column;gap:9px}
+.mv-card{border:1px solid var(--line-2);border-left:5px solid var(--scol,#666);border-radius:12px;background:var(--card);overflow:hidden}
+.mv-card .hd{display:flex;align-items:center;gap:9px;padding:12px 13px;min-height:44px}
+.mv-card .hd .nm{font-weight:600;font-size:14.5px;flex:1}
+.mv-card .hd .tot{font-size:12px;color:var(--muted);font-weight:600}
+.mv-card .badges{display:flex;gap:5px;flex-wrap:wrap;padding:0 13px 8px;font-size:10.5px}
+.mv-card .badges span{padding:1px 6px;border-radius:5px;font-weight:700}
+.mv-card .svc{display:flex;gap:9px;padding:0 13px 12px}
+.mv-card .svc .s{flex:1;border-radius:9px;padding:8px 10px;font-size:13px;min-height:44px;display:flex;flex-direction:column;justify-content:center;border:1px solid var(--line)}
+.mv-card .svc .s.midi{background:var(--midi)}.mv-card .svc .s.soir{background:var(--soir)}
+.mv-card .svc .s .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.mv-card .svc .s .v{font-weight:600;font-family:monospace}
+.mv-card .svc .s.empty .v{color:var(--muted);font-weight:400}
+.mv-card .edit{border-top:1px solid var(--line);padding:11px 13px;background:var(--surface)}
+.mv-card .edit .erow{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.mv-card .edit .erow label{font-size:11px;color:var(--muted);width:42px;flex-shrink:0}
+.mv-card .edit input{flex:1;min-height:44px;border-radius:9px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:15px;font-family:monospace;text-align:center;padding:0 6px}
+.mv-card .edit .blocked{font-size:12px;color:var(--muted);padding:6px 0}
+.mv-empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:13px}
+@media(max-width:820px){
+  .grid-wrap,.eff-wrap,.checks{display:none}
+  #mobileView{display:block}
+  .header{padding:9px 12px;gap:8px}
+  .brand{font-size:14px}
+  .h-actions{gap:6px}
+  .h-actions .weeknav[title="Zoom"],#sortSel,#vSal,#vPoste{display:none} /* leviers non pertinents en mobile */
+}
 </style>
 </head>
 <body>
@@ -196,6 +238,8 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 
   <div class="grid-wrap"><table class="plan" id="planTbl"></table></div>
 
+  <div id="mobileView"></div>
+
   <div class="checks"><h3>Vérifications</h3><div class="chk-list" id="checks"></div></div>
 </div>
 
@@ -241,7 +285,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.53 · PDF soigné : en-tête (logo org, couleur primaire en accent, semaine), colonne nom en couleur franche du salarié (texte auto noir/blanc), cellules midi/soir distinctes, week-end marqué, absences (congé/école) affichées, total d\'heures par salarié, pied de page + pagination';
+const VERSION='v0.54 · vue MOBILE (< 820px) : rendu par JOUR (sélecteur de jour, couverture, cartes salarié éditables au tap) ou par SALARIÉ (ses 7 jours), mêmes helpers/badges que la grille ; la vue bureau reste inchangée. PDF soigné (v0.53) + couleurs salarié distinctes (salaries v0.17)';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -654,21 +698,23 @@ function renderEffectifs(){
   document.getElementById('effGrid').innerHTML=html;
 }
 
-function renderTable(){
-  // salariés à afficher : sur l'effectif de la semaine ET (du snack OU déjà un créneau cette semaine)
-  // onRoster exclut les sortis (semaines postérieures à leur date_sortie) et les supprimés → zéro ligne fantôme.
+// Liste des salariés à afficher (grille bureau ET vue mobile) : sur l'effectif de la semaine ET (du snack OU
+// déjà un créneau) ; onRoster exclut les sortis/supprimés. Tri persistant 'pl_sort'. SOURCE UNIQUE → la vue
+// mobile ne peut pas diverger de la grille.
+function _rosterList(){
   const sidsWithCreneau=new Set(S.creneaux.map(c=>c.salarie_id));
-  // Tri configurable (persisté 'pl_sort', défaut 'role' = comportement historique). Nom = nom+prénom
-  // alpha ; Heures = total hebdo (weekHoursOf : inter-snack pour un multi) décroissant, départage par nom.
   const sortMode=localStorage.getItem('pl_sort')||'role';
   const byName=(a,b)=>(((a.nom||'')+' '+(a.prenom||'')).trim()).localeCompare(((b.nom||'')+' '+(b.prenom||'')).trim());
-  const list=S.salaries.filter(s=>onRoster(s) && (worksAt(s,SNACK.id) || sidsWithCreneau.has(s.id)))
+  return S.salaries.filter(s=>onRoster(s) && (worksAt(s,SNACK.id) || sidsWithCreneau.has(s.id)))
     .sort((a,b)=>{
       if(sortMode==='nom') return byName(a,b);
       if(sortMode==='heures'){ const d=weekHoursOf(b.id)-weekHoursOf(a.id); if(Math.abs(d)>0.01) return d; return byName(a,b); }
       const ra=roleMain(a.id),rb=roleMain(b.id); if(ra!==rb) return (ra||'z').localeCompare(rb||'z'); return byName(a,b);
     });
-  { const ss=document.getElementById('sortSel'); if(ss) ss.value=sortMode; }
+}
+function renderTable(){
+  const list=_rosterList();
+  { const ss=document.getElementById('sortSel'); if(ss) ss.value=localStorage.getItem('pl_sort')||'role'; }
 
   // header
   let thead='<thead><tr><th class="salhead">Salarié</th>';
@@ -1369,7 +1415,113 @@ function render(){
   if(VIEW_MODE==='poste') renderPosteTable(); else renderTable();
   renderChecks();updateUndoBtns();updateViewButtons();updateDemandesBadge();
   recomputeAggregates();   // point de passage unique : coûts/heures toujours à jour après TOUT rendu (auto-fill, undo/redo, bascule de vue, import…)
+  renderMobile();          // vue mobile (< 820px) — même données, mêmes helpers que la grille (jamais de divergence)
   setSS('','');
+}
+
+// ════════ VUE MOBILE (< 820px) ════════════════════════════════════════════════════════════════════
+// Rendu alternatif conditionné à la largeur (CSS) : la grille bureau reste INCHANGÉE. Réutilise les MÊMES
+// helpers que la grille (getCreneau, hasIndispo, altDayType, contrOf, rowHoursCell, saveCell, autoFillDay…)
+// pour ne jamais diverger. Deux dimensions, une seule à la fois : par JOUR (défaut) ou par SALARIÉ.
+let mobileMode='jour', mobileDay=-1, mobileSalId=null, mobileOpenKey=null;
+function setMobileMode(m){ mobileMode=m; mobileOpenKey=null; renderMobile(); }
+function mvNavDay(delta){ mobileDay=Math.max(0,Math.min(6,mobileDay+delta)); mobileOpenKey=null; renderMobile(); }
+function mvPickSal(sid){ mobileSalId=sid; mobileOpenKey=null; renderMobile(); }
+function mvToggleCard(key){ mobileOpenKey=(mobileOpenKey===key?null:key); renderMobile(); }
+async function mvSave(sid,date,svc,which,el){ await saveCell(sid,date,svc,which,el); renderMobile(); }
+function _mvTot(sid,date){ return _pdur((getCreneau(sid,date,'midi')||{}).heure_debut,(getCreneau(sid,date,'midi')||{}).heure_fin)+_pdur((getCreneau(sid,date,'soir')||{}).heure_debut,(getCreneau(sid,date,'soir')||{}).heure_fin); }
+// Badges d'un salarié (rôle + indispo/école + contrainte 🔒 + cumul inter-snack) — repris de la grille.
+function _mvBadges(s,date){
+  let b='';
+  rolesOf(s.id).forEach(cle=>{ b+=`<span style="background:${roleCol(cle)}22;color:${roleCol(cle)};border:1px solid ${roleCol(cle)}55">${escP((roleNom(cle).charAt(0)||'').toUpperCase())}${isExp(s.id,cle)?'★':'🔰'}</span>`; });
+  if(date){ const adt=altDayType(s.id,date); if(adt) b+=`<span style="background:rgba(91,156,255,.14);color:#5b9cff">${adt==='examen'?'📝 Examen':'🎓 École'}</span>`;
+    const ind=hasIndispo(s.id,date); if(ind){const ib=indispoBadge(ind);b+=`<span style="background:rgba(224,169,58,.16);color:var(--warn)">${ib.ic} ${escP(ib.lbl)}</span>`;} }
+  const cs=contrOf(s.id); if(cs.length) b+=`<span title="${escP(cs.map(_contrLabelOf).join(' · '))}" style="background:rgba(74,127,189,.14);color:#4a7fbd">🔒 ${cs.length}</span>`;
+  const oth=otherSnackHoursOf(s.id); if(oth>0.01) b+=`<span style="background:rgba(200,160,53,.14);color:var(--gold)">+${fmtH1(oth)}h ailleurs</span>`;
+  return b;
+}
+// Bloc service (midi/soir) d'une carte : affichage + (si ouvert) champs éditables réutilisant saveCell.
+function _mvSvcBlock(s,date,svc){
+  const cr=getCreneau(s.id,date,svc)||{};
+  const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5), empty=!(hd||hf);
+  return `<div class="s ${svc}${empty?' empty':''}"><span class="k">${svc==='midi'?'Midi':'Soir'}</span><span class="v">${empty?'—':escP(hd)+' → '+escP(hf)}</span></div>`;
+}
+function _mvEditPanel(s,date){
+  // Journée entière bloquée (école/indispo sans heures) → pas d'édition, on explique.
+  const adt=altDayType(s.id,date), ind=hasIndispo(s.id,date);
+  if(adt==='ecole'||adt==='examen') return `<div class="edit"><div class="blocked">${adt==='examen'?'📝 Examen':'🎓 École'} — alternant indisponible ce jour.</div></div>`;
+  if(ind && !(ind.heure_debut||ind.heure_fin)) return `<div class="edit"><div class="blocked">${indispoBadge(ind).ic} ${escP(indispoBadge(ind).lbl)} — journée entière, non modifiable ici.</div></div>`;
+  let h='<div class="edit">';
+  for(const svc of ['midi','soir']){
+    const cr=getCreneau(s.id,date,svc)||{}; const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
+    h+=`<div class="erow"><label>${svc==='midi'?'Midi':'Soir'}</label>
+      <input type="text" inputmode="numeric" maxlength="5" placeholder="dbt" value="${hd}" data-saved="${hd}" onblur="mvSave('${s.id}','${date}','${svc}','deb',this)">
+      <input type="text" inputmode="numeric" maxlength="5" placeholder="fin" value="${hf}" data-saved="${hf}" onblur="mvSave('${s.id}','${date}','${svc}','fin',this)"></div>`;
+  }
+  return h+'</div>';
+}
+// Bandeau de couverture d'un jour (rôles/services sous ou sur-couverts) — via _effStatus (présence simultanée).
+function _mvCoverage(date,jt){
+  const parts=[];
+  for(const svc of ['midi','soir']){ const t=targetFor(mobileDay,svc);
+    for(const r of S.orgRoles){ const tgt=t[r.cle]||{cible:0}; if(!tgt.cible)continue;
+      const st=_effStatus(date,jt,svc,r.cle); const cl=st.over?'over':(st.under?'under':'ok');
+      parts.push(`<span class="b ${cl}"><span class="dt" style="background:${roleCol(r.cle)}"></span>${svc==='midi'?'M':'S'} ${escP(roleNom(r.cle).slice(0,4))} ${st.peak}/${tgt.cible}</span>`);
+    } }
+  return parts.length?`<div class="mv-cov">${parts.join('')}</div>`:'';
+}
+function _mvDayView(list){
+  if(mobileDay<0) mobileDay=Math.min(6,Math.max(0,(new Date().getDay()+6)%7)); // aujourd'hui si dans la semaine
+  const date=fmtDate(dateOfDay(mobileDay)), jt=dayJourType(mobileDay);
+  const dObj=dateOfDay(mobileDay);
+  let h=`<div class="mv-daybar">
+    <button class="nav" onclick="mvNavDay(-1)" ${mobileDay<=0?'disabled style="opacity:.4"':''}>‹</button>
+    <div class="lbl">${JOURS[mobileDay]}<small>${dObj.getDate()} ${dObj.toLocaleDateString('fr-FR',{month:'long'})}</small></div>
+    <button class="nav" onclick="mvNavDay(1)" ${mobileDay>=6?'disabled style="opacity:.4"':''}>›</button>
+    <button class="act" onclick="autoFillDay(${mobileDay})" title="Remplir ce jour">🎲</button></div>`;
+  h+=_mvCoverage(date,jt);
+  if(!list.length) return h+'<div class="mv-empty">Aucun salarié pour ce snack.</div>';
+  h+='<div class="mv-cards">';
+  list.forEach(s=>{
+    const key=s.id+'|'+date, open=(mobileOpenKey===key), tot=_mvTot(s.id,date);
+    h+=`<div class="mv-card" style="--scol:${s.couleur||'#666'}">
+      <div class="hd" onclick="mvToggleCard('${key}')"><span class="dot" style="width:11px;height:11px;border-radius:50%;background:${s.couleur||'#666'};flex-shrink:0"></span>
+        <span class="nm">${escP(fullName(s))}</span><span class="tot">${tot>0?fmtH1(tot/60)+'h':'—'}</span><span style="color:var(--muted)">${open?'▲':'▾'}</span></div>
+      <div class="badges">${_mvBadges(s,date)}</div>
+      <div class="svc" onclick="mvToggleCard('${key}')">${_mvSvcBlock(s,date,'midi')}${_mvSvcBlock(s,date,'soir')}</div>
+      ${open?_mvEditPanel(s,date):''}</div>`;
+  });
+  return h+'</div>';
+}
+function _mvSalView(list){
+  if(!list.length) return '<div class="mv-empty">Aucun salarié pour ce snack.</div>';
+  if(!mobileSalId || !list.some(s=>s.id===mobileSalId)) mobileSalId=list[0].id;
+  const idx=list.findIndex(s=>s.id===mobileSalId), s=list[idx];
+  const rh=rowHoursCell(s);
+  let h=`<div class="mv-daybar">
+    <button class="nav" onclick="mvPickSal('${list[Math.max(0,idx-1)].id}')" ${idx<=0?'disabled style="opacity:.4"':''}>‹</button>
+    <div class="lbl">${escP(fullName(s))}<small>total ${rh.html.replace(/<[^>]+>/g,' ').trim()}</small></div>
+    <button class="nav" onclick="mvPickSal('${list[Math.min(list.length-1,idx+1)].id}')" ${idx>=list.length-1?'disabled style="opacity:.4"':''}>›</button></div>`;
+  h+=`<div class="badges" style="padding:8px 13px;display:flex;gap:5px;flex-wrap:wrap;font-size:10.5px">${_mvBadges(s,'')}</div>`;
+  h+='<div class="mv-cards">';
+  for(let i=0;i<7;i++){
+    const date=fmtDate(dateOfDay(i)), key='sal|'+s.id+'|'+date, open=(mobileOpenKey===key), tot=_mvTot(s.id,date);
+    const dObj=dateOfDay(i);
+    h+=`<div class="mv-card" style="--scol:${s.couleur||'#666'}">
+      <div class="hd" onclick="mvToggleCard('${key}')"><span class="nm">${JOURS[i]} <span style="color:var(--muted);font-weight:400;font-size:12px">${dObj.getDate()}</span></span><span class="tot">${tot>0?fmtH1(tot/60)+'h':'—'}</span><span style="color:var(--muted)">${open?'▲':'▾'}</span></div>
+      <div class="svc" onclick="mvToggleCard('${key}')">${_mvSvcBlock(s,date,'midi')}${_mvSvcBlock(s,date,'soir')}</div>
+      ${open?_mvEditPanel(s,date):''}</div>`;
+  }
+  return h+'</div>';
+}
+function renderMobile(){
+  const host=document.getElementById('mobileView'); if(!host) return;
+  const list=_rosterList();
+  let h=`<div class="mv-modebar">
+    <button class="${mobileMode==='jour'?'on':''}" onclick="setMobileMode('jour')">📅 Par jour</button>
+    <button class="${mobileMode==='sal'?'on':''}" onclick="setMobileMode('sal')">👤 Par salarié</button></div>`;
+  h+=(mobileMode==='jour')?_mvDayView(list):_mvSalView(list);
+  host.innerHTML=h;
 }
 
 function renderPosteTable(){
