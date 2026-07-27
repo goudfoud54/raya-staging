@@ -92,7 +92,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.2.1 — PDF facture : pénalités de retard centrées comme le pied de page légal</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.3 — fix double comptage de l'encaissé (source unique fact_paiements) + info-bulles boutons</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -174,7 +174,7 @@ async function renderDashboard(el){
   let totTTC=0,totEncaisse=0,totRestant=0,nbEmis=0,nbPaye=0;
   F.forEach(f=>{
     const ttc=Number(f.total_ttc)||0;totTTC+=ttc;
-    const paye=(f.fact_paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0)+Number(f.montant_paye||0);
+    const paye=encaisseFacture(f);
     totEncaisse+=Math.min(paye,ttc);
     totRestant+=Math.max(0,ttc-paye);
     if(f.statut==='emise'||f.statut==='partiel')nbEmis++;
@@ -193,7 +193,7 @@ async function renderDashboard(el){
     </div>
     <div class="section"><h3>Factures non soldées</h3>
       <table class="tbl"><thead><tr><th>N°</th><th>Client</th><th>Date</th><th>TTC</th><th>Reste dû</th><th>Statut</th></tr></thead><tbody>
-        ${F.filter(f=>f.statut==='emise'||f.statut==='partiel').slice(0,10).map(f=>{const paye=(f.fact_paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0)+Number(f.montant_paye||0);const rest=Number(f.total_ttc)-paye;return `<tr onclick="openFacture('${f.id}')" style="cursor:pointer"><td><b>${f.numero||'?'}</b></td><td>${f.clients?.nom||'—'}</td><td>${fmtD(f.date_facture)}</td><td>${eur(f.total_ttc)}</td><td style="color:var(--warn);font-weight:700">${eur(rest)}</td><td><span class="badge ${f.statut==='paye'?'ok':f.statut==='partiel'?'warn':'info'}">${STATUTS[f.statut]}</span></td></tr>`;}).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px">✓ Tout est encaissé</td></tr>'}
+        ${F.filter(f=>f.statut==='emise'||f.statut==='partiel').slice(0,10).map(f=>{const paye=encaisseFacture(f);const rest=Math.max(0,Number(f.total_ttc)-paye);return `<tr onclick="openFacture('${f.id}')" style="cursor:pointer"><td><b>${f.numero||'?'}</b></td><td>${f.clients?.nom||'—'}</td><td>${fmtD(f.date_facture)}</td><td>${eur(f.total_ttc)}</td><td style="color:var(--warn);font-weight:700">${eur(rest)}</td><td><span class="badge ${f.statut==='paye'?'ok':f.statut==='partiel'?'warn':'info'}">${STATUTS[f.statut]}</span></td></tr>`;}).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px">✓ Tout est encaissé</td></tr>'}
       </tbody></table>
     </div>`;
   el.innerHTML=html;
@@ -219,9 +219,9 @@ function renderFacturesList(){
   let html=`<table class="tbl"><thead><tr><th>N°</th><th>Date</th><th>Client</th><th>HT</th><th>TTC</th><th>Payé</th><th>Statut</th><th></th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucune facture</td></tr>';
   else list.forEach(f=>{
-    const paye=(f.fact_paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0)+Number(f.montant_paye||0);
+    const paye=encaisseFacture(f);
     const stat=f.statut==='paye'?'ok':f.statut==='partiel'?'warn':f.statut==='annulee'?'bad':'info';
-    html+=`<tr><td><b>${f.numero||'?'}</b></td><td>${fmtD(f.date_facture)}</td><td>${f.clients?.nom||'—'}</td><td>${eur(f.total_ht)}</td><td><b>${eur(f.total_ttc)}</b></td><td style="color:${paye>=Number(f.total_ttc)?'var(--ok)':'var(--warn)'}">${eur(paye)}</td><td><span class="badge ${stat}">${STATUTS[f.statut]||f.statut}</span></td><td><button class="btn ghost sm" onclick="openFacture('${f.id}')">👁</button> <button class="btn ghost sm" onclick="downloadFacturePDF('${f.id}')" title="Télécharger PDF">📄</button></td></tr>`;
+    html+=`<tr><td><b>${f.numero||'?'}</b></td><td>${fmtD(f.date_facture)}</td><td>${f.clients?.nom||'—'}</td><td>${eur(f.total_ht)}</td><td><b>${eur(f.total_ttc)}</b></td><td style="color:${paye>=Number(f.total_ttc)?'var(--ok)':'var(--warn)'}">${eur(paye)}</td><td><span class="badge ${stat}">${STATUTS[f.statut]||f.statut}</span></td><td><button class="btn ghost sm" onclick="openFacture('${f.id}')" title="Voir la facture">👁</button> <button class="btn ghost sm" onclick="downloadFacturePDF('${f.id}')" title="Télécharger PDF">📄</button></td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('facList').innerHTML=html;
@@ -235,7 +235,7 @@ async function openFacture(id){
   const{data:fl}=await sb.from('factures_lignes').select('*').eq('facture_id',id).order('ordre');
   const lignes=fl||[];
   const paiements=f.fact_paiements||[];
-  const totPaye=paiements.reduce((a,p)=>a+Number(p.montant||0),0)+Number(f.montant_paye||0);
+  const totPaye=encaisseFacture(f);
   const restant=Math.max(0,Number(f.total_ttc)-totPaye);
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:880px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">
@@ -257,9 +257,9 @@ async function openFacture(id){
     </div>
     <div class="section"><h3>Paiements (${paiements.length})</h3>
       <table class="tbl"><thead><tr><th>Date</th><th>Mode</th><th>Référence</th><th>Montant</th><th></th></tr></thead><tbody>
-      ${paiements.map(p=>`<tr><td>${fmtD(p.date_paiement)}</td><td>${MODES[p.mode]||p.mode}</td><td style="color:var(--muted);font-size:12px">${p.reference||''}</td><td><b>${eur(p.montant)}</b></td><td><button class="btn ghost sm" onclick="delPaiement('${p.id}','${f.id}')">✕</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:14px">Aucun paiement enregistré</td></tr>'}
+      ${paiements.map(p=>`<tr><td>${fmtD(p.date_paiement)}</td><td>${MODES[p.mode]||p.mode}</td><td style="color:var(--muted);font-size:12px">${p.reference||''}</td><td><b>${eur(p.montant)}</b></td><td><button class="btn ghost sm" onclick="delPaiement('${p.id}','${f.id}')" title="Supprimer ce paiement">✕</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:14px">Aucun paiement enregistré</td></tr>'}
       </tbody></table>
-      ${restant>0?`<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+      ${f.statut!=='annulee'&&restant>0?`<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
         <div style="font-weight:600;font-size:13px;margin-bottom:8px">+ Ajouter un paiement</div>
         <div class="grid4">
           <input type="number" step="0.01" id="p_mt" placeholder="Montant" value="${restant.toFixed(2)}">
@@ -279,13 +279,20 @@ async function openFacture(id){
 
 async function addPaiement(facId,totalTTC){
   const mt=parseFloat(val('p_mt'));if(isNaN(mt)||mt<=0){toast('Montant invalide');return;}
+  // Garde-fou : une facture migrée porte son encaissement dans le cache montant_paye, SANS détail.
+  // Y insérer un premier règlement recalculerait montant_paye depuis les seules lignes, écrasant
+  // l'historique (perte de donnée comptable). On bloque explicitement — blocage visible > écrasement
+  // silencieux — plutôt que de matérialiser nous-mêmes l'historique (une écriture, à valider avec le patron).
+  const{data:avant}=await sb.from('factures').select('montant_paye,fact_paiements(id)').eq('id',facId).maybeSingle();
+  if(avant&&!(avant.fact_paiements||[]).length&&Number(avant.montant_paye||0)>0){
+    toast('Encaissement historique de '+eur(avant.montant_paye)+' sans détail : saisissez-le d\'abord comme ligne de règlement.');return;
+  }
   const{error}=await sb.from('fact_paiements').insert({organization_id:ORG.id,facture_id:facId,date_paiement:val('p_date'),montant:mt,mode:val('p_mode')});
   if(error){toast(error.message);return;}
-  // Recalcule statut facture
+  // Recalcule le cache depuis le détail (source de vérité) → jamais de double comptage à l'affichage.
   const{data:paiements}=await sb.from('fact_paiements').select('montant').eq('facture_id',facId);
   const totPaye=(paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0);
-  const statut=totPaye>=Number(totalTTC)?'paye':totPaye>0?'partiel':'emise';
-  const{error:eF}=await sb.from('factures').update({statut,montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
+  const{error:eF}=await sb.from('factures').update({statut:statutFacture(totalTTC,totPaye),montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
   toast('✓ Paiement enregistré');openFacture(facId);renderFactures(document.getElementById('content'));
 }
 async function delPaiement(id,facId){
@@ -294,8 +301,9 @@ async function delPaiement(id,facId){
   const{data:f}=await sb.from('factures').select('total_ttc').eq('id',facId).maybeSingle();
   const{data:paiements}=await sb.from('fact_paiements').select('montant').eq('facture_id',facId);
   const totPaye=(paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0);
-  const statut=totPaye>=Number(f.total_ttc)?'paye':totPaye>0?'partiel':'emise';
-  const{error:eF}=await sb.from('factures').update({statut,montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
+  // Recalcule le cache depuis le détail restant. Supprimer le dernier règlement écrit montant_paye=0,
+  // et le repli d'encaisseFacture renvoie alors 0 : le cache s'auto-répare. NE PAS router par encaisseFacture ici.
+  const{error:eF}=await sb.from('factures').update({statut:statutFacture(f.total_ttc,totPaye),montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
   openFacture(facId);
 }
 async function annulerFacture(id){
@@ -337,7 +345,7 @@ function renderLignes(){
       <input type="number" step="0.01" value="${l.prix_unitaire_ht||0}" onchange="updateLigne(${i},'prix_unitaire_ht',this.value)">
       <select onchange="updateLigne(${i},'tva_pct',this.value)">${TVA_TAUX.map(t=>`<option value="${t}" ${Number(l.tva_pct)===t?'selected':''}>${t}%</option>`).join('')}</select>
       <div style="text-align:right;font-weight:600">${eur(totHT)}</div>
-      <button class="btn ghost sm" onclick="removeLigne(${i})">✕</button>
+      <button class="btn ghost sm" onclick="removeLigne(${i})" title="Supprimer la ligne">✕</button>
     </div>`;
   });
   html+=`<datalist id="prodList">${S.produits.map(p=>`<option value="${p.nom}" data-pu="${p.prix_revente||0}" data-tva="${p.tva||5.5}"></option>`).join('')}</datalist>`;
@@ -450,6 +458,21 @@ function factureModel(facture,bls,produits,par){
   return {groups,tvaByRate,calcHT,calcTVA,calcTTC,totalHT,totalTTC,tvaStockee,tvaReconciles};
 }
 
+// ─────── Encaissement : SOURCE DE VÉRITÉ UNIQUE ───────
+// `fact_paiements` (le détail des règlements) fait foi. `montant_paye` n'est qu'un cache dénormalisé,
+// utile uniquement pour l'historique migré qui n'a pas de détail. montant_paye EST la somme de fact_paiements :
+// les additionner double chaque règlement (bug du premier encaissement réel sur 2026-07-002).
+// Règle : s'il existe au moins une ligne de règlement → on ne compte QUE celles-ci ; sinon repli sur le cache.
+function encaisseFacture(f){
+  const dp=Array.isArray(f&&f.fact_paiements)?f.fact_paiements:[];
+  if(dp.length) return +dp.reduce((a,p)=>a+Number(p.montant||0),0).toFixed(2);
+  return +Number((f&&f.montant_paye)||0).toFixed(2);
+}
+// Statut dérivé du même total encaissé — une seule formule, réutilisée par les chemins d'écriture.
+function statutFacture(totalTTC,encaisse){
+  return encaisse>=Number(totalTTC)?'paye':encaisse>0?'partiel':'emise';
+}
+
 // ─────── PDF (rendu jsPDF ; le logo est la seule image, tout le reste est du texte vectoriel) ───────
 async function downloadFacturePDF(id){
   toast('Génération PDF…');
@@ -556,7 +579,7 @@ async function downloadFacturePDF(id){
   doc.setFont(undefined,'normal');doc.setTextColor(0);
   ty+=11;
   // Encaissements éventuels
-  const totPaye=(f.fact_paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0)+Number(f.montant_paye||0);
+  const totPaye=encaisseFacture(f);
   if(totPaye>0){doc.setFontSize(9);doc.setTextColor(40,150,90);doc.text('Encaissé : '+_eurPdf(totPaye),R,ty,{align:'right'});ty+=5;const rest=Math.max(0,Number(f.total_ttc)-totPaye);doc.setTextColor(rest>0?190:40,rest>0?90:150,rest>0?40:90);doc.text(rest>0?('Reste dû : '+_eurPdf(rest)):'Facture soldée',R,ty,{align:'right'});doc.setTextColor(0);}
 
   // ── Pénalités / mentions (juste au-dessus du pied), pied de page légal + pagination (2e passe) ──
@@ -594,7 +617,7 @@ async function renderBLs(el){
 function renderClients(el){
   let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openClient()">+ Nouveau client</button></div>
     <table class="tbl"><thead><tr><th>Nom</th><th>Référence</th><th>Adresse</th><th>Ville</th><th></th></tr></thead><tbody>`;
-  S.clients.forEach(c=>{html+=`<tr><td><b>${c.nom}</b></td><td>${c.ref||'—'}</td><td style="color:var(--muted);font-size:12px">${c.adr||''}</td><td>${c.ville||''}</td><td><button class="btn ghost sm" onclick='openClient(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delClient('${c.id}')">✕</button></td></tr>`;});
+  S.clients.forEach(c=>{html+=`<tr><td><b>${c.nom}</b></td><td>${c.ref||'—'}</td><td style="color:var(--muted);font-size:12px">${c.adr||''}</td><td>${c.ville||''}</td><td><button class="btn ghost sm" onclick='openClient(${JSON.stringify(c).replace(/'/g,"&#39;")})' title="Modifier le client">✎</button> <button class="btn ghost sm" onclick="delClient('${c.id}')" title="Supprimer le client">✕</button></td></tr>`;});
   if(!S.clients.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucun client</td></tr>';
   html+='</tbody></table>';
   el.innerHTML=html;
@@ -626,7 +649,7 @@ async function delClient(id){if(!confirm('Supprimer ce client ?'))return;const{e
 function renderCatalogue(el){
   let html=`<div class="toolbar"><input id="prod_q" placeholder="Rechercher…" oninput="filterCat()"><div style="flex:1"></div><button class="btn" onclick="openProd()">+ Nouveau produit</button></div>
     <table class="tbl"><thead><tr><th>Nom</th><th>Catégorie</th><th>PU HT</th><th>TVA</th><th></th></tr></thead><tbody id="catTbody">`;
-  S.produits.forEach(p=>{html+=`<tr data-pn="${p.nom.toLowerCase()}"><td><b>${p.nom}</b></td><td style="color:var(--muted);font-size:12px">${p.cat||'—'}</td><td><b>${eur(p.prix_revente)}</b></td><td>${p.tva||5.5}%</td><td><button class="btn ghost sm" onclick='openProd(${JSON.stringify(p).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delProd('${p.id}')">✕</button></td></tr>`;});
+  S.produits.forEach(p=>{html+=`<tr data-pn="${p.nom.toLowerCase()}"><td><b>${p.nom}</b></td><td style="color:var(--muted);font-size:12px">${p.cat||'—'}</td><td><b>${eur(p.prix_revente)}</b></td><td>${p.tva||5.5}%</td><td><button class="btn ghost sm" onclick='openProd(${JSON.stringify(p).replace(/'/g,"&#39;")})' title="Modifier le produit">✎</button> <button class="btn ghost sm" onclick="delProd('${p.id}')" title="Supprimer le produit">✕</button></td></tr>`;});
   html+='</tbody></table>';
   el.innerHTML=html;
 }

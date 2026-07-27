@@ -7,7 +7,7 @@ const h=fs.readFileSync(require('path').join(__dirname,'..','facturation/index.h
 const from=h.indexOf('const _MOIS=');
 const to=h.indexOf('// ─────── PDF (rendu jsPDF');
 if(from<0||to<0) throw new Error('bloc de fonctions pures introuvable');
-eval(h.slice(from,to)+';Object.assign(global,{_dateLong,_hexToRgb,_relLum,_contrast,_textColorFor,_fmtTva,_eurPdf,_colorContrastIssue,factureModel});');
+eval(h.slice(from,to)+';Object.assign(global,{_dateLong,_hexToRgb,_relLum,_contrast,_textColorFor,_fmtTva,_eurPdf,_colorContrastIssue,factureModel,encaisseFacture,statutFacture});');
 
 let ok=true;const t=(l,c)=>{console.log((c?'PASS':'FAIL')+' · '+l);ok=c&&ok;};
 
@@ -68,5 +68,32 @@ t('repli factures_lignes : 1 groupe sans titre', m2.groups.length===1 && m2.grou
 t('repli : TVA de la ligne = tva_pct (20)', m2.groups[0].lignes[0].tva===20);
 t('repli : Total TTC = 36 (30 + 20%)', m2.groups[0].lignes[0].totalTTC===36);
 t('repli : totaux calculés en l\'absence de valeurs stockées', m2.totalHT===30 && m2.totalTTC===36);
+
+// ── Encaissement : SOURCE DE VÉRITÉ UNIQUE (bug du double comptage sur 2026-07-002) ──
+// Détail seul : on ne compte QUE fact_paiements, jamais + montant_paye.
+t('détail seul (règlement unique 8415,03 + cache 8415,03) → 8415,03, PAS 16830,06',
+  encaisseFacture({fact_paiements:[{montant:8415.03}],montant_paye:8415.03})===8415.03);
+t('détail multi-lignes : 3000 + 2400,03 → 5400,03', encaisseFacture({fact_paiements:[{montant:3000},{montant:2400.03}],montant_paye:5400.03})===5400.03);
+// Facture migrée : aucun détail, on retombe sur le cache montant_paye.
+t('migrée (0 détail, cache 7950,66) → repli sur 7950,66', encaisseFacture({fact_paiements:[],montant_paye:7950.66})===7950.66);
+t('migrée sans propriété fact_paiements → repli sur le cache', encaisseFacture({montant_paye:5400})===5400);
+// fact_paiements présent mais VIDE → repli sur le cache (auto-réparation après suppression du dernier règlement).
+t('détail présent mais vide → repli sur le cache', encaisseFacture({fact_paiements:[],montant_paye:120})===120);
+t('dernier règlement supprimé (cache remis à 0) → 0', encaisseFacture({fact_paiements:[],montant_paye:0})===0);
+// Partielle : détail partiel prioritaire même si un vieux cache traîne.
+t('partielle : détail 2000 prioritaire (cache ignoré) → 2000', encaisseFacture({fact_paiements:[{montant:2000}],montant_paye:9999})===2000);
+t('facture sans encaissement → 0', encaisseFacture({fact_paiements:[],montant_paye:null})===0);
+
+// ── Statut dérivé du même total (cohérence écran ↔ écriture) ──
+t('statut : encaissé ≥ TTC → payé', statutFacture(8415.03,8415.03)==='paye');
+t('statut : 0 < encaissé < TTC → partiel', statutFacture(8415.03,2000)==='partiel');
+t('statut : encaissé 0 → émise', statutFacture(8415.03,0)==='emise');
+t('statut : sur-paiement (arrondi) ≥ TTC → payé', statutFacture(100,100.001)==='paye');
+
+// ── Garde-fou anti-régression : la formule fautive n'existe PLUS nulle part dans le module ──
+// (le double comptage venait de « …reduce(...) + Number(f.montant_paye||0) » recopié à 5 endroits).
+t('aucun site ne rajoute montant_paye au total du détail (single source)',
+  (h.match(/\+\s*Number\(\s*f\.montant_paye/g)||[]).length===0);
+t('encaisseFacture est bien défini une seule fois', (h.match(/function encaisseFacture\(/g)||[]).length===1);
 
 console.log(ok?'\nALL PASS':'\nSOME FAILED');process.exit(ok?0:1);
