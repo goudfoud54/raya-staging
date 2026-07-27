@@ -119,7 +119,7 @@ textarea{resize:vertical;min-height:80px}
 <body>
 
 <header>
-  <h1>⚠️ Avertissements & Sanctions</h1>
+  <h1>⚠️ Avertissements & Sanctions <small style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">v0.1 — info-bulles maison</small></h1>
   <span class="badge" id="orgBadge">—</span>
   <span class="sp"></span>
   <button class="btn ghost" onclick="location.href='../index.html'">← Retour</button>
@@ -579,7 +579,7 @@ function render(){
         ${d.entretien_date?`<span>👥 Entretien : ${fmtDate(d.entretien_date)}</span>`:''}
         ${d.notification_date?`<span>📨 Notifié : ${fmtDate(d.notification_date)}</span>`:''}
         ${dlHtml}
-        <button class="card-pdf" onclick="openDocsMenu('${d.id}',event)" title="Voir / télécharger les courriers générés">📄 PDF</button>
+        <button class="card-pdf" onclick="openDocsMenu('${d.id}',event)" data-tip="Voir / télécharger les courriers générés">📄 PDF</button>
       </div>
     </div>`;
   }).join('');
@@ -1072,7 +1072,7 @@ function renderPdfButtons(cur, type, locked){
     const dis=miss.length>0 || addrBlocked;
     const tip=addrBlocked?`Adresses obligatoires manquantes (${convocMiss.join(' et ')}) — à compléter dans Paramètres › Société.`
       :(miss.length?`Champs à compléter : ${miss.join(', ')}`:'Courrier prêt à générer (LR/AR ou remise en main propre).');
-    return `<button class="btn ${b.cls}${dis?' isdis':''}" title="${esc(tip)}" onclick="onGenClick('${b.kind}')">${b.label}</button>`;
+    return `<button class="btn ${b.cls}${dis?' isdis':''}" data-tip="${esc(tip)}" onclick="onGenClick('${b.kind}')">${b.label}</button>`;
   }).join('');
   // Récap sous les boutons : blocage adresses (Faille 1) prioritaire + lien direct vers le réglage.
   const allMiss = btns.length ? missingFieldsFor(btns[0].kind, type) : [];
@@ -1146,7 +1146,7 @@ function renderRemiseZone(){
           <option value="lrar"${r.mode==='lrar'?' selected':''}>LR/AR</option>
           <option value="simple"${r.mode==='simple'?' selected':''}>Lettre simple</option>
         </select>
-        <input type="date" value="${r.date_remise||''}" onchange="saveRemise('${k}','date_remise',this.value)" title="Date de remise / 1ʳᵉ présentation" style="font-size:12px;padding:3px 6px">
+        <input type="date" value="${r.date_remise||''}" onchange="saveRemise('${k}','date_remise',this.value)" data-tip="Date de remise / 1ʳᵉ présentation" aria-label="Date de remise / 1ʳᵉ présentation" style="font-size:12px;padding:3px 6px">
         ${r.mode==='lrar'?`<input placeholder="N° de suivi LRAR" value="${esc(r.tracking||'')}" onchange="saveRemise('${k}','tracking',this.value)" style="font-size:12px;padding:3px 6px">`:''}
         <label class="btn ghost" style="font-size:11px;padding:3px 8px;cursor:pointer">📎 Décharge signée<input type="file" accept="image/*,.pdf" onchange="uploadRemiseScan('${k}',event)" style="display:none"></label>
         ${r.scan_path?'<span style="font-size:11px;color:var(--ok,#3fb87f)">✓ jointe</span>':''}

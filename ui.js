@@ -29,6 +29,18 @@
   }
   window.tipPosition = tipPosition;              // exposé pour le harnais
 
+  // ─── Décision PURE : faut-il masquer au mouseout ? ────────────────────────────────────────────
+  // On ne masque QUE si le curseur sort réellement du déclencheur courant. Sur un bouton contenant
+  // un enfant (ex. planning <button>🔔<span class="ic-badge">…</span></button>), passer du bouton vers
+  // son enfant déclenche mouseout : sans ce filtre, la bulle se masquerait et le délai de 300 ms
+  // repartirait → elle n'apparaîtrait jamais. `relatedInsideCur` = la cible d'arrivée est dans le déclencheur.
+  function shouldHideOnMouseout(leftEl, curEl, relatedInsideCur){
+    if(leftEl!==curEl) return false;   // on quittait un autre élément que celui affiché
+    if(relatedInsideCur) return false; // transition interne (bouton → enfant) : on reste dessus
+    return true;
+  }
+  window.shouldHideOnMouseout = shouldHideOnMouseout;
+
   var tip=null, timer=null, cur=null;
   function ensure(){
     if(tip) return tip;
@@ -44,6 +56,7 @@
     if(tip) tip.classList.remove('show');
   }
   function show(el){
+    if(el===cur) return;                         // déjà affiché/en attente sur ce déclencheur (pas de relance)
     var txt=el.getAttribute('data-tip'); if(!txt) return;
     if(el.hasAttribute('title')) el.removeAttribute('title'); // anti double bulle native
     cur=el;
@@ -60,7 +73,11 @@
 
   function trig(e){ var el=e.target.closest ? e.target.closest('[data-tip]') : null; if(el) show(el); }
   document.addEventListener('mouseover', trig);
-  document.addEventListener('mouseout', function(e){ var el=e.target.closest ? e.target.closest('[data-tip]') : null; if(el && el===cur) hide(); });
+  document.addEventListener('mouseout', function(e){
+    var el=e.target.closest ? e.target.closest('[data-tip]') : null;
+    var to=e.relatedTarget;
+    if(shouldHideOnMouseout(el, cur, !!(el && to && el.contains(to)))) hide();
+  });
   document.addEventListener('focusin', trig);
   document.addEventListener('focusout', hide);
   // La bulle ne survit ni au défilement, ni au redimensionnement, ni à Échap.

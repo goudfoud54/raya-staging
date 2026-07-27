@@ -131,7 +131,7 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Stock · v0.6 — info-bulles maison (socle ui.css/ui.js)</small></div>
+    <div class="brand">Eatime360 <small>· Stock · v0.7 — info-bulles maison sur tous les title restants (badges, cases, sélecteurs)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -302,7 +302,7 @@ async function renderSaisie(el){
         // « Commentaire seul » : pas de quantité. On affiche la remarque du salarié (lecture) ; saisi = remarque présente.
         const saisieCell=cmt?`<span style="font-size:12.5px">📝 ${cmt.replace(/</g,'&lt;')}</span>`:'<span style="color:var(--muted);font-size:11px">— commentaire requis —</span>';
         const etat=cmt?'<span style="color:var(--ok);font-size:11px">✓ saisi</span>':'<span style="color:var(--muted);font-size:11px">non saisi</span>';
-        html+=`<tr data-pname="${p.nom.toLowerCase()}"><td><b>${p.nom}</b> <span title="Commentaire seul (pas de quantité)" style="font-size:11px">📝</span></td><td style="color:var(--muted);font-size:11.5px">${p.conditionnement||''}</td><td style="color:var(--muted)">—</td><td>${saisieCell}</td><td>${etat}</td></tr>`;
+        html+=`<tr data-pname="${p.nom.toLowerCase()}"><td><b>${p.nom}</b> <span data-tip="Commentaire seul (pas de quantité)" aria-label="Commentaire seul (pas de quantité)" style="font-size:11px">📝</span></td><td style="color:var(--muted);font-size:11.5px">${p.conditionnement||''}</td><td style="color:var(--muted)">—</td><td>${saisieCell}</td><td>${etat}</td></tr>`;
         return;
       }
       const pct=maxQ&&qte!==''&&qte!=null?Math.min(100,Number(qte)/maxQ*100):0;
@@ -484,8 +484,8 @@ async function renderBesoin(el){
     const curTxt = multi ? cur : (ps0.jamais?'?':cur);
     const actuelCell = multi ? cur : (ps0.jamais?'<span style="color:var(--muted)">?</span>':cur);
     const warnIcon = multi
-      ? ((x.anyJamais||x.anyStale)?'<span style="color:var(--warn)" title="Voir détail par snack">⚠️</span>':'')
-      : (ps0.jamais?'<span style="color:var(--warn)" title="Jamais saisi">⚠️</span>':(ps0.age!==null&&ps0.age>BESOIN_STALE_DAYS?`<span style="color:var(--warn)" title="Donnée ancienne (${ps0.age} j)">⚠️</span>`:''));
+      ? ((x.anyJamais||x.anyStale)?'<span style="color:var(--warn)" data-tip="Voir détail par snack" aria-label="Voir détail par snack">⚠️</span>':'')
+      : (ps0.jamais?'<span style="color:var(--warn)" data-tip="Jamais saisi" aria-label="Jamais saisi">⚠️</span>':(ps0.age!==null&&ps0.age>BESOIN_STALE_DAYS?`<span style="color:var(--warn)" data-tip="Donnée ancienne (${ps0.age} j)" aria-label="Donnée ancienne (${ps0.age} jours)">⚠️</span>`:''));
     const pname=(x.produit.nom+' '+fournName+(multi?' '+x.perSnack.map(p=>p.snack).join(' '):'')).toLowerCase().replace(/"/g,'');
     html+=`<tr class="${isFirstOfCat?'bcat-first':''}" data-cat="${cat}" data-pname="${pname}"><td data-label="Catégorie" style="vertical-align:top">${catCell}</td><td data-label="Produit"><b>${x.produit.nom}</b><div style="font-size:11px;color:var(--muted)">${saisieInfo}</div>${brk}</td><td data-label="Fournisseur" style="font-size:12.5px">${fnom}</td><td data-label="Actuel">${actuelCell}</td><td data-label="Max">${max}</td><td data-label="À commander"><b style="color:var(--gold);font-size:15px">${need}</b> ${unite}</td><td data-label="Cond." style="color:var(--muted);font-size:11.5px">${cond}</td><td data-label="€ HT">${eurHT}</td><td class="besoin-mobile"><div class="bm-name"><b>${x.produit.nom}</b> ${warnIcon}</div><div class="bm-line"><span class="bm-cmd">→ ${need} ${unite}</span><span class="bm-sub">stock ${curTxt}/${max}${cond?' · '+cond:''}</span></div><div class="bm-foot">${fournName}${need?' · '+eurHT:''}</div>${multi?brk:''}</td></tr>`;
   });
@@ -717,11 +717,11 @@ function renderMax(el){
     // Un produit « commentaire seul » n'a pas de seuil quantité → champ max grisé/désactivé.
     const qInput=`<input type="number" step="0.5" value="${m&&!cmtOnly?m.quantite_max:''}" placeholder="${cmtOnly?'—':'0'}" ${cmtOnly?'disabled':''} onblur="saveMax('${p.id}',this.value)" style="width:100px;padding:6px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:13px;${(off||cmtOnly)?'opacity:.4':''}">`;
     // Cochée si actif=false. Toujours cliquable : si aucun seuil n'existe encore, la case en crée un (quantite_max:0, actif:false).
-    const chk=`<input type="checkbox" ${off?'checked':''} onchange="toggleMaxActif('${p.id}',this.checked)" title="Exclure ce produit du suivi sur ce snack" style="width:18px;height:18px;cursor:pointer">`;
+    const chk=`<input type="checkbox" ${off?'checked':''} onchange="toggleMaxActif('${p.id}',this.checked)" data-tip="Exclure ce produit du suivi sur ce snack" aria-label="Exclure ce produit du suivi sur ce snack" style="width:18px;height:18px;cursor:pointer">`;
     // Sélecteur 3 états (même principe : crée la ligne stock_max au besoin).
     const opt=(v,lbl)=>`<option value="${v}" ${mode===v?'selected':''}>${lbl}</option>`;
     const selMode=`<select onchange="setMaxMode('${p.id}',this.value)" style="padding:5px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12px;cursor:pointer">${opt('aucun','Aucun')}${opt('optionnel','Optionnel')}${opt('obligatoire','Commentaire seul')}</select>`;
-    const badge=mode!=='aucun'?` <span title="${MODE_LBL[mode]}" style="font-size:11px">${cmtOnly?'📝':'💬'}</span>`:'';
+    const badge=mode!=='aucun'?` <span data-tip="${MODE_LBL[mode]}" aria-label="${MODE_LBL[mode]}" style="font-size:11px">${cmtOnly?'📝':'💬'}</span>`:'';
     html+=`<tr data-pname="${p.nom.toLowerCase()}" style="${off?'opacity:.6':''}"><td><b>${p.nom}</b>${off?' <span style="color:var(--warn);font-size:10.5px;font-weight:700">DÉSACTIVÉ</span>':''}${badge}</td><td style="color:var(--muted);font-size:12px">${p.categorie||''}</td><td style="color:var(--muted);font-size:12px">${p.conditionnement||''}</td><td>${qInput}</td><td style="text-align:center">${chk}</td><td style="text-align:center">${selMode}</td></tr>`;
   });
   html+='</tbody></table>';
