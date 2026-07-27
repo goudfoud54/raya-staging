@@ -241,7 +241,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.52 · transfert INTER-snack (déplacer un salarié vers un autre restaurant) = réglage opt-in désactivé par défaut, joué en dernier recours ; OFF → suggestion non appliquée. Rapport : chaque ligne (transfert/rallonge/suggestion) indique le restaurant + encart déplacement inter-établissement. Donneur garde le cœur du service (pic _needAt)';
+const VERSION='v0.53 · PDF soigné : en-tête (logo org, couleur primaire en accent, semaine), colonne nom en couleur franche du salarié (texte auto noir/blanc), cellules midi/soir distinctes, week-end marqué, absences (congé/école) affichées, total d\'heures par salarié, pied de page + pagination';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -506,7 +506,7 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('pwerr').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
-  const{data:org}=await sb.from('organizations').select('couleur_primaire,coef_charges,permissions').eq('id',profile.organization_id).maybeSingle();
+  const{data:org}=await sb.from('organizations').select('couleur_primaire,coef_charges,permissions,logo_url,nom').eq('id',profile.organization_id).maybeSingle();
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if(!EatimeAccess.canAccessModule('planning', profile.role, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Planning');return;}
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
@@ -587,6 +587,14 @@ const roleMain=sid=>{const r=rolesOf(sid);return r[0]||null;};
 const roleNom=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return r?r.nom:cle;};
 const roleCol=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return (r&&r.couleur)?r.couleur:'#8b94a3';};
 const roleNiveau=(sid,cle)=>{const r=S.roles.find(x=>x.salarie_id===sid&&x.role===cle);return r?(r.niveau||'experimente'):'experimente';};
+// ── Couleur : luminance WCAG + choix texte noir/blanc (miroir EXACT de salaries/index.html, testé là-bas).
+// Sert au PDF (colonne nom colorée) et à la vue mobile (cartes) pour que le nom reste lisible sur la couleur.
+function _hexToRgb(hex){const m=String(hex||'').match(/^#?([0-9a-f]{6})$/i);if(!m)return null;const n=parseInt(m[1],16);return[(n>>16)&255,(n>>8)&255,n&255];}
+function _relLum(hex){const rgb=_hexToRgb(hex);if(!rgb)return 1;const f=c=>{c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);};return 0.2126*f(rgb[0])+0.7152*f(rgb[1])+0.0722*f(rgb[2]);}
+function textColorFor(hex){const L=_relLum(hex);const cB=(L+0.05)/0.05,cW=1.05/(L+0.05);return cB>=cW?'#111111':'#ffffff';}
+function _rgbArr(hex){return _hexToRgb(hex)||[136,136,136];}
+// Mélange une couleur vers le blanc (alpha=part de couleur) → tableau [r,g,b] pour jsPDF (fond atténué).
+function _tintRgb(hex,alpha){const [r,g,b]=_rgbArr(hex);return[Math.round(r*alpha+255*(1-alpha)),Math.round(g*alpha+255*(1-alpha)),Math.round(b*alpha+255*(1-alpha))];}
 const isExp=(sid,cle)=>roleNiveau(sid,cle)==='experimente';
 // Affectation multi-restos à priorité (fallback legacy snack_origine_id/est_multi pour les fiches non migrées)
 function worksAt(s,rid){ const a=Array.isArray(s.snacks_priorites)?s.snacks_priorites:null; if(a&&a.length) return a.some(x=>x.restaurant_id===rid); return s.snack_origine_id===rid || !!s.est_multi; }
@@ -3375,21 +3383,47 @@ async function runPdf(){
   const{data:allCr}=await sb.from('planning_creneaux').select('*').in('restaurant_id',ids).gte('date',from).lt('date',to);
   const creneauxByResto={};(allCr||[]).forEach(c=>{(creneauxByResto[c.restaurant_id]=creneauxByResto[c.restaurant_id]||[]).push(c);});
 
+  // Logo de l'org en dataURL (graceful : un logo distant/CORS qui échoue → on continue sans logo).
+  const logo=await _loadLogoDataUrl(ORG&&ORG.logo_url);
+
   try{
     const{jsPDF}=window.jspdf;
     const doc=new jsPDF({orientation:'landscape',format:'a3',unit:'mm'});
+    const ctx={logo, primary:(ORG&&ORG.couleur_primaire)||'#c8a035', orgNom:(ORG&&ORG.nom)||''};
     let first=true;
     for(const rid of ids){
       const r=S.restos.find(x=>x.id===rid);if(!r)continue;
       if(!first) doc.addPage();
       first=false;
-      drawSnackPage(doc,r,creneauxByResto[rid]||[]);
+      drawSnackPage(doc,r,creneauxByResto[rid]||[],ctx);
     }
+    _pdfFooters(doc); // pagination + pied de page sur toutes les pages (après coup : total de pages connu)
     const snLabel=ids.length===1?shortSnack(S.restos.find(r=>r.id===ids[0])?.nom):'multi';
     const filename=`Planning ${snLabel} S${isoWeek(MONDAY)} ${monthLabel(MONDAY)}.pdf`;
     doc.save(filename);
     setSS('ok','PDF généré ✓');
   }catch(e){setSS('err','Erreur PDF: '+e.message);console.error(e);}
+}
+// Charge un logo (URL distante ou dataURL) en dataURL pour jsPDF.addImage. Jamais d'exception : null si échec.
+async function _loadLogoDataUrl(url){
+  if(!url) return null;
+  try{
+    if(String(url).startsWith('data:')) return url;
+    const resp=await fetch(url,{mode:'cors'}); if(!resp.ok) return null;
+    const blob=await resp.blob(); if(!/^image\//.test(blob.type)) return null;
+    return await new Promise((res)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>res(null);fr.readAsDataURL(blob);});
+  }catch(e){ return null; }
+}
+// Pied de page sur chaque page : app + date de génération à gauche, pagination à droite.
+function _pdfFooters(doc){
+  const n=doc.getNumberOfPages(); const w=doc.internal.pageSize.getWidth(), h=doc.internal.pageSize.getHeight();
+  const gen=new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  for(let i=1;i<=n;i++){ doc.setPage(i);
+    doc.setFontSize(7);doc.setTextColor(150);doc.setFont(undefined,'normal');
+    doc.text(`Eatime360 · généré le ${gen}`, 10, h-5);
+    doc.text(`Page ${i} / ${n}`, w-10, h-5, {align:'right'});
+  }
+  doc.setTextColor(0);
 }
 
 // ===== IMPORT EXCEL =====
@@ -3526,60 +3560,92 @@ async function doImport(){
 
 function hexMix(hex,alpha){const m=String(hex||'').match(/^#?([0-9a-f]{6})/i);if(!m)return[240,240,240];const r=parseInt(m[1].slice(0,2),16),g=parseInt(m[1].slice(2,4),16),b=parseInt(m[1].slice(4,6),16);return[Math.round(r*alpha+255*(1-alpha)),Math.round(g*alpha+255*(1-alpha)),Math.round(b*alpha+255*(1-alpha))];}
 
-function drawSnackPage(doc,resto,creneaux){
+function drawSnackPage(doc,resto,creneaux,ctx){
+  ctx=ctx||{};
+  const prim=_rgbArr(ctx.primary||'#c8a035');
+  const pageW=doc.internal.pageSize.getWidth();
   const sids=new Set(creneaux.map(c=>c.salarie_id));
   const list=S.salaries.filter(s=>s.actif!==false && (worksAt(s,resto.id)||sids.has(s.id)))
     .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return (ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
   const get=(sid,date,svc)=>creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);
-  // Titre
-  doc.setFontSize(16);doc.setFont(undefined,'bold');
-  doc.text(`Planning ${shortSnack(resto.nom)}`, 12, 14);
-  doc.setFontSize(10);doc.setFont(undefined,'normal');doc.setTextColor(100);
+  const roleLetter=sid=>{const r=roleMain(sid);return r?((roleNom(r).charAt(0)||'').toUpperCase()):'';};
+
+  // ── EN-TÊTE : filet d'accent couleur primaire, logo, nom du restaurant, semaine ──
+  doc.setFillColor(prim[0],prim[1],prim[2]);
+  doc.rect(0,0,pageW,3,'F');                                   // bandeau d'accent en haut
+  let tx=12;
+  if(ctx.logo){ try{ doc.addImage(ctx.logo,'PNG',10,7,16,16); tx=30; }catch(e){} }  // logo (graceful)
+  doc.setFontSize(17);doc.setFont(undefined,'bold');doc.setTextColor(20,20,20);
+  doc.text(`Planning ${shortSnack(resto.nom)}`, tx, 14);
+  doc.setFontSize(9.5);doc.setFont(undefined,'normal');doc.setTextColor(110);
   const endDate=new Date(MONDAY.getTime()+6*86400000);
-  doc.text(`Semaine ${isoWeek(MONDAY)} · ${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} → ${endDate.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}`, 12, 19);
+  doc.text(`Semaine ${isoWeek(MONDAY)} · ${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} → ${endDate.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}${ctx.orgNom?'   ·   '+ctx.orgNom:''}`, tx, 20);
+  doc.setFillColor(prim[0],prim[1],prim[2]);
+  doc.rect(tx,22.5,52,0.8,'F');                                // petit filet sous le titre
   doc.setTextColor(0);
-  // Head
+
+  // ── TÊTE DE TABLE : jours (week-end distinct) + sous-colonnes M/S ──
+  const WEND=[240,236,228], WDAY=[241,241,244], MHEAD=[255,244,222], SHEAD=[228,236,250];
   const head=[
-    [{content:'Salarié',rowSpan:2,styles:{halign:'left',valign:'middle',fillColor:[235,235,235]}}].concat(JOURS.map((j,i)=>({content:`${j} ${dateOfDay(i).getDate()}`,colSpan:4,styles:{halign:'center',fillColor:[240,240,240]}}))),
+    [{content:'Salarié',rowSpan:2,styles:{halign:'left',valign:'middle',fillColor:[60,60,66],textColor:[245,245,245]}}]
+      .concat(JOURS.map((j,i)=>({content:`${j} ${dateOfDay(i).getDate()}`,colSpan:4,styles:{halign:'center',fillColor:(i>=5?WEND:WDAY),fontStyle:(i>=5?'bold':'normal')}})))
+      .concat([{content:'Total',rowSpan:2,styles:{halign:'center',valign:'middle',fillColor:[60,60,66],textColor:[245,245,245]}}]),
     Array(7).fill(0).flatMap((_,i)=>[
-      {content:'M dbt',styles:{fillColor:[255,247,224]}},
-      {content:'M fin',styles:{fillColor:[255,247,224]}},
-      {content:'S dbt',styles:{fillColor:[230,239,255]}},
-      {content:'S fin',styles:{fillColor:[230,239,255]}}
+      {content:'M dbt',styles:{fillColor:MHEAD}},{content:'M fin',styles:{fillColor:MHEAD}},
+      {content:'S dbt',styles:{fillColor:SHEAD}},{content:'S fin',styles:{fillColor:SHEAD}}
     ])
   ];
+
   const body=list.map(s=>{
-    const tint=hexMix(s.couleur,0.25);
-    const row=[{content:[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?',styles:{fillColor:tint,fontStyle:'bold',halign:'left'}}];
+    const nmeRgb=_rgbArr(s.couleur||'#888888');
+    const nameTxt=_rgbArr(textColorFor(s.couleur||'#888888'));
+    const rl=roleLetter(s.id);
+    const nm=([s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?')+(rl?`  ·${rl}`:'');
+    const row=[{content:nm,styles:{fillColor:nmeRgb,textColor:nameTxt,fontStyle:'bold',halign:'left'}}];
+    let wkMin=0;
     for(let i=0;i<7;i++){
       const date=fmtDate(dateOfDay(i));
+      // Absence journée entière : congé/arrêt (indispo validée sans heures) ou école/examen CFA → 1 cellule ×4.
+      const adt=altDayType(s.id,date);
+      const ind=hasIndispo(s.id,date);
+      const fullDayAbs = (adt==='ecole'||adt==='examen') || (ind && !(ind.heure_debut||ind.heure_fin));
+      if(fullDayAbs){
+        const lbl = adt==='examen'?'Examen' : adt==='ecole'?'École' : (indispoBadge(ind).lbl||'Absent');
+        row.push({content:lbl, colSpan:4, styles:{fillColor:[247,244,238],textColor:[150,120,90],fontStyle:'italic',halign:'center'}});
+        continue;
+      }
       for(const svc of ['midi','soir']){
         const cr=get(s.id,date,svc)||{};
-        const cellTint=svc==='midi'?hexMix(s.couleur,0.10):hexMix(s.couleur,0.13);
-        row.push({content:(cr.heure_debut||'').slice(0,5),styles:{fillColor:cellTint}});
-        row.push({content:(cr.heure_fin||'').slice(0,5),styles:{fillColor:cellTint}});
+        wkMin+=_pdur(cr.heure_debut,cr.heure_fin);
+        // Fond atténué MAIS visible : midi = teinte claire, soir = teinte plus soutenue (distinction service).
+        const cellTint=svc==='midi'?_tintRgb(s.couleur||'#888888',0.20):_tintRgb(s.couleur||'#888888',0.34);
+        const empty=!(cr.heure_debut||cr.heure_fin);
+        const mk=v=>({content:(empty?'–':(v||'').slice(0,5)), styles:{fillColor:cellTint, textColor:(empty?[190,190,190]:[30,30,30])}});
+        row.push(mk(cr.heure_debut)); row.push(mk(cr.heure_fin));
       }
     }
+    row.push({content: wkMin>0?fmtH1(wkMin/60)+'h':'–', styles:{fontStyle:'bold',halign:'center',fillColor:[238,238,242],textColor:(wkMin>0?[30,30,30]:[190,190,190])}});
     return row;
   });
+
   doc.autoTable({
-    head,body,startY:24,
-    styles:{fontSize:6.5,cellPadding:1.2,halign:'center',lineWidth:0.1,lineColor:[200,200,200]},
-    headStyles:{fontSize:7,textColor:[60,60,60]},
-    columnStyles:{0:{cellWidth:32,fontSize:7.5}},
+    head,body,startY:26,
+    styles:{fontSize:6.5,cellPadding:1.1,halign:'center',valign:'middle',lineWidth:0.1,lineColor:[205,205,205]},
+    headStyles:{fontSize:7,textColor:[55,55,60]},
+    columnStyles:{0:{cellWidth:34,fontSize:7.5},29:{cellWidth:12}},
     margin:{left:10,right:10},
     theme:'grid',
     didDrawCell:function(d){
-      // Trait gras entre chaque jour (après la colonne 4, 8, 12, 16, 20, 24 = fin de jour)
+      // Trait plus marqué entre chaque JOUR (après col 0,4,8,12,16,20,24,28).
       const c=d.column.index;
-      if(c===0||c===4||c===8||c===12||c===16||c===20||c===24){
-        doc.setLineWidth(0.5);doc.setDrawColor(70,70,70);
+      if(c===0||c===4||c===8||c===12||c===16||c===20||c===24||c===28){
+        doc.setLineWidth(0.4);doc.setDrawColor(90,90,95);
         const x=d.cell.x+d.cell.width;
         doc.line(x,d.cell.y,x,d.cell.y+d.cell.height);
       }
     }
   });
-  if(!list.length){doc.setFontSize(11);doc.setTextColor(140);doc.text('Aucun salarié pour ce snack',12,40);}
+  if(!list.length){doc.setFontSize(11);doc.setTextColor(140);doc.text('Aucun salarié pour ce snack',12,40);doc.setTextColor(0);}
 }
 
 function buildPrintPage(resto,creneaux){
