@@ -210,6 +210,16 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       </div>
     </div>
     <div class="section">
+      <h3>Procédure disciplinaire — convocation à entretien préalable</h3>
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:12px;line-height:1.5">En l'absence de représentants du personnel (CSE), la lettre de convocation doit indiquer <b>les adresses</b> où le salarié peut consulter la liste des conseillers du salarié (inspection du travail + mairie). Une adresse manquante rend la procédure irrégulière (indemnisable même si le licenciement est fondé). Le module de sanctions <b>bloque</b> la génération de la convocation tant que ces champs ne sont pas remplis.</div>
+      <label style="display:flex;align-items:center;gap:9px;cursor:pointer;margin-bottom:12px;font-size:13.5px">
+        <input type="checkbox" id="soc_cse" style="width:17px;height:17px;cursor:pointer">
+        <span>L'entreprise dispose d'un CSE / de représentants du personnel<br><small style="color:var(--muted)">Si coché, la mention du conseiller extérieur et les adresses ne sont pas requises.</small></span>
+      </label>
+      <div class="fld"><label>Adresse de l'inspection du travail compétente (unité territoriale de la DREETS)</label><input id="soc_insp" placeholder="Ex: DREETS — Unité territoriale des Vosges, 4 rue des …, 88000 Épinal"></div>
+      <div class="fld"><label>Adresse de la mairie du lieu de l'établissement</label><input id="soc_mairie" placeholder="Ex: Mairie d'Épinal, 9 rue du Général Leclerc, 88000 Épinal"></div>
+    </div>
+    <div class="section">
       <h3>Signature</h3>
       <div style="color:var(--muted);font-size:11.5px;margin-bottom:10px">Dessine la signature ci-dessous (souris ou tactile) ou importe une image. Elle sera ajoutée automatiquement aux courriers générés.</div>
       <canvas id="sigPad" width="500" height="170" style="background:#fff;border:1px dashed var(--line-2);border-radius:8px;max-width:100%;touch-action:none;cursor:crosshair"></canvas>
@@ -496,6 +506,8 @@ async function loadSociete(){
   set('soc_tel',SOC.telephone); set('soc_email',SOC.email);
   set('soc_rep',SOC.representant_legal); set('soc_rep_qualite',SOC.representant_qualite);
   set('soc_adresse',SOC.adresse); set('soc_cp',SOC.code_postal); set('soc_ville',SOC.ville);
+  set('soc_insp',SOC.adresse_inspection_travail); set('soc_mairie',SOC.adresse_mairie);
+  { const e=document.getElementById('soc_cse'); if(e) e.checked=!!SOC.presence_cse; }
   sigData=SOC.signature_data||null;
   renderSig(); initSigPad();
 }
@@ -533,6 +545,8 @@ async function saveSociete(){
     telephone:v('soc_tel'),email:v('soc_email'),
     representant_legal:v('soc_rep'),representant_qualite:v('soc_rep_qualite'),
     adresse:v('soc_adresse'),code_postal:v('soc_cp'),ville:v('soc_ville'),
+    adresse_inspection_travail:v('soc_insp'),adresse_mairie:v('soc_mairie'),
+    presence_cse:!!(document.getElementById('soc_cse')||{}).checked,
     signature_data:sigData};
   const{error}=await sb.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
   if(error){toast('Erreur : '+error.message);return;}

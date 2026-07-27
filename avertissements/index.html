@@ -823,15 +823,22 @@ function renderPdfButtons(cur, type, locked){
   pdfZone.style.display = btns.length ? '' : (h?'':'none');
   if (!btns.length && h){ pdfZone.style.display=''; }
   S._cur=cur; S._locked=locked;   // mémorisé pour le rafraîchissement live des boutons
+  // Faille 1 : la convocation est BLOQUÉE tant que les adresses (inspection + mairie) manquent (sauf CSE).
+  const convocMiss = convocationBlockReason(S.params||{});
   z.innerHTML = btns.map(b=>{
     const miss=missingFieldsFor(b.kind, type);
-    const dis=miss.length>0;
-    const tip=dis?`Champs à compléter : ${miss.join(', ')}`:'Courrier prêt à générer (LR/AR ou remise en main propre).';
+    const addrBlocked = (b.kind==='convocation' && convocMiss);
+    const dis=miss.length>0 || addrBlocked;
+    const tip=addrBlocked?`Adresses obligatoires manquantes (${convocMiss.join(' et ')}) — à compléter dans Paramètres › Société.`
+      :(miss.length?`Champs à compléter : ${miss.join(', ')}`:'Courrier prêt à générer (LR/AR ou remise en main propre).');
     return `<button class="btn ${b.cls}${dis?' isdis':''}" title="${esc(tip)}" onclick="onGenClick('${b.kind}')">${b.label}</button>`;
   }).join('');
-  // Récap des champs manquants sous les boutons
+  // Récap sous les boutons : blocage adresses (Faille 1) prioritaire + lien direct vers le réglage.
   const allMiss = btns.length ? missingFieldsFor(btns[0].kind, type) : [];
-  if (btns.length && allMiss.length) hint.innerHTML = `⚠ <b>Champs requis manquants :</b> ${esc(allMiss.join(', '))}.`;
+  if (btns.length && btns[0].kind==='convocation' && convocMiss){
+    hint.innerHTML = `⛔ <b>Convocation bloquée</b> : ${esc(convocMiss.join(' et '))} manquante(s). La convocation serait irrégulière (R.1232-1 + jurisprudence). <a href="../parametres/#societe" target="_blank" style="color:var(--accent);font-weight:600">→ Compléter dans Paramètres › Société</a>`;
+  }
+  else if (btns.length && allMiss.length) hint.innerHTML = `⚠ <b>Champs requis manquants :</b> ${esc(allMiss.join(', '))}.`;
   else hint.textContent = btns.length ? 'Courrier à envoyer en LR/AR ou à remettre en main propre contre décharge.' : h;
 }
 // Champs strictement requis pour générer chaque type de courrier
@@ -1052,7 +1059,27 @@ function buildObjet(kind, type, motifCourt){
   let base; if(kind==='convocation') base='Convocation à un entretien préalable'; else base=TYPE_LABELS[type]||'Sanction disciplinaire';
   return short ? `Objet : ${base} — ${short}` : `Objet : ${base}`;
 }
+// Faille 1 — R.1232-1 + jurisprudence : en l'ABSENCE de CSE, la convocation à entretien préalable DOIT indiquer
+// les adresses (inspection du travail + mairie) où consulter la liste des conseillers du salarié. Une adresse
+// manquante rend la procédure irrégulière (indemnisable même si le licenciement est fondé). PURE → testée.
+// Retourne null si la convocation peut être générée, sinon la liste des adresses manquantes (libellés).
+function convocationBlockReason(pp){
+  pp=pp||{};
+  if(pp.presence_cse) return null;                              // CSE présent : conseiller extérieur + adresses non requis
+  const miss=[];
+  if(!(pp.adresse_inspection_travail||'').trim()) miss.push("l'adresse de l'inspection du travail");
+  if(!(pp.adresse_mairie||'').trim())            miss.push("l'adresse de la mairie");
+  return miss.length?miss:null;
+}
 function generatePDF(kind){
+  const _o = S.profile.organizations || {}, _pp = S.params || {};
+  if(kind==='convocation'){
+    const miss=convocationBlockReason(_pp);
+    if(miss){
+      alert(`⛔ Génération de la convocation impossible.\n\nIl manque ${miss.join(' et ')} dans les paramètres de la société.\n\nSans ces adresses, la convocation est irrégulière au sens de l'article R.1232-1 du Code du travail (interprété par la jurisprudence) : le salarié peut obtenir des dommages-intérêts même si le licenciement est fondé.\n\n→ Renseigne-les dans Paramètres › Société (légal) › « Procédure disciplinaire », puis relance.\n(Ou coche « L'entreprise dispose d'un CSE » si c'est le cas.)`);
+      return;
+    }
+  }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const o = S.profile.organizations || {}, pp = S.params || {};
@@ -1160,7 +1187,16 @@ function generatePDF(kind){
     paraRich([N(`En application des articles `),B(`L. 1232-2`),N(` et suivants du Code du travail, nous vous convoquons à un `),B(`entretien préalable`),N(` qui se tiendra :`)]);
     paraRich([N(`Le `),B(dateFr),N(eh?` à `:''),B(eh?eh:''),N(`, à : `),B(el||'__________')]);
     para(`Au cours de cet entretien, nous vous exposerons les motifs de la sanction envisagée et recueillerons vos explications.`);
-    para(`Nous vous informons que vous avez la possibilité de vous faire assister par une personne de votre choix appartenant au personnel de l'entreprise ou, en l'absence de représentants du personnel, par un conseiller du salarié figurant sur la liste consultable en mairie ou à l'inspection du travail.`);
+    // Assistance : deux variantes selon la présence d'un CSE (modèle officiel code.travail.gouv.fr).
+    // Sans CSE : mention du conseiller extérieur + les DEUX adresses (garanties non vides — la génération est
+    // bloquée en amont, cf. convocationBlockReason). Avec CSE : personnel uniquement, pas d'adresse requise.
+    if (pp.presence_cse){
+      para(`Nous vous informons que vous avez la possibilité de vous faire assister, lors de cet entretien, par une personne de votre choix appartenant au personnel de l'entreprise.`);
+    } else {
+      para(`Nous vous informons que vous avez la possibilité de vous faire assister, lors de cet entretien, soit par une personne de votre choix appartenant au personnel de l'entreprise, soit par un conseiller du salarié. La liste des conseillers du salarié est tenue à votre disposition :`);
+      paraRich([N(`— à l'inspection du travail, dont l'adresse est : `),B(pp.adresse_inspection_travail||'__________')]);
+      paraRich([N(`— à la mairie, dont l'adresse est : `),B(pp.adresse_mairie||'__________')]);
+    }
     paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
   else if (kind==='avertissement'){
