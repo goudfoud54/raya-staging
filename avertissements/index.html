@@ -558,7 +558,40 @@ function esc(s){return (s||'').toString().replace(/[<>&"']/g,c=>({'<':'&lt;','>'
 function fmtDate(d){return d?new Date(d).toLocaleDateString('fr-FR'):'—'}
 function fmtDateLong(d){return d?new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'__________'}
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
-function joursOuvrables(d1,d2){ if(!d1||!d2)return null; let n=0; const a=new Date(d1),b=new Date(d2); for(let t=new Date(a.getTime()+86400000);t<=b;t.setDate(t.getDate()+1)){const w=t.getDay();if(w!==0&&w!==6)n++;} return n; }
+// Jours fériés légaux français (métropole) d'une année : 8 fixes + 3 mobiles dérivés de Pâques (Meeus/Butcher,
+// grégorien) — Lundi de Pâques, Ascension (+39), Lundi de Pentecôte (+50). Retourne un Set de 'YYYY-MM-DD'.
+// (Alsace-Moselle a 2 fériés supplémentaires — non gérés ici ; à signaler.)
+function _isoDate(x){return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');}
+function joursFeries(year){
+  const a=year%19,b=Math.floor(year/100),c=year%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),
+    g=Math.floor((b-f+1)/3),H=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-H-k)%7,
+    m=Math.floor((a+11*H+22*l)/451),mois=Math.floor((H+l-7*m+114)/31),jour=((H+l-7*m+114)%31)+1;
+  const easter=new Date(year,mois-1,jour), addD=(base,n)=>{const x=new Date(base);x.setDate(x.getDate()+n);return x;};
+  const set=new Set([[1,1],[5,1],[5,8],[7,14],[8,15],[11,1],[11,11],[12,25]]
+    .map(([mo,dy])=>`${year}-${String(mo).padStart(2,'0')}-${String(dy).padStart(2,'0')}`));
+  set.add(_isoDate(addD(easter,1)));   // Lundi de Pâques
+  set.add(_isoDate(addD(easter,39)));  // Ascension (jeudi)
+  set.add(_isoDate(addD(easter,50)));  // Lundi de Pentecôte
+  return set;
+}
+// Nombre de jours OUVRABLES strictement entre d1 (présentation/entretien) et d2 (entretien/notification), les
+// DEUX bornes exclues. Jour ouvrable = tous les jours SAUF le dimanche ET les jours fériés — le SAMEDI COMPTE
+// (art. L.1232-2, jurisprudence constante). Corrige l'ancien calcul qui excluait le samedi (= jours OUVRÉS,
+// plus strict que la loi) et ignorait les jours fériés (moins strict → laissait passer un délai illégal une
+// semaine fériée). NB : la prorogation « expire un samedi → reporté » (casse-tête jurisprudentiel) n'est PAS
+// modélisée ici — à valider par l'avocat.
+function joursOuvrables(d1,d2){
+  if(!d1||!d2)return null;
+  const a=new Date(d1),b=new Date(d2); if(b<=a)return 0;
+  const feries=new Set(), yrDone=new Set(); let n=0;
+  for(let t=new Date(a.getTime()+86400000); t<b; t.setDate(t.getDate()+1)){   // strictement entre a et b
+    if(t.getDay()===0)continue;                                               // dimanche exclu (samedi compté)
+    const y=t.getFullYear(); if(!yrDone.has(y)){ yrDone.add(y); joursFeries(y).forEach(x=>feries.add(x)); }
+    if(feries.has(_isoDate(t)))continue;                                      // jour férié exclu
+    n++;
+  }
+  return n;
+}
 
 // ─────────── WIZARD ───────────
 const WIZ_OPTS = [
