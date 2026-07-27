@@ -7,6 +7,7 @@
 <script>(function(){var t=localStorage.getItem('eatime_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=1"></script>
+<script src="../alertes.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -78,7 +79,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Paramètres · v0.1 — champ « Code PIN (kiosques) » retiré (réglage sans effet réel)</small></div>
+    <div class="brand">Eatime360 <small>· Paramètres · v0.2 — état des alertes visible (stock/retard) + bouton « alerte test »</small></div>
     <div style="display:flex;gap:8px">
       <a href="../" class="btn ghost">Portail</a>
       <button class="btn ghost" onclick="logout()">↩</button>
@@ -775,20 +776,31 @@ async function removeUser(id,name){
 }
 
 // ────────────────────────────────  RESTAURANTS / SNACKS  ────────────────────────────────
-let RESTOS_CACHE=[];
+let RESTOS_CACHE=[], STOCK_CFG={}, RETARD_CFG={};
 async function loadRestos(){
-  const{data,error}=await sb.from('restaurants').select('id,nom,actif,created_at,adresse,code_postal,ville,ouverture_semaine,fermeture_semaine,ouverture_weekend,fermeture_weekend').eq('organization_id',ORG.id).order('nom');
-  if(error){document.getElementById('restosList').innerHTML='<div style="color:var(--bad)">'+error.message+'</div>';return;}
-  RESTOS_CACHE=data||[];
+  const[rRes,scRes,rcRes]=await Promise.all([
+    sb.from('restaurants').select('id,nom,actif,created_at,adresse,code_postal,ville,ouverture_semaine,fermeture_semaine,ouverture_weekend,fermeture_weekend').eq('organization_id',ORG.id).order('nom'),
+    sb.from('stock_alertes_config').select('*').eq('organization_id',ORG.id),
+    sb.from('retard_alertes_config').select('*').eq('organization_id',ORG.id),
+  ]);
+  if(rRes.error){document.getElementById('restosList').innerHTML='<div style="color:var(--bad)">'+rRes.error.message+'</div>';return;}
+  RESTOS_CACHE=rRes.data||[];
+  STOCK_CFG={};(scRes.data||[]).forEach(c=>{STOCK_CFG[c.restaurant_id]=c;});
+  RETARD_CFG={};(rcRes.data||[]).forEach(c=>{RETARD_CFG[c.restaurant_id]=c;});
   if(!RESTOS_CACHE.length){document.getElementById('restosList').innerHTML='<div style="color:var(--muted);padding:8px">Aucun restaurant. Crée le premier ci-dessous.</div>';return;}
+  // État d'alerte lisible (source unique alertes.js) : couleur + phrase de ce qui se passera.
+  const chip=(lbl,e)=>{const col=e.severite==='ok'?'var(--ok)':(e.severite==='inactive'?'var(--muted)':'var(--warn)');const ic=e.severite==='ok'?'✓':(e.severite==='inactive'?'⏸':'⚠');return `<span style="font-size:10.5px;color:${col};font-weight:600">${ic} ${lbl} ${e.label}</span>`;};
   let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
   RESTOS_CACHE.forEach(r=>{
     const bg=r.actif?'var(--ok)':'#7b7b8a';
+    const es=etatAlerte(STOCK_CFG[r.id],'stock'), er=etatAlerte(RETARD_CFG[r.id],'retard');
+    const alertesLigne=r.actif?`<div style="display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:3px">${chip('Stock :',es)}${chip('Retard :',er)}</div>`:'';
     html+=`<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)" data-resto="${r.id}">
       <div style="width:30px;height:30px;border-radius:8px;background:${bg}33;color:${bg};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">🏪</div>
       <div style="flex:1;min-width:0">
         <div style="font-weight:600">${r.nom} ${r.actif?'':'<span style="color:var(--muted);font-weight:400;font-size:11px">(inactif)</span>'}</div>
         <div style="color:var(--muted);font-size:11.5px">créé le ${new Date(r.created_at).toLocaleDateString('fr-FR')}${(r.fermeture_semaine||r.fermeture_weekend)?` · 🕒 sem. ${(r.ouverture_semaine||'?').slice(0,5)}–${(r.fermeture_semaine||'?').slice(0,5)} / w-e ${(r.ouverture_weekend||'?').slice(0,5)}–${(r.fermeture_weekend||'?').slice(0,5)}`:''}</div>
+        ${alertesLigne}
       </div>
       <button class="btn ghost sm" onclick="openEditResto('${r.id}')">✎</button>
       <button class="btn ghost sm" onclick="toggleResto('${r.id}',${!r.actif})" title="${r.actif?'Désactiver':'Réactiver'}">${r.actif?'⏸':'▶'}</button>
@@ -823,6 +835,25 @@ async function deleteResto(id,nom){
   if(error){toast('Impossible : '+error.message+' (utilise ⏸ pour désactiver)');return;}
   toast('🗑 Supprimé');loadRestos();
 }
+// Éprouve la CHAÎNE RÉELLE (email Resend + dépôt wa_queue) via l'edge function send-test-alerte,
+// et affiche le résultat PAR CANAL (envoyé / en file / échec+raison). Teste la config ENREGISTRÉE.
+async function sendTestAlerte(restaurantId,type,btn){
+  const old=btn.textContent; btn.disabled=true; btn.textContent='⏳ Envoi…';
+  try{
+    const{data,error}=await sb.functions.invoke('send-test-alerte',{body:{restaurant_id:restaurantId,type}});
+    if(error){toast('❌ Test échoué : '+error.message);btn.textContent='❌ Échec';}
+    else if(!data||data.ok===false){const m=(data&&data.error)||'Test impossible';toast('⚠ '+m);btn.textContent='⚠ '+m;}
+    else{
+      const c=data.canaux||{};const parts=[];
+      if(c.email&&!c.email.skipped) parts.push('Email '+(c.email.ok?'✅ envoyé':'❌ '+(c.email.error||'échec')));
+      if(c.wa&&!c.wa.skipped) parts.push('WhatsApp '+(c.wa.ok?'🕒 déposé en file (livré par le bot)':'❌ '+(c.wa.error||'échec')));
+      if(data.aucun_destinataire) parts.push('aucun destinataire configuré');
+      toast('Test '+(data.restaurant||'')+' — '+(parts.join(' · ')||'rien à envoyer'));
+      btn.textContent=((c.email&&c.email.ok)||(c.wa&&c.wa.ok))?'✅ Testé':'⚠ Résultat';
+    }
+  }catch(e){toast('❌ '+(e.message||e));btn.textContent='❌ Échec';}
+  setTimeout(()=>{btn.disabled=false;btn.textContent=old;},4500);
+}
 async function openEditResto(id){
   const r=RESTOS_CACHE.find(x=>x.id===id);if(!r)return;
   // Récupérer la config alertes
@@ -830,6 +861,14 @@ async function openEditResto(id){
   const alerteCfg=cfg||{actif:false,heure_check:'22:30',email_alerte:'',wa_groupe_id:'',wa_groupe_nom:''};
   const{data:rcfg}=await sb.from('retard_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
   const retardCfg=rcfg||{actif:false,seuil_minutes:15,plage_debut:'06:00',plage_fin:'23:59',alerte_sortie_oubliee:false,notif_salarie:true,email_alerte:'',wa_groupe_id:'',wa_groupe_nom:''};
+  // État explicite (source unique alertes.js) : ce qui se passera réellement, + bouton de test bout-en-bout.
+  const _esS=etatAlerte(alerteCfg,'stock'), _esR=etatAlerte(retardCfg,'retard');
+  const _alBox=(e,rid,type)=>{
+    const col=e.severite==='ok'?'var(--ok)':(e.severite==='inactive'?'var(--muted)':'var(--warn)');
+    const ic=e.severite==='ok'?'✅':(e.severite==='inactive'?'⏸':'⚠️');
+    const testBtn=e.canaux.length?`<button type="button" class="btn ghost sm" onclick="sendTestAlerte('${rid}','${type}',this)" style="white-space:nowrap" title="Teste la config ENREGISTRÉE jusqu'au destinataire — enregistre d'abord si tu viens de modifier">✉ Tester</button>`:'';
+    return `<div style="background:${col}18;border:1px solid ${col};border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:10px"><span style="color:${col};font-weight:600">${ic} État : ${e.label}</span>${testBtn}</div>`;
+  };
   const overlay=document.createElement('div');
   overlay.id='editRestoModal';
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
@@ -862,6 +901,7 @@ async function openEditResto(id){
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">🔔 Alertes feuille de stock</div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Si la feuille de stock n'a pas été remplie à l'heure indiquée, on envoie une alerte mail et (optionnel) WhatsApp dans le groupe configuré.</div>
+    ${_alBox(_esS,r.id,'stock')}
     <div class="fld"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="er_alerte_actif" ${alerteCfg.actif?'checked':''} style="width:auto"> Activer l'alerte quotidienne</label></div>
     <div class="grid2">
       <div class="fld"><label>Heure du check (Europe/Paris)</label><input type="time" id="er_alerte_heure" value="${alerteCfg.heure_check||'22:30'}"></div>
@@ -879,6 +919,7 @@ async function openEditResto(id){
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">⏰ Alertes de retard</div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Si un salarié attendu au planning n'a pas badgé son arrivée X minutes après l'heure prévue, on notifie les destinataires choisis. Rien n'est envoyé tant que la case ci-dessous n'est pas cochée.</div>
+    ${_alBox(_esR,r.id,'retard')}
     <div class="fld"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="er_retard_actif" ${retardCfg.actif?'checked':''} style="width:auto"> Activer les alertes de retard</label></div>
     <div class="grid2">
       <div class="fld"><label>Seuil de retard (minutes)</label><input type="number" id="er_retard_seuil" value="${retardCfg.seuil_minutes||15}" min="1" max="120"></div>

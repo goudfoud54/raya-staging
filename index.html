@@ -8,6 +8,7 @@
 <script>(function(){var t=localStorage.getItem('eatime_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="access.js?v=1"></script>
+<script src="alertes.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--bad:#c45a5a}
@@ -97,12 +98,13 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <span class="role-tag" id="userRole">—</span>
     <button class="btn ghost sm" onclick="logout()">↩ Déconnexion</button>
   </div>
+  <div id="alertesBanner" style="width:100%;max-width:740px"></div>
   <div class="modules" id="modules"></div>
   <div id="kioskSection" class="hidden" style="width:100%;max-width:740px;margin-top:38px">
     <div class="kiosk-head">📟 Kiosques terrain <span>· tablette PIN, à installer en salle</span></div>
     <div class="modules kiosk-grid" id="kioskModules"></div>
   </div>
-  <div class="footer">Eatime360 · v9.5 · Portail réorganisé : hubs Équipe & Finance (onglets) + section Kiosques terrain</div>
+  <div class="footer">Eatime360 · v9.6 · Bandeau « alerte non configurée » (se referme une fois réglé)</div>
 </div>
 
 <script>
@@ -254,6 +256,29 @@ function showApp(){
   // Section kiosques terrain : affichée seulement s'il y en a d'accessibles.
   document.getElementById('kioskSection').classList.toggle('hidden', kioskCards.length===0);
   document.getElementById('kioskModules').innerHTML=kioskCards.map(cardHtml).join('');
+  checkAlertesBanner();
+}
+// Bandeau discret tant qu'un restaurant actif n'a pas d'alerte (stock/retard) opérationnelle.
+// Se referme de lui-même une fois tout configuré. Réservé à l'admin (seul à pouvoir configurer,
+// et seul à pouvoir lire retard_alertes_config — RLS admin-only).
+async function checkAlertesBanner(){
+  const el=document.getElementById('alertesBanner'); if(!el) return;
+  el.innerHTML='';
+  if(!ME || !['admin','super_admin'].includes(ME.role) || !ORG.id) return;
+  try{
+    const[rRes,scRes,rcRes]=await Promise.all([
+      sb.from('restaurants').select('id,nom,actif').eq('organization_id',ORG.id),
+      sb.from('stock_alertes_config').select('*').eq('organization_id',ORG.id),
+      sb.from('retard_alertes_config').select('*').eq('organization_id',ORG.id),
+    ]);
+    const restos=rRes.data||[]; const sc={},rc={};
+    (scRes.data||[]).forEach(c=>{sc[c.restaurant_id]=c;});
+    (rcRes.data||[]).forEach(c=>{rc[c.restaurant_id]=c;});
+    const miss=alertesManquantes(restos,sc,rc);
+    if(!miss.length) return; // tout opérationnel → aucun bandeau
+    const nAll=restos.filter(r=>r.actif!==false).length;
+    el.innerHTML=`<a href="parametres/?stay" style="display:block;text-decoration:none;background:rgba(224,169,58,.12);border:1px solid var(--warn);border-radius:10px;padding:10px 14px;margin-bottom:6px;color:var(--warn);font-size:12.5px">⚠️ <b>Alerte(s) non configurée(s)</b> — ${miss.length} restaurant${miss.length>1?'s':''} sur ${nAll} sans alerte stock/retard opérationnelle. Un oubli de saisie ne préviendrait personne. <span style="text-decoration:underline">Configurer dans Paramètres →</span></a>`;
+  }catch(e){/* silencieux : le bandeau ne doit jamais casser le portail */}
 }
 
 sb.auth.getSession().then(({data})=>{
