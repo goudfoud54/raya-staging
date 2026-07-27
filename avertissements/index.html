@@ -579,6 +579,16 @@ function detectRiskTerms(txt){
   for(const r of RISK_TERMS){ const m=s.match(r.re); if(m){ const term=m[0].toLowerCase(); if(seen.has(term))continue; seen.add(term); out.push({term:m[0], why:r.why}); } }
   return out;
 }
+// L.1332-5 : une sanction de PLUS DE 3 ANS avant l'engagement des poursuites de la NOUVELLE sanction ne peut
+// plus être invoquée à l'appui de celle-ci. ref = date des faits de la nouvelle procédure (défaut : aujourd'hui).
+// PURE → testée. Une sanction prescrite est grisée et exclue par défaut des antécédents repris dans la lettre.
+function antecedentPrescrit(sanctionDate, refDate){
+  if(!sanctionDate) return false;
+  const s=new Date(sanctionDate); if(isNaN(s)) return false;
+  const r=refDate?new Date(refDate):new Date(); if(isNaN(r)) return false;
+  const limite=new Date(r); limite.setFullYear(limite.getFullYear()-3);
+  return s < limite;   // strictement plus de 3 ans avant la référence
+}
 // Affiche les suggestions de reformulation sous les champs de motivation (jamais bloquant).
 function checkRiskTerms(){
   const box=document.getElementById('riskWarn'); if(!box)return;
@@ -763,7 +773,11 @@ async function loadAntecedents(salId, excludeId){
       .eq('salarie_id', salId).in('status',['sanction_notifiee','cloture'])
       .order('notification_date',{ascending:false,nullsFirst:false});
     S.antecedents = (data||[]).filter(a=>a.id!==excludeId);
-    S.antIncluded = new Set(S.antecedents.map(a=>a.id));
+    // L.1332-5 : les sanctions prescrites (>3 ans) sont EXCLUES par défaut (non cochées) ; les autres cochées.
+    const ref=(document.getElementById('ed_faits_date')||{}).value||null;
+    S.antIncluded = new Set(S.antecedents
+      .filter(a=>!antecedentPrescrit(a.notification_date||a.date_effet||a.faits_date, ref))
+      .map(a=>a.id));
   }
   renderAntecedents();
 }
@@ -778,14 +792,19 @@ function renderAntecedents(){
     box.innerHTML = `<div class="ant-box"><div class="ant-title">📚 Antécédents disciplinaires de ce salarié</div><div style="font-size:12.5px;color:var(--muted)">Aucun antécédent disciplinaire.</div></div>${warn}`;
     return;
   }
+  const ref=(document.getElementById('ed_faits_date')||{}).value||null;
   box.innerHTML = `<div class="ant-box">
     <div class="ant-title">📚 Antécédents disciplinaires de ce salarié (${S.antecedents.length})</div>
-    <div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Coche ceux à rappeler dans la lettre de sanction.</div>
-    ${S.antecedents.map(a=>`<label class="ant-item">
-      <input type="checkbox" ${S.antIncluded.has(a.id)?'checked':''} onchange="toggleAnt('${a.id}')">
-      <span><b>${fmtDate(a.notification_date||a.date_effet||a.faits_date)}</b> · ${esc(TYPE_LABELS[a.type]||a.type)} — ${esc(a.motif_court||'—')}
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;line-height:1.5"><b>Non bis in idem</b> : un fait déjà sanctionné ne peut plus l'être. Les antécédents ne servent que de <b>contexte aggravant pour des faits NOUVEAUX</b>, jamais de fondement. Coche ceux à rappeler.</div>
+    ${S.antecedents.map(a=>{
+      const dt=a.notification_date||a.date_effet||a.faits_date;
+      const presc=antecedentPrescrit(dt, ref);
+      return `<label class="ant-item"${presc?' style="opacity:.5"':''}>
+      <input type="checkbox" ${S.antIncluded.has(a.id)?'checked':''} ${presc?'disabled':''} onchange="toggleAnt('${a.id}')">
+      <span><b>${fmtDate(dt)}</b> · ${esc(TYPE_LABELS[a.type]||a.type)} — ${esc(a.motif_court||'—')}
+      ${presc?'<span style="color:var(--danger,#c45a5a);font-weight:600;font-size:11px;margin-left:5px">⛔ prescrit &gt;3 ans (L.1332-5) — non invocable</span>':''}
       <a onclick="event.preventDefault();openEdit('${a.id}')" href="#" style="color:var(--accent);margin-left:6px">voir</a></span>
-    </label>`).join('')}
+    </label>`;}).join('')}
   </div>${warn}`;
 }
 function toggleAnt(id){ if(S.antIncluded.has(id)) S.antIncluded.delete(id); else S.antIncluded.add(id); }
