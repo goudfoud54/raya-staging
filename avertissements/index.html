@@ -254,11 +254,30 @@ textarea{resize:vertical;min-height:80px}
         <div class="field"><label>Date d'effet</label><input id="ed_effet_date" type="date"></div>
       </div>
       <div id="mapSection" style="display:none">
-        <h3>Mise à pied (jours)</h3>
+        <h3>Mise à pied DISCIPLINAIRE (sanction, ≤ 3 jours)</h3>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.5">⚠ Sanction qui <b>épuise le pouvoir disciplinaire</b> sur ces faits : on ne pourra <b>plus</b> licencier ensuite pour les mêmes faits (non bis in idem). À ne pas confondre avec la mise à pied <i>conservatoire</i> (mesure d'attente).</div>
         <div class="row3">
           <div class="field"><label>Date début</label><input id="ed_map_debut" type="date"></div>
           <div class="field"><label>Date fin</label><input id="ed_map_fin" type="date"></div>
           <div class="field"><label>Nb jours</label><input id="ed_map_jours" type="number" min="1" max="3"></div>
+        </div>
+      </div>
+      <!-- Faille 2 : mise à pied CONSERVATOIRE (faute grave/lourde) — mesure d'attente NON sanctionnelle. -->
+      <div id="conservatoireSection" style="display:none">
+        <h3>Mise à pied CONSERVATOIRE (mesure d'attente — faute grave/lourde)</h3>
+        <div style="background:rgba(224,169,58,.10);border:1px solid var(--warn,#e0a93a);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;line-height:1.55">
+          La faute grave se définit par <b>l'impossibilité de maintenir le salarié dans l'entreprise</b>. Le laisser à son poste pendant la procédure affaiblit fortement la qualification → risque de <b>requalification en cause réelle et sérieuse</b> (préavis + indemnité de licenciement redeviennent dus). La mise à pied conservatoire suspend le contrat immédiatement, le temps de la procédure.
+          <div style="color:var(--muted);margin-top:5px">⚖ Nature <b>opposée</b> à la mise à pied disciplinaire : ici le contrat est suspendu et le salaire retenu <b>sous réserve</b> — si la faute grave n'est finalement pas retenue, le salaire de la période est dû.</div>
+        </div>
+        <div class="field"><label>Date de prise d'effet de la mise à pied conservatoire</label><input id="ed_conservatoire_date" type="date" onchange="onConservatoireChange()"></div>
+        <div id="conservatoireAlertes"></div>
+        <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;margin-top:8px;font-size:13px">
+          <input type="checkbox" id="ed_conservatoire_declined" onchange="onConservatoireChange()" style="width:16px;height:16px;margin-top:2px;cursor:pointer">
+          <span>Je renonce à la mise à pied conservatoire malgré la faute grave/lourde<br><small style="color:var(--muted)">Ce choix est enregistré (traçabilité). Motif recommandé ci-dessous.</small></span>
+        </label>
+        <div id="conservatoireDeclinedBox" style="display:none;margin-top:8px">
+          <div class="field"><label>Motif de la renonciation (traçabilité)</label><input id="ed_conservatoire_note" placeholder="Ex : salarié déjà absent, faits ne justifiant pas la suspension immédiate…"></div>
+          <div style="background:rgba(196,90,90,.10);border:1px solid var(--danger,#c45a5a);border-radius:8px;padding:9px 12px;font-size:12px;color:var(--danger,#c45a5a)">⚠ Sans mise à pied conservatoire, maintenir le salarié en poste pendant la procédure fragilise la faute grave. Un conseil juridique est recommandé.</div>
         </div>
       </div>
       <div id="indemSection" style="display:none">
@@ -589,6 +608,23 @@ function antecedentPrescrit(sanctionDate, refDate){
   const limite=new Date(r); limite.setFullYear(limite.getFullYear()-3);
   return s < limite;   // strictement plus de 3 ans avant la référence
 }
+// Faille 2 — l'IMMÉDIATETÉ fait partie de la définition de la faute grave/lourde (impossibilité de maintenir
+// le salarié dans l'entreprise). Un délai anormal entre les faits et la mise à pied CONSERVATOIRE, ou entre
+// celle-ci et la convocation, affaiblit la qualification → requalification probable en cause réelle et sérieuse
+// (préavis + indemnité de licenciement redeviennent dus). Seuils INDICATIFS (pas des limites légales strictes —
+// appréciation au cas par cas / par l'avocat). PURE → testée. Retourne [{niveau:'alerte'|'info', msg}].
+function conservatoireImmediateteAlertes(faitsDate, conservatoireDate, convocDate){
+  const out=[]; const days=(a,b)=>{ if(!a||!b)return null; const d=Math.round((new Date(b)-new Date(a))/86400000); return isNaN(d)?null:d; };
+  const d1=days(faitsDate, conservatoireDate);
+  if(d1!=null){
+    if(d1<0) out.push({niveau:'alerte', msg:"La mise à pied conservatoire est datée AVANT les faits — vérifiez les dates."});
+    else if(d1>6) out.push({niveau:'alerte', msg:`${d1} jours entre les faits et la mise à pied conservatoire : délai trop long, l'immédiateté de la faute grave est compromise (risque de requalification en cause réelle et sérieuse).`});
+    else if(d1>2) out.push({niveau:'info', msg:`${d1} jours entre les faits et la mise à pied conservatoire : à justifier, l'immédiateté est attendue.`});
+  }
+  const d2=days(conservatoireDate, convocDate);
+  if(d2!=null && d2>6) out.push({niveau:'alerte', msg:`${d2} jours entre la mise à pied conservatoire et la convocation : engagez la procédure sans tarder.`});
+  return out;
+}
 // Affiche les suggestions de reformulation sous les champs de motivation (jamais bloquant).
 function checkRiskTerms(){
   const box=document.getElementById('riskWarn'); if(!box)return;
@@ -671,7 +707,10 @@ function wizardPick(i){
 
 // ─────────── MODAL ───────────
 function blankFields(){
-  ['ed_faits_lieu','ed_faits_heure','ed_faits_impact','ed_motif_court','ed_motif_detail','ed_convoc_date','ed_entretien_date','ed_entretien_heure','ed_entretien_lieu','ed_entretien_assistant','ed_entretien_pv','ed_notif_date','ed_effet_date','ed_map_debut','ed_map_fin','ed_map_jours','ed_ind_lic','ed_ind_pre','ed_ind_cp','ed_preavis_jours','ed_notes'].forEach(id=>document.getElementById(id).value='');
+  ['ed_faits_lieu','ed_faits_heure','ed_faits_impact','ed_motif_court','ed_motif_detail','ed_convoc_date','ed_entretien_date','ed_entretien_heure','ed_entretien_lieu','ed_entretien_assistant','ed_entretien_pv','ed_notif_date','ed_effet_date','ed_map_debut','ed_map_fin','ed_map_jours','ed_conservatoire_date','ed_conservatoire_note','ed_ind_lic','ed_ind_pre','ed_ind_cp','ed_preavis_jours','ed_notes'].forEach(id=>document.getElementById(id).value='');
+  { const e=document.getElementById('ed_conservatoire_declined'); if(e) e.checked=false; }
+  { const b=document.getElementById('conservatoireAlertes'); if(b) b.innerHTML=''; }
+  { const b=document.getElementById('riskWarn'); if(b) b.innerHTML=''; }
   document.getElementById('ed_preavis_eff').checked=false;
   document.getElementById('ed_entretien_held').checked=false;
   document.getElementById('ed_faits_date').value=new Date().toISOString().slice(0,10);
@@ -702,6 +741,8 @@ function fillFields(d){
   const set=(id,v)=>{document.getElementById(id).value=v||'';};
   set('ed_faits_date',d.faits_date); set('ed_faits_lieu',d.faits_lieu); set('ed_motif_court',d.motif_court); set('ed_motif_detail',d.motif_detail);
   set('ed_faits_heure',(d.faits_heure||'').slice(0,5)); set('ed_faits_impact',d.faits_impact);
+  set('ed_conservatoire_date',d.conservatoire_date); set('ed_conservatoire_note',d.conservatoire_declined_note);
+  { const e=document.getElementById('ed_conservatoire_declined'); if(e) e.checked=!!d.conservatoire_declined; }
   checkRiskTerms(); // signale d'emblée les formulations à risque d'un dossier existant
   const _rsel=document.getElementById('ed_faits_restaurant'), _man=document.getElementById('ed_faits_lieu');
   if(d.faits_restaurant_id){ _rsel.value=d.faits_restaurant_id; _man.style.display='none'; }
@@ -750,14 +791,29 @@ async function openModal(d, preset){
 function openEdit(id){ const d=S.dossiers.find(x=>x.id===id); if(d) openModal(d); }
 function closeModal(){ document.getElementById('modalEdit').classList.remove('open'); }
 
+// Faute grave OU lourde → la mise à pied conservatoire doit être proposée immédiatement (Faille 2).
+function isFauteGraveLourde(t){ return t==='licenciement_grave'||t==='licenciement_lourde'; }
 function onTypeChange(){
   const t = document.getElementById('ed_type').value;
   document.getElementById('legalInfo').innerHTML = LEGAL_INFOS[t] || '';
   document.getElementById('mapSection').style.display = t==='mise_a_pied_disciplinaire'?'':'none';
   document.getElementById('indemSection').style.display = t.startsWith('licenciement')?'':'none';
+  // Mise à pied CONSERVATOIRE : proposée d'emblée dès qu'une faute grave/lourde est choisie (même écran).
+  const cs=document.getElementById('conservatoireSection'); if(cs) cs.style.display = isFauteGraveLourde(t)?'':'none';
+  if(isFauteGraveLourde(t)) onConservatoireChange();
   // si on change de type au moment de la création, l'index d'étape reste valide (0)
   if (!document.getElementById('ed_id').value) S.curStepIdx = Math.min(S.curStepIdx, wfSteps(t).length-1);
   renderWorkflow();
+}
+// Affiche les alertes d'immédiateté + le bloc de renonciation.
+function onConservatoireChange(){
+  const g=id=>(document.getElementById(id)||{}).value||'';
+  const declined=(document.getElementById('ed_conservatoire_declined')||{}).checked;
+  const box=document.getElementById('conservatoireDeclinedBox'); if(box) box.style.display=declined?'':'none';
+  const al=document.getElementById('conservatoireAlertes'); if(!al)return;
+  const alertes=conservatoireImmediateteAlertes(g('ed_faits_date'), g('ed_conservatoire_date'), g('ed_convoc_date')||g('ed_entretien_date'));
+  if(!alertes.length || declined){ al.innerHTML=''; return; }
+  al.innerHTML=alertes.map(a=>`<div style="border-radius:8px;padding:8px 11px;margin-top:6px;font-size:12px;line-height:1.5;${a.niveau==='alerte'?'background:rgba(196,90,90,.10);border:1px solid var(--danger,#c45a5a);color:var(--danger,#c45a5a)':'background:rgba(224,169,58,.10);border:1px solid var(--warn,#e0a93a)'}">${a.niveau==='alerte'?'⛔':'⏱'} ${esc(a.msg)}</div>`).join('');
 }
 async function onSalarieChange(){
   await loadAntecedents(document.getElementById('ed_salarie').value, document.getElementById('ed_id').value);
@@ -1045,6 +1101,12 @@ function collectPayload(){
     notification_date: v('ed_notif_date'), date_effet: v('ed_effet_date'),
     mise_a_pied_debut: v('ed_map_debut'), mise_a_pied_fin: v('ed_map_fin'),
     mise_a_pied_jours: parseInt(document.getElementById('ed_map_jours').value)||null,
+    // Faille 2 — mise à pied conservatoire (faute grave/lourde) : date d'effet + traçabilité de la renonciation.
+    conservatoire_date: isFauteGraveLourde(document.getElementById('ed_type').value) ? v('ed_conservatoire_date') : null,
+    conservatoire_declined: !!(document.getElementById('ed_conservatoire_declined')||{}).checked,
+    conservatoire_declined_note: v('ed_conservatoire_note'),
+    conservatoire_decided_at: (isFauteGraveLourde(document.getElementById('ed_type').value) && ((document.getElementById('ed_conservatoire_declined')||{}).checked || v('ed_conservatoire_date'))) ? new Date().toISOString() : null,
+    conservatoire_decided_by: S.profile.id,
     indemnite_licenciement: parseFloat(document.getElementById('ed_ind_lic').value)||null,
     indemnite_compensatrice_preavis: parseFloat(document.getElementById('ed_ind_pre').value)||null,
     indemnite_compensatrice_cp: parseFloat(document.getElementById('ed_ind_cp').value)||null,
