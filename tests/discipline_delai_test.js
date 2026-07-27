@@ -4,7 +4,8 @@ const fs=require("fs");
 const h=fs.readFileSync(require("path").join(__dirname,"..","avertissements/index.html"),"utf8");
 { const s=h.indexOf("function _isoDate("); const e=h.indexOf("// Nombre de jours OUVRABLES"); if(s<0)throw new Error("bloc fériés introuvable");
   const s2=h.indexOf("function joursOuvrables(",e), e2=h.indexOf("\n}",s2)+2;
-  eval(h.slice(s,e)+h.slice(s2,e2)+";global._isoDate=_isoDate;global.joursFeries=joursFeries;global.joursOuvrables=joursOuvrables;"); }
+  const sa=h.indexOf("function convocDelaiAnchor("), ea=h.indexOf("\n}",sa)+2;
+  eval(h.slice(s,e)+h.slice(s2,e2)+h.slice(sa,ea)+";global._isoDate=_isoDate;global.joursFeries=joursFeries;global.joursOuvrables=joursOuvrables;global.convocDelaiAnchor=convocDelaiAnchor;"); }
 
 let ok=true; const t=(l,c)=>{console.log((c?'PASS':'FAIL')+' · '+l);ok=c&&ok;};
 
@@ -40,5 +41,14 @@ t('Ascension (férié mobile) en semaine → 4 ouvrables (pas 5)', joursOuvrable
 // ── Seuils métier : le module bloque à <5 (convocation) et <2 (notification) ──
 t('exactement 5 ouvrables → convocation OK (pas <5)', joursOuvrables('2026-01-05','2026-01-12')>=5);
 t('4 ouvrables (semaine fériée) → convocation bloquée (<5)', joursOuvrables('2026-04-27','2026-05-04')<5);
+
+// ── ANCRE DU DÉLAI : première présentation, pas l'envoi (sinon false-allow) ──
+t('présentation connue → ancre = présentation (pas l\'envoi)', convocDelaiAnchor('2026-01-05','2026-01-07')==='2026-01-07');
+t('présentation inconnue → ancre = envoi + 2 j (estimation PRUDENTE, jamais sous-estimer)', convocDelaiAnchor('2026-01-05','')==='2026-01-07');
+t('ni envoi ni présentation → null', convocDelaiAnchor('','')===null);
+// L'ancre prudente resserre : envoi lundi 5, entretien lundi 12. Depuis l'envoi = 5 ouvrables (limite),
+// mais depuis la présentation estimée (mer 7) = mar? non : jeu8,ven9,sam10,(dim),lun? borne exclue → jeu,ven,sam = 3 < 5.
+t('ancre présentation estimée BLOQUE là où l\'envoi laissait passer (anti false-allow)',
+  joursOuvrables(convocDelaiAnchor('2026-01-05',''),'2026-01-12') < 5 && joursOuvrables('2026-01-05','2026-01-12')===5);
 
 console.log(ok?'\nALL PASS':'\nSOME FAILED'); process.exit(ok?0:1);

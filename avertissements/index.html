@@ -220,8 +220,12 @@ textarea{resize:vertical;min-height:80px}
       <div id="warnConvoc"></div>
       <div class="row">
         <div class="field"><label>Date envoi convocation</label><input id="ed_convoc_date" type="date" onchange="checkConvocDelai()"></div>
+        <div class="field"><label>Date de 1ʳᵉ présentation (LRAR) <small style="color:var(--muted);font-weight:400;text-transform:none">— fait courir le délai</small></label><input id="ed_presentation_date" type="date" onchange="checkConvocDelai()"></div>
+      </div>
+      <div class="row">
         <div class="field"><label>Date entretien</label><input id="ed_entretien_date" type="date" onchange="checkConvocDelai()"></div>
       </div>
+      <div style="font-size:11px;color:var(--muted);margin:-4px 0 8px;line-height:1.5">Le délai de 5 jours ouvrables court à compter de la <b>première présentation</b> de la LRAR (≈ envoi + 1 à 2 jours), pas de l'envoi. Renseigne la date de présentation dès l'avis de passage ; à défaut, le calcul se cale <b>prudemment sur envoi + 2 jours</b> (présentation estimée) pour ne jamais sous-estimer le délai.</div>
       <div class="row">
         <div class="field"><label>Heure entretien</label><input id="ed_entretien_heure" type="time"></div>
         <div class="field"><label>Lieu entretien</label>
@@ -636,6 +640,17 @@ function ageAt(dateNaissance, ref){
   const m=r.getMonth()-n.getMonth(); if(m<0||(m===0&&r.getDate()<n.getDate()))a--; return a;
 }
 function estMineur(sal, ref){ const a=ageAt(sal&&sal.date_naissance, ref); return a!=null && a>=0 && a<18; }
+// Le délai de 5 jours ouvrables court à compter de la PREMIÈRE PRÉSENTATION de la LRAR (L.1232-2), PAS de
+// l'envoi. Présentation connue → on l'utilise ; sinon estimation PRUDENTE = envoi + 2 jours (une présentation
+// plus tardive donne MOINS de jours ouvrables jusqu'à l'entretien → on ne sous-estime jamais le délai, donc on
+// ne laisse jamais passer un entretien trop rapproché). PURE → testée.
+function convocDelaiAnchor(sendDate, presentationDate){
+  if(presentationDate) return presentationDate;
+  if(!sendDate) return null;
+  const x=new Date(sendDate); if(isNaN(x)) return null;
+  x.setDate(x.getDate()+2);
+  return _isoDate(x);
+}
 // Affiche les suggestions de reformulation sous les champs de motivation (jamais bloquant).
 function checkRiskTerms(){
   const box=document.getElementById('riskWarn'); if(!box)return;
@@ -718,7 +733,7 @@ function wizardPick(i){
 
 // ─────────── MODAL ───────────
 function blankFields(){
-  ['ed_faits_lieu','ed_faits_heure','ed_faits_impact','ed_motif_court','ed_motif_detail','ed_convoc_date','ed_entretien_date','ed_entretien_heure','ed_entretien_lieu','ed_entretien_assistant','ed_entretien_pv','ed_notif_date','ed_effet_date','ed_map_debut','ed_map_fin','ed_map_jours','ed_conservatoire_date','ed_conservatoire_note','ed_ind_lic','ed_ind_pre','ed_ind_cp','ed_preavis_jours','ed_notes'].forEach(id=>document.getElementById(id).value='');
+  ['ed_faits_lieu','ed_faits_heure','ed_faits_impact','ed_motif_court','ed_motif_detail','ed_convoc_date','ed_presentation_date','ed_entretien_date','ed_entretien_heure','ed_entretien_lieu','ed_entretien_assistant','ed_entretien_pv','ed_notif_date','ed_effet_date','ed_map_debut','ed_map_fin','ed_map_jours','ed_conservatoire_date','ed_conservatoire_note','ed_ind_lic','ed_ind_pre','ed_ind_cp','ed_preavis_jours','ed_notes'].forEach(id=>document.getElementById(id).value='');
   { const e=document.getElementById('ed_conservatoire_declined'); if(e) e.checked=false; }
   { const b=document.getElementById('conservatoireAlertes'); if(b) b.innerHTML=''; }
   { const b=document.getElementById('riskWarn'); if(b) b.innerHTML=''; }
@@ -760,7 +775,7 @@ function fillFields(d){
   if(d.faits_restaurant_id){ _rsel.value=d.faits_restaurant_id; _man.style.display='none'; }
   else if(d.faits_lieu){ _rsel.value='__autre__'; _man.style.display=''; }
   else { _rsel.value=''; _man.style.display='none'; }
-  set('ed_convoc_date',d.convocation_date); set('ed_entretien_date',d.entretien_date); set('ed_entretien_heure',d.entretien_heure); set('ed_entretien_lieu',d.entretien_lieu);
+  set('ed_convoc_date',d.convocation_date); set('ed_presentation_date',d.convocation_presentation_date); set('ed_entretien_date',d.entretien_date); set('ed_entretien_heure',d.entretien_heure); set('ed_entretien_lieu',d.entretien_lieu);
   // Lieu entretien : retrouve le resto si l'adresse stockée correspond, sinon « Autre » (saisie libre)
   const _esel=document.getElementById('ed_entretien_restaurant'), _eman=document.getElementById('ed_entretien_lieu');
   const _matchResto=(S.restos||[]).find(r=>restoFullStr(r)===(d.entretien_lieu||''));
@@ -1084,8 +1099,10 @@ function validateCurrentStep(){
     if (!ok){ alert('Complète les champs requis de cette étape avant de continuer.'); el.focus&&el.focus(); return false; }
   }
   // Contrôles de délais bloquants
-  if (cur.key==='convocation'){ const j=joursOuvrables(document.getElementById('ed_convoc_date').value, document.getElementById('ed_entretien_date').value);
-    if (j!==null && j<5){ alert('⛔ Délai non respecté : il faut au moins 5 jours ouvrables entre l\'envoi de la convocation et l\'entretien.'); return false; } }
+  if (cur.key==='convocation'){
+    const anchor=convocDelaiAnchor(document.getElementById('ed_convoc_date').value, (document.getElementById('ed_presentation_date')||{}).value||'');
+    const j=joursOuvrables(anchor, document.getElementById('ed_entretien_date').value);
+    if (j!==null && j<5){ alert('⛔ Délai non respecté : il faut au moins 5 jours ouvrables entre la PREMIÈRE PRÉSENTATION de la convocation (≈ envoi + 2 j si non renseignée) et l\'entretien.'); return false; } }
   if (cur.key==='notifie' && wfKey(type)==='lourd'){
     const j=joursOuvrables(document.getElementById('ed_entretien_date').value, document.getElementById('ed_notif_date').value);
     if (j!==null && j<2){ alert('⛔ La notification doit intervenir au moins 2 jours ouvrables après l\'entretien.'); return false; }
@@ -1127,7 +1144,7 @@ function collectPayload(){
     motif_court: (document.getElementById('ed_motif_court').value||'').trim(),
     motif_detail: v('ed_motif_detail'),
     faits_date: v('ed_faits_date'), faits_heure: v('ed_faits_heure'), faits_impact: v('ed_faits_impact'),
-    convocation_date: v('ed_convoc_date'), entretien_date: v('ed_entretien_date'),
+    convocation_date: v('ed_convoc_date'), convocation_presentation_date: v('ed_presentation_date'), entretien_date: v('ed_entretien_date'),
     entretien_heure: v('ed_entretien_heure'), entretien_lieu: v('ed_entretien_lieu'),
     entretien_assistant: v('ed_entretien_assistant'), entretien_pv: v('ed_entretien_pv'),
     entretien_held: document.getElementById('ed_entretien_held').checked,
@@ -1138,7 +1155,11 @@ function collectPayload(){
     conservatoire_date: isFauteGraveLourde(document.getElementById('ed_type').value) ? v('ed_conservatoire_date') : null,
     conservatoire_declined: !!(document.getElementById('ed_conservatoire_declined')||{}).checked,
     conservatoire_declined_note: v('ed_conservatoire_note'),
-    conservatoire_decided_at: (isFauteGraveLourde(document.getElementById('ed_type').value) && ((document.getElementById('ed_conservatoire_declined')||{}).checked || v('ed_conservatoire_date'))) ? new Date().toISOString() : null,
+    // Horodatage de la décision : IMMUABLE — fixé à la 1ʳᵉ décision, jamais réécrit aux enregistrements suivants.
+    conservatoire_decided_at: (()=>{ const t=document.getElementById('ed_type').value; const decided=isFauteGraveLourde(t) && (((document.getElementById('ed_conservatoire_declined')||{}).checked) || v('ed_conservatoire_date'));
+      if(!decided) return null;
+      const prev=(S.dossiers.find(x=>x.id===document.getElementById('ed_id').value)||{}).conservatoire_decided_at;
+      return prev || new Date().toISOString(); })(),
     conservatoire_decided_by: S.profile.id,
     indemnite_licenciement: parseFloat(document.getElementById('ed_ind_lic').value)||null,
     indemnite_compensatrice_preavis: parseFloat(document.getElementById('ed_ind_pre').value)||null,
@@ -1218,11 +1239,14 @@ function checkPrescription(){
 function checkConvocDelai(){
   const box=document.getElementById('warnConvoc'); if(!box) return;
   const c=document.getElementById('ed_convoc_date').value, e=document.getElementById('ed_entretien_date').value;
-  if (!c||!e){ box.innerHTML=''; return; }
-  const j=joursOuvrables(c,e);
+  const pres=(document.getElementById('ed_presentation_date')||{}).value||'';
+  if ((!c&&!pres)||!e){ box.innerHTML=''; return; }
+  const anchor=convocDelaiAnchor(c, pres);
+  const j=joursOuvrables(anchor, e);
+  const src = pres ? 'à compter de la 1ʳᵉ présentation' : 'à compter de la présentation ESTIMÉE (envoi + 2 j — renseigne la présentation réelle)';
   box.innerHTML = j<5
-    ? `<div class="warn-box">⛔ <b>Délai non respecté</b> : ${j} jour(s) ouvrable(s) entre convocation et entretien. Minimum légal = <b>5 jours ouvrables</b>.</div>`
-    : `<div class="ok-box">✓ Délai respecté (${j} jours ouvrables entre convocation et entretien).</div>`;
+    ? `<div class="warn-box">⛔ <b>Délai non respecté</b> : ${j} jour(s) ouvrable(s) ${src} jusqu'à l'entretien. Minimum légal = <b>5 jours ouvrables</b>.</div>`
+    : `<div class="ok-box">✓ Délai respecté (${j} jours ouvrables ${src}).</div>`;
 }
 function checkNotifDelai(){
   const box=document.getElementById('warnNotif'); if(!box) return;
