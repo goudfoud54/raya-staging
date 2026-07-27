@@ -3712,29 +3712,28 @@ async function doImport(){
 
 function hexMix(hex,alpha){const m=String(hex||'').match(/^#?([0-9a-f]{6})/i);if(!m)return[240,240,240];const r=parseInt(m[1].slice(0,2),16),g=parseInt(m[1].slice(2,4),16),b=parseInt(m[1].slice(4,6),16);return[Math.round(r*alpha+255*(1-alpha)),Math.round(g*alpha+255*(1-alpha)),Math.round(b*alpha+255*(1-alpha))];}
 
-function drawSnackPage(doc,resto,creneaux,ctx){
-  ctx=ctx||{};
-  const prim=_rgbArr(ctx.primary||'#c8a035');
-  const pageW=doc.internal.pageSize.getWidth();
-  const sids=new Set(creneaux.map(c=>c.salarie_id));
-  const list=S.salaries.filter(s=>s.actif!==false && (worksAt(s,resto.id)||sids.has(s.id)))
-    .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return (ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
-  const get=(sid,date,svc)=>creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);
-  const roleLetter=sid=>{const r=roleMain(sid);return r?((roleNom(r).charAt(0)||'').toUpperCase()):'';};
-
-  // ── EN-TÊTE : filet d'accent couleur primaire, logo, nom du restaurant, semaine ──
-  doc.setFillColor(prim[0],prim[1],prim[2]);
-  doc.rect(0,0,pageW,3,'F');                                   // bandeau d'accent en haut
+// En-tête d'une page PDF : bandeau d'accent (couleur primaire), logo, nom du restaurant, semaine + org.
+// Appelé par le hook didDrawPage → répété sur CHAQUE page (un snack de 30 salariés déborde sur plusieurs pages A3).
+function _pdfHeader(doc,resto,ctx){
+  ctx=ctx||{}; const prim=_rgbArr(ctx.primary||'#c8a035'), pageW=doc.internal.pageSize.getWidth();
+  doc.setFillColor(prim[0],prim[1],prim[2]); doc.rect(0,0,pageW,3,'F');
   let tx=12;
-  if(ctx.logo){ try{ doc.addImage(ctx.logo,'PNG',10,7,16,16); tx=30; }catch(e){} }  // logo (graceful)
+  if(ctx.logo){ try{ doc.addImage(ctx.logo,'PNG',10,7,16,16); tx=30; }catch(e){} }
   doc.setFontSize(17);doc.setFont(undefined,'bold');doc.setTextColor(20,20,20);
   doc.text(`Planning ${shortSnack(resto.nom)}`, tx, 14);
   doc.setFontSize(9.5);doc.setFont(undefined,'normal');doc.setTextColor(110);
   const endDate=new Date(MONDAY.getTime()+6*86400000);
   doc.text(`Semaine ${isoWeek(MONDAY)} · ${MONDAY.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} → ${endDate.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}${ctx.orgNom?'   ·   '+ctx.orgNom:''}`, tx, 20);
-  doc.setFillColor(prim[0],prim[1],prim[2]);
-  doc.rect(tx,22.5,52,0.8,'F');                                // petit filet sous le titre
+  doc.setFillColor(prim[0],prim[1],prim[2]); doc.rect(tx,22.5,52,0.8,'F');
   doc.setTextColor(0);
+}
+function drawSnackPage(doc,resto,creneaux,ctx){
+  ctx=ctx||{};
+  const sids=new Set(creneaux.map(c=>c.salarie_id));
+  const list=S.salaries.filter(s=>s.actif!==false && (worksAt(s,resto.id)||sids.has(s.id)))
+    .sort((a,b)=>{const ra=roleMain(a.id),rb=roleMain(b.id);if(ra!==rb)return (ra||'z').localeCompare(rb||'z');return (a.nom||'').localeCompare(b.nom||'');});
+  const get=(sid,date,svc)=>creneaux.find(c=>c.salarie_id===sid && c.date===date && c.service===svc);
+  const roleLetter=sid=>{const r=roleMain(sid);return r?((roleNom(r).charAt(0)||'').toUpperCase()):'';};
 
   // ── TÊTE DE TABLE : jours (week-end distinct) + sous-colonnes M/S ──
   const WEND=[240,236,228], WDAY=[241,241,244], MHEAD=[255,244,222], SHEAD=[228,236,250];
@@ -3785,8 +3784,9 @@ function drawSnackPage(doc,resto,creneaux,ctx){
     styles:{fontSize:6.5,cellPadding:1.1,halign:'center',valign:'middle',lineWidth:0.1,lineColor:[205,205,205]},
     headStyles:{fontSize:7,textColor:[55,55,60]},
     columnStyles:{0:{cellWidth:34,fontSize:7.5},29:{cellWidth:12}},
-    margin:{left:10,right:10},
+    margin:{top:26,left:10,right:10},   // top:26 → l'en-tête (didDrawPage) se répète sur CHAQUE page (org 30 salariés = multi-page A3)
     theme:'grid',
+    didDrawPage:function(){ _pdfHeader(doc,resto,ctx); },   // en-tête redessiné en haut de chaque page
     didDrawCell:function(d){
       // Trait plus marqué entre chaque JOUR (après col 0,4,8,12,16,20,24,28).
       const c=d.column.index;
