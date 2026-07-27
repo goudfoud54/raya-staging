@@ -235,6 +235,29 @@ async function loadAll(){
   tS.innerHTML = '<option value="">— Sélectionner —</option>' + S.salaries.map(x=>`<option value="${x.id}">${x.nom} ${x.prenom||''}</option>`).join('');
   EatimeAutocomplete.enhance(fS, { placeholder:'Tous les salariés — tape un nom…' });
   EatimeAutocomplete.enhance(tS, { placeholder:'Tape un nom de salarié…' });
+  const since = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+  const rt = await sb.from('retards').select('*').gte('date', since).order('date',{ascending:false});
+  S.retards = rt.data || [];
+  renderRetardsBar();
+}
+
+// Bandeau discret de ponctualité (7 derniers jours) au-dessus du board — sans perturber le Kanban.
+function renderRetardsBar(){
+  const board = document.getElementById('board');
+  let bar = document.getElementById('retardsBar');
+  const rets = S.retards || [];
+  if (!rets.length){ if (bar) bar.remove(); return; }
+  if (!bar){ bar = document.createElement('div'); bar.id='retardsBar'; board.parentNode.insertBefore(bar, board); }
+  const rr = rets.filter(x=>x.type==='retard'), so = rets.filter(x=>x.type==='sortie_oubliee');
+  const abs = rr.filter(x=>x.statut==='absent').length;
+  const line = (x)=>{ const dLbl = new Date(x.date).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'});
+    const tag = x.type==='sortie_oubliee' ? '🚪 sortie ?' : x.statut==='absent' ? '❌ absent' : x.statut==='arrive' ? `+${x.retard_minutes??'?'} min` : '⏳ en cours';
+    return `<div style="display:flex;gap:10px;padding:4px 0;font-size:12.5px;border-bottom:1px solid var(--line,#2224)"><span style="width:110px;text-transform:capitalize">${dLbl}</span><span style="flex:1">${esc(salName(x.salarie_id))}</span><span style="color:var(--muted,#888)">${(x.heure_prevue||'').slice(0,5)}</span><span>${tag}</span></div>`; };
+  bar.innerHTML = `<details style="background:var(--card,#15151f);border:1px solid var(--line,#2224);border-radius:12px;padding:12px 16px;margin-bottom:14px">
+    <summary style="cursor:pointer;font-weight:600;list-style:none">⏰ Ponctualité — 7 derniers jours : <b>${rr.length}</b> retard${rr.length>1?'s':''}${abs?` · ${abs} absence${abs>1?'s':''}`:''}${so.length?` · ${so.length} sortie${so.length>1?'s':''} non pointée${so.length>1?'s':''}`:''}</summary>
+    <div style="margin-top:10px">${rets.slice(0,30).map(line).join('')}</div>
+    <div style="color:var(--muted,#888);font-size:11px;margin-top:8px">Détail par salarié dans sa fiche (onglet Badgeuse → Ponctualité).</div>
+  </details>`;
 }
 
 function esc(s){return (s||'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))}

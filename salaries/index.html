@@ -243,7 +243,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.17 · couleur distincte + lisible par salarié : palette générée (angle d\'or, contraste AA), attribution unique à la création, bouton « 🎨 Couleurs » de rattrapage avec aperçu, avertissement si couleur trop claire, texte auto noir/blanc sur les avatars';
+const VERSION='v0.18 · section « Ponctualité » dans l\'onglet Badgeuse : historique des retards & sorties non pointées (date, service, heure prévue, heure réelle, écart, restaurant) sur 90 jours, exploitable comme éléments factuels';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -364,7 +364,8 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 
 // ===== LOAD =====
 async function loadAll(){
-  const [r,s,ro,d,c,p,dx,pt,or]=await Promise.all([
+  const d90=new Date(Date.now()-90*86400000);
+  const [r,s,ro,d,c,p,dx,pt,or,rt]=await Promise.all([
     sb.from('restaurants').select('*').eq('actif',true).order('nom'),
     sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
@@ -372,10 +373,11 @@ async function loadAll(){
     sb.from('salarie_contraintes').select('*'),
     sb.from('salarie_paires').select('*'),
     sb.from('salarie_documents').select('*').order('created_at',{ascending:false}),
-    sb.from('pointages').select('*').gte('ts',new Date(Date.now()-90*86400000).toISOString()).order('ts',{ascending:false}),
-    sb.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre')
+    sb.from('pointages').select('*').gte('ts',d90.toISOString()).order('ts',{ascending:false}),
+    sb.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre'),
+    sb.from('retards').select('*').gte('date',d90.toISOString().slice(0,10)).order('date',{ascending:false})
   ]);
-  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.orgRoles=or.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.data||[];
+  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.orgRoles=or.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.data||[];S.retards=rt.data||[];
   // Filtre rôles dynamique
   const fR=document.getElementById('fRole');
   if(fR) fR.innerHTML='<option value="">Tous les rôles</option>'+S.orgRoles.map(x=>`<option value="${x.cle}">${escH(x.nom)}</option>`).join('');
@@ -402,6 +404,7 @@ function applyDeepLink(){
 window.addEventListener('hashchange',applyDeepLink);
 const snackName=id=>{const r=S.restos.find(x=>x.id===id);return r?r.nom.replace('Raya ',''):'—';};
 const rolesOf=sid=>[...new Set(S.roles.filter(x=>x.salarie_id===sid).map(x=>x.role))];
+const retardsOf=sid=>(S.retards||[]).filter(x=>x.salarie_id===sid);
 const rolesFullOf=sid=>S.roles.filter(x=>x.salarie_id===sid);
 const roleName=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return r?r.nom:cle;};
 const roleColor=cle=>{const r=S.orgRoles.find(x=>x.cle===cle);return (r&&r.couleur)?r.couleur:'#8b94a3';};
@@ -1006,6 +1009,27 @@ function renderFiche(){
             <div style="color:var(--muted);font-size:12px;flex:1;min-width:200px">Communique ce code au salarié. Il l'utilise sur la badgeuse pour pointer.</div>
           </div>
         </div>
+        ${(()=>{const rets=retardsOf(s.id);if(!rets.length)return '';
+          const rr=rets.filter(x=>x.type==='retard'), so=rets.filter(x=>x.type==='sortie_oubliee');
+          const nbRet=rr.length, nbAbs=rr.filter(x=>x.statut==='absent').length;
+          const row=(x)=>{const r=S.restos.find(z=>z.id===x.restaurant_id);
+            const dLbl=new Date(x.date).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'});
+            const real=x.pointage_ts?new Date(x.pointage_ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'—';
+            const statutChip=x.statut==='absent'?'<span class="chip bad">absent</span>':x.statut==='arrive'?`<span class="chip warn">+${x.retard_minutes??'?'} min</span>`:x.statut==='sortie_manquante'?'<span class="chip multi">sortie ?</span>':'<span class="chip warn">en cours</span>';
+            return `<div style="display:flex;gap:12px;padding:6px 0;font-size:12.5px;align-items:center;border-bottom:1px solid var(--line)">
+              <span style="width:96px;text-transform:capitalize">${dLbl}</span>
+              <span style="color:var(--muted);width:44px">${x.service||''}</span>
+              <span style="color:var(--muted);font-family:monospace;width:46px">${(x.heure_prevue||'').slice(0,5)}</span>
+              <span style="color:var(--muted);font-family:monospace;width:46px">${real}</span>
+              ${statutChip}
+              ${r?`<span style="color:var(--muted);font-size:11px">@ ${r.nom.replace('Raya ','')}</span>`:''}
+            </div>`;};
+          return `<div class="section">
+            <h3>Ponctualité <span style="color:var(--muted);font-weight:400;font-size:13px">· 90 derniers jours</span></h3>
+            <div style="color:var(--muted);font-size:12px;margin-bottom:10px">${nbRet} retard${nbRet>1?'s':''}${nbAbs?` · ${nbAbs} absence${nbAbs>1?'s':''} constatée${nbAbs>1?'s':''}`:''}${so.length?` · ${so.length} sortie${so.length>1?'s':''} non pointée${so.length>1?'s':''}`:''}. Faits horodatés (date, heure prévue, heure réelle, restaurant) — utilisables comme éléments factuels.</div>
+            <div style="display:flex;gap:12px;padding:0 0 4px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em"><span style="width:96px">Date</span><span style="width:44px">Service</span><span style="width:46px">Prévu</span><span style="width:46px">Réel</span><span>Écart</span></div>
+            ${rets.slice(0,40).map(row).join('')}
+          </div>`;})()}
         <div class="section">
           <h3>Sélectionne un mois</h3>
           <div style="display:flex;gap:8px;flex-wrap:wrap">

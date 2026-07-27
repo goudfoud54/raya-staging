@@ -831,6 +831,8 @@ async function openEditResto(id){
   // Récupérer la config alertes
   const{data:cfg}=await sb.from('stock_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
   const alerteCfg=cfg||{actif:false,heure_check:'22:30',email_alerte:'',wa_groupe_id:'',wa_groupe_nom:''};
+  const{data:rcfg}=await sb.from('retard_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
+  const retardCfg=rcfg||{actif:false,seuil_minutes:15,plage_debut:'06:00',plage_fin:'23:59',alerte_sortie_oubliee:false,notif_salarie:true,email_alerte:'',wa_groupe_id:'',wa_groupe_nom:''};
   const overlay=document.createElement('div');
   overlay.id='editRestoModal';
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
@@ -878,6 +880,28 @@ async function openEditResto(id){
       <label>Nom du groupe (label affiché)</label>
       <input id="er_wa_grp_nom" value="${alerteCfg.wa_groupe_nom||''}" placeholder="Équipe Snack X">
     </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--line)">⏰ Alertes de retard</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Si un salarié attendu au planning n'a pas badgé son arrivée X minutes après l'heure prévue, on notifie les destinataires choisis. Rien n'est envoyé tant que la case ci-dessous n'est pas cochée.</div>
+    <div class="fld"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="er_retard_actif" ${retardCfg.actif?'checked':''} style="width:auto"> Activer les alertes de retard</label></div>
+    <div class="grid2">
+      <div class="fld"><label>Seuil de retard (minutes)</label><input type="number" id="er_retard_seuil" value="${retardCfg.seuil_minutes||15}" min="1" max="120"></div>
+      <div class="fld"><label>Sortie non pointée aussi</label><label style="display:flex;align-items:center;gap:8px;padding-top:10px"><input type="checkbox" id="er_retard_sortie" ${retardCfg.alerte_sortie_oubliee?'checked':''} style="width:auto"> Alerter les oublis de sortie</label></div>
+    </div>
+    <div class="grid2">
+      <div class="fld"><label>Ne pas alerter avant</label><input type="time" id="er_retard_plage_deb" value="${(retardCfg.plage_debut||'06:00').slice(0,5)}"></div>
+      <div class="fld"><label>Ni après</label><input type="time" id="er_retard_plage_fin" value="${(retardCfg.plage_fin||'23:59').slice(0,5)}"></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Destinataires (chacun activable) :</div>
+    <div class="fld"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="er_retard_notif_salarie" ${retardCfg.notif_salarie?'checked':''} style="width:auto"> Le salarié concerné (notification push sur son app « Mon espace »)</label>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Le push salarié nécessite la clé serveur VAPID (configuration unique côté hébergement) et que le salarié ait activé les notifications dans son app. Tant que ce n'est pas fait, cette case reste sans effet.</div>
+    </div>
+    <div class="fld"><label>Email de secours (optionnel)</label><input type="email" id="er_retard_email" value="${retardCfg.email_alerte||''}" placeholder="responsable@exemple.fr"></div>
+    <div class="grid2">
+      <div class="fld"><label>Groupe WhatsApp des managers (ID JID)</label><input id="er_retard_wa_id" value="${retardCfg.wa_groupe_id||''}" placeholder="120363xxx@g.us"></div>
+      <div class="fld"><label>Nom du groupe</label><input id="er_retard_wa_nom" value="${retardCfg.wa_groupe_nom||''}" placeholder="Managers Snack X"></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Le push salarié est gratuit et immédiat. L'envoi WhatsApp de groupe nécessite le bot configuré (voir plus bas).</div>
 
     <div id="er_err" style="color:var(--bad);font-size:13px;min-height:18px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">
@@ -972,6 +996,24 @@ async function saveEditResto(id){
   };
   const{error:e2}=await sb.from('stock_alertes_config').upsert(cfg,{onConflict:'restaurant_id'});
   if(e2){err.textContent=e2.message;return;}
+  // 3. upsert config alertes de retard
+  const gv=(id2)=>{const e=document.getElementById(id2);return e&&e.value.trim()?e.value.trim():null;};
+  const rcfg={
+    restaurant_id:id,
+    organization_id:ORG.id,
+    actif:document.getElementById('er_retard_actif').checked,
+    seuil_minutes:parseInt(document.getElementById('er_retard_seuil').value,10)||15,
+    plage_debut:document.getElementById('er_retard_plage_deb').value||'06:00',
+    plage_fin:document.getElementById('er_retard_plage_fin').value||'23:59',
+    alerte_sortie_oubliee:document.getElementById('er_retard_sortie').checked,
+    notif_salarie:document.getElementById('er_retard_notif_salarie').checked,
+    email_alerte:gv('er_retard_email'),
+    wa_groupe_id:gv('er_retard_wa_id'),
+    wa_groupe_nom:gv('er_retard_wa_nom'),
+    updated_at:new Date().toISOString(),
+  };
+  const{error:e3}=await sb.from('retard_alertes_config').upsert(rcfg,{onConflict:'restaurant_id'});
+  if(e3){err.textContent=e3.message;return;}
   toast('✓ Restaurant + alertes mis à jour');closeEditResto();loadRestos();
 }
 

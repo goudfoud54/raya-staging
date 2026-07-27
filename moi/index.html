@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Mon espace — Eatime360</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mon espace">
+<meta name="theme-color" content="#c8a035">
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../utils.js?v=1.2"></script>
 <style>
@@ -154,6 +160,7 @@ async function loadAndShow(){
   document.getElementById('userRole').textContent=profile.role.charAt(0).toUpperCase()+profile.role.slice(1).replace('_',' ');
   document.getElementById('userAv').textContent=(nm||'?').charAt(0).toUpperCase();
   render();
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{}); // pour recevoir les pushes hors onglet Profil
 }
 async function logout(){await sb.auth.signOut();location.reload();}
 sb.auth.getSession().then(({data})=>{if(data.session)loadAndShow();else document.getElementById('lock').classList.remove('hidden');});
@@ -371,13 +378,67 @@ async function renderProfil(el){
       <button class="btn ghost" onclick="setEatimeTheme('light');renderProfil(document.getElementById('content'))" style="flex:1">☀ Clair</button>
     </div>
   </div>
+  <div id="pushCard"></div>
   <div class="card-x">
     <div style="font-weight:700;margin-bottom:8px">Compte</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:10px">${ME.email}</div>
     <button class="btn ghost" onclick="logout()">Se déconnecter</button>
   </div>`;
   el.innerHTML=html;
+  renderPushCard();
 }
+
+// ─────── NOTIFICATIONS PUSH WEB ───────
+// Clé publique VAPID (l'inverse privé est un secret Supabase, jamais dans le code).
+const PUSH_PUBLIC_KEY='BPoMeCeMOuWtHKrf1b6_kh_NdKCbHJBi6oR8iawt-Qu9rHizeAjzFVB0ygOFH9TsIJNUT-kCvRInzW5VqWJFgaM';
+function _pushSupported(){return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;}
+function _isIOS(){return /iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);}
+function _isStandalone(){return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;}
+function _urlB64(base64){const pad='='.repeat((4-base64.length%4)%4);const b=(base64+pad).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(b);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
+function _pushCardWrap(title,inner){return `<div class="card-x"><div style="font-weight:700;margin-bottom:8px">${title}</div>${inner}</div>`;}
+async function _swReg(){if(!('serviceWorker' in navigator))return null;try{await navigator.serviceWorker.register('sw.js');return await navigator.serviceWorker.ready;}catch(e){console.error('SW',e);return null;}}
+async function _currentSub(){try{const reg=await navigator.serviceWorker.getRegistration();return reg?await reg.pushManager.getSubscription():null;}catch(e){return null;}}
+
+async function renderPushCard(){
+  const host=document.getElementById('pushCard');if(!host)return;
+  if(!_pushSupported()){host.innerHTML=_pushCardWrap('🔔 Notifications','<div style="color:var(--muted);font-size:13px">Ton navigateur ne gère pas les notifications.</div>');return;}
+  if(_isIOS() && !_isStandalone()){
+    host.innerHTML=_pushCardWrap('🔔 Notifications','<div style="color:var(--muted);font-size:13px;line-height:1.6">Pour recevoir les alertes, ajoute d\'abord l\'app à ton écran d\'accueil : appuie sur <b>Partager</b> ⬆️ puis <b>« Sur l\'écran d\'accueil »</b>, et rouvre l\'app depuis son icône.</div>');
+    return;
+  }
+  const perm=(typeof Notification!=='undefined')?Notification.permission:'default';
+  const sub=await _currentSub();
+  let inner;
+  if(perm==='denied') inner='<div style="color:var(--muted);font-size:13px">Notifications bloquées dans les réglages du navigateur. Réactive-les pour cette page pour être prévenu(e).</div>';
+  else if(sub) inner='<div style="color:var(--muted);font-size:13px;margin-bottom:10px">✅ Activées sur cet appareil.</div><button class="btn ghost" onclick="disablePush()">Désactiver</button>';
+  else inner='<div style="color:var(--muted);font-size:13px;margin-bottom:10px">Reçois une alerte si tu oublies de badger à ton arrivée. Souvent, c\'est juste un oubli — ça t\'évite un pointage manquant.</div><button class="btn" onclick="enablePush()">Activer les notifications</button>';
+  host.innerHTML=_pushCardWrap('🔔 Notifications',inner);
+}
+async function enablePush(){
+  try{
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted'){toast('Notifications refusées');return renderPushCard();}
+    const reg=await _swReg();if(!reg){toast('Erreur service worker');return;}
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64(PUSH_PUBLIC_KEY)});
+    const j=sub.toJSON();
+    const{error}=await sb.from('push_subscriptions').upsert({
+      profile_id:ME.id,salarie_id:SALARIE?SALARIE.id:null,organization_id:ME.organization_id,
+      endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,user_agent:navigator.userAgent,disabled_at:null,
+    },{onConflict:'endpoint'});
+    if(error){console.error(error);toast('Erreur d\'enregistrement');}
+    else toast('🔔 Notifications activées');
+  }catch(e){console.error(e);toast('Impossible d\'activer');}
+  renderPushCard();
+}
+async function disablePush(){
+  try{
+    const sub=await _currentSub();
+    if(sub){await sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint);await sub.unsubscribe();}
+    toast('Notifications désactivées');
+  }catch(e){console.error(e);}
+  renderPushCard();
+}
+
 function setEatimeTheme(t){localStorage.setItem('eatime_theme',t);document.documentElement.setAttribute('data-theme',t);toast(t==='light'?'☀ Thème clair':'🌙 Thème sombre');}
 
 function closeModal(){document.getElementById('modalHost').innerHTML='';}
