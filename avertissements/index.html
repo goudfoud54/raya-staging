@@ -200,14 +200,15 @@ textarea{resize:vertical;min-height:80px}
         <input id="ed_faits_lieu" placeholder="Adresse / lieu précis (déplacement, événement extérieur…)" style="margin-top:8px;display:none">
       </div>
       <div id="warnPrescription"></div>
-      <div class="field"><label>Motif court (1 ligne) *</label><input id="ed_motif_court" placeholder="Ex: Retards répétés, abandon de poste, insubordination..."></div>
+      <div class="field"><label>Motif court (1 ligne) *</label><input id="ed_motif_court" placeholder="Ex: Retards répétés, abandon de poste, insubordination..." oninput="checkRiskTerms()"></div>
       <div class="field">
         <label>Détail des faits *</label>
-        <textarea id="ed_motif_detail" placeholder="Décrire précisément les faits, dates, témoins, antécédents. Plus c'est précis, plus la sanction sera défendable en cas de contestation."></textarea>
+        <textarea id="ed_motif_detail" placeholder="Décrire précisément les faits, dates, témoins, antécédents. Plus c'est précis, plus la sanction sera défendable en cas de contestation." oninput="checkRiskTerms()"></textarea>
       </div>
+      <div id="riskWarn"></div>
       <div class="field">
         <label>Impact / préjudice subi par l'entreprise <small style="color:var(--muted);font-weight:400;text-transform:none">(lien de causalité)</small></label>
-        <textarea id="ed_faits_impact" placeholder="Ex : cette absence a désorganisé le service du midi, contraint deux collègues à effectuer des heures supplémentaires, et entraîné une perte de chiffre d'affaires estimée à 400 € sur la journée."></textarea>
+        <textarea id="ed_faits_impact" placeholder="Ex : cette absence a désorganisé le service du midi, contraint deux collègues à effectuer des heures supplémentaires, et entraîné une perte de chiffre d'affaires estimée à 400 € sur la journée." oninput="checkRiskTerms()"></textarea>
         <div style="font-size:11px;color:var(--muted);margin-top:4px">✨ Au clic sur « Valider », l'IA reformulera le motif, le détail ET cet impact en langage juridique.</div>
       </div>
     </div>
@@ -558,6 +559,38 @@ function esc(s){return (s||'').toString().replace(/[<>&"']/g,c=>({'<':'&lt;','>'
 function fmtDate(d){return d?new Date(d).toLocaleDateString('fr-FR'):'—'}
 function fmtDateLong(d){return d?new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'__________'}
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
+// Faille 3 — formulations À RISQUE dans la motivation. Deux familles : (a) mots suggérant un litige PARTAGÉ
+// (dispute, différend, conflit, altercation) → offrent au salarié l'argument de la provocation ; (b) JUGEMENTS
+// sans fait vérifiable (comportement inacceptable, manque de professionnalisme, attitude, irrespect) → non
+// opposables faute de fait daté. Détection = SUGGESTION de reformulation, JAMAIS un blocage (un blocage sur
+// de la prose factuelle légitime rendrait l'outil inutilisable). PURE → testée.
+const RISK_TERMS=[
+  {re:/\bdisput\w*/i, why:"suggère un litige partagé — décrivez le fait précis imputable au salarié (qui a fait/dit quoi)."},
+  {re:/\bdiff[ée]rend\w*/i, why:"introduit un contexte atténuant exploitable en défense — s'en tenir au manquement du salarié."},
+  {re:/\bconflit\w*/i, why:"suggère une responsabilité partagée — décrire l'acte précis du salarié, pas la situation."},
+  {re:/\baltercation\w*/i, why:"évoque un échange réciproque — préciser les propos ou gestes du seul salarié."},
+  {re:/\bcomportement\s+inacceptable\w*/i, why:"jugement sans fait vérifiable — remplacer par le fait constaté (date, acte, obligation enfreinte)."},
+  {re:/\bmanque\s+de\s+professionnalisme\b/i, why:"jugement de valeur non opposable — citer le manquement précis à une obligation."},
+  {re:/\b(mauvaise\s+)?attitude\b/i, why:"appréciation subjective — décrire le comportement factuel observé."},
+  {re:/\birrespect\w*|\bmanque\s+de\s+respect\b/i, why:"trop vague — rapporter les propos ou actes exacts et leur date."},
+];
+function detectRiskTerms(txt){
+  const s=String(txt||''); const seen=new Set(), out=[];
+  for(const r of RISK_TERMS){ const m=s.match(r.re); if(m){ const term=m[0].toLowerCase(); if(seen.has(term))continue; seen.add(term); out.push({term:m[0], why:r.why}); } }
+  return out;
+}
+// Affiche les suggestions de reformulation sous les champs de motivation (jamais bloquant).
+function checkRiskTerms(){
+  const box=document.getElementById('riskWarn'); if(!box)return;
+  const g=id=>(document.getElementById(id)||{}).value||'';
+  const hits=detectRiskTerms(g('ed_motif_court')+' \n '+g('ed_motif_detail')+' \n '+g('ed_faits_impact'));
+  if(!hits.length){ box.innerHTML=''; return; }
+  box.innerHTML=`<div style="background:rgba(224,169,58,.10);border:1px solid var(--warn,#e0a93a);border-radius:8px;padding:10px 12px;margin:2px 0 6px;font-size:12px;line-height:1.55">
+    <b style="color:var(--warn,#e0a93a)">✍ ${hits.length} formulation(s) à revoir</b> <span style="color:var(--muted)">(suggestion — non bloquant)</span>
+    ${hits.map(hh=>`<div style="margin-top:5px">• « <b>${esc(hh.term)}</b> » — ${esc(hh.why)}</div>`).join('')}
+    <div style="color:var(--muted);margin-top:6px">Ces mots se retournent contre l'employeur : la lettre fixe les limites du litige (art. L.1232-6), ce qui n'y figure pas ne pourra plus être invoqué.</div>
+  </div>`;
+}
 // Jours fériés légaux français (métropole) d'une année : 8 fixes + 3 mobiles dérivés de Pâques (Meeus/Butcher,
 // grégorien) — Lundi de Pâques, Ascension (+39), Lundi de Pentecôte (+50). Retourne un Set de 'YYYY-MM-DD'.
 // (Alsace-Moselle a 2 fériés supplémentaires — non gérés ici ; à signaler.)
@@ -659,6 +692,7 @@ function fillFields(d){
   const set=(id,v)=>{document.getElementById(id).value=v||'';};
   set('ed_faits_date',d.faits_date); set('ed_faits_lieu',d.faits_lieu); set('ed_motif_court',d.motif_court); set('ed_motif_detail',d.motif_detail);
   set('ed_faits_heure',(d.faits_heure||'').slice(0,5)); set('ed_faits_impact',d.faits_impact);
+  checkRiskTerms(); // signale d'emblée les formulations à risque d'un dossier existant
   const _rsel=document.getElementById('ed_faits_restaurant'), _man=document.getElementById('ed_faits_lieu');
   if(d.faits_restaurant_id){ _rsel.value=d.faits_restaurant_id; _man.style.display='none'; }
   else if(d.faits_lieu){ _rsel.value='__autre__'; _man.style.display=''; }
