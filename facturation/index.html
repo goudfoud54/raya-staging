@@ -709,7 +709,7 @@ function buildBLPrefill(clientId){
 function openBLForm(bl){
   bl=bl||null;
   // Verrou à l'OUVERTURE (le verrou à l'enregistrement est dans saveBL — jamais que l'UI).
-  if(bl && BL_INDEX && BL_INDEX.get(bl.id)){ const f=BL_INDEX.get(bl.id); alert('Ce bon figure sur la facture '+(f.numero||'')+' et n\'est plus modifiable.'); return; }
+  if(bl && BL_INDEX && BL_INDEX.get(bl.id)){ const f=BL_INDEX.get(bl.id); toast('Ce bon figure sur la facture '+(f.numero||'')+' et n\'est plus modifiable.'); return; }
   BL_EDIT_ID=bl?bl.id:null;
   BL_LIGNES=(bl&&Array.isArray(bl.lignes))?bl.lignes.map(l=>({nom:l.nom||'',qte:Number(l.qte)||0,a:Number(l.a)||0,r:Number(l.r)||0,tva:(l.tva==null?'':String(l.tva))})):[{nom:'',qte:1,a:0,r:0,tva:''}];
   const clientId=bl?bl.client_id:(S.clients[0]?.id||'');
