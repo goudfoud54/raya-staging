@@ -1,4 +1,8 @@
 -- v6.30 — PERMISSIONS INDIVIDUELLES PAR UTILISATEUR (exception par module, tri-état).
+-- ✅ APPLIQUÉ SUR PROD `ynnqvtfayrdteqtgxeuk` le 2026-07-29, en deux temps :
+--      v6_30_permissions_individuelles          (colonne, GRANT, cœur pur, enveloppe, trigger)
+--      v6_30b_module_inconnu_echec_ferme        (`else array[]::text[]`, cf. § module inconnu)
+--    Le corps déployé a été relu après coup : identique à celui de ce fichier.
 --
 -- Besoin : « j'ai 2 managers et je veux que seulement 1 ait accès à Facturation ». Aujourd'hui les
 -- accès se décident par rôle uniquement, donc deux managers ont forcément les mêmes droits.
