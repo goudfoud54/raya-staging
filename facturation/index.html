@@ -94,7 +94,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.4 — info-bulles maison (socle ui.css/ui.js, remplacent l'attribut title)</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.5 — bons de livraison : création/édition, détail, marge, verrou si facturé (bl_ids = source unique)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -603,16 +603,187 @@ async function downloadFacturePDF(id){
   doc.save(`Facture_${(f.numero||'').replace(/[^a-zA-Z0-9-]/g,'_')}.pdf`);
 }
 
+// ═══ BL — fonctions PURES (testées : tests/bl_test.js) ═══════════════════════════════════════════
+// Totaux/ marge d'une ligne, TOUJOURS recalculés depuis qte × prix (jamais les valeurs stockées, qui
+// peuvent dater d'avant une modification). Arrondi 2 déc. (centimes) pour les nouveaux bons.
+function blLineTotals(line){
+  const qte=Number(line.qte)||0, a=Number(line.a)||0, r=Number(line.r)||0;
+  const tA=+(qte*a).toFixed(2), tR=+(qte*r).toFixed(2);
+  return { tA, tR, marge:+(tR-tA).toFixed(2) };
+}
+function blTotals(lignes){
+  let tA=0,tR=0;
+  (lignes||[]).forEach(l=>{const t=blLineTotals(l);tA+=t.tA;tR+=t.tR;});
+  tA=+tA.toFixed(2); tR=+tR.toFixed(2);
+  return { total_achat:tA, total_revente:tR, marge:+(tR-tA).toFixed(2), marge_pct: tR>0 ? +(((tR-tA)/tR)*100).toFixed(1) : 0 };
+}
+// SOURCE DE VÉRITÉ UNIQUE du « facturé » : la présence de l'id du bon dans le bl_ids d'une facture
+// NON annulée. Le booléen bons_livraison.facture n'est PLUS lu (colonne héritée). Map id → {id,numero}.
+function blFactureIndex(factures){
+  const idx=new Map();
+  (factures||[]).forEach(f=>{
+    if(!f || f.statut==='annulee' || !Array.isArray(f.bl_ids)) return;
+    f.bl_ids.forEach(bid=>{ if(bid!=null && !idx.has(bid)) idx.set(bid,{id:f.id,numero:f.numero}); });
+  });
+  return idx;
+}
+function blEditable(blId, idx){ return !(idx && idx.get && idx.get(blId)); } // facturé (non annulé) → non modifiable
+// Validation d'un ENREGISTREMENT : désignation, quantité > 0, et taux de TVA EXPLICITE sur chaque ligne
+// (c'est ce qui manquait avant le 28/03 et empêche une ventilation de TVA fiable). Renvoie la liste d'erreurs.
+function validateBLLignes(lignes){
+  if(!Array.isArray(lignes)||!lignes.length) return ['Au moins une ligne'];
+  const errs=[];
+  lignes.forEach((l,i)=>{
+    if(!l || !String(l.nom||'').trim()) errs.push('Ligne '+(i+1)+' : désignation manquante');
+    if(!(Number(l.qte)>0)) errs.push('Ligne '+(i+1)+' : quantité invalide');
+    if(l.tva==null || l.tva==='' || isNaN(Number(l.tva))) errs.push('Ligne '+(i+1)+' : taux de TVA obligatoire');
+  });
+  return errs;
+}
+// ═══ FIN BL pures ═══════════════════════════════════════════════════════════════════════════════
+
 // ─────── BL ───────
+let BL_LIGNES=[], BL_EDIT_ID=null, BL_PREFILL={}, BL_INDEX=null;
+
 async function renderBLs(el){
-  el.innerHTML='<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="toast(\'V2 : BL en cours de migration\')">+ Nouveau BL</button></div>';
-  const{data}=await sb.from('bons_livraison').select('*,clients(nom)').eq('organization_id',ORG.id).order('date_livraison',{ascending:false});
-  S.bls=data||[];
-  let html=`<table class="tbl"><thead><tr><th>Date</th><th>Client</th><th>Lignes</th><th>Total HT</th><th>Facturé</th></tr></thead><tbody>`;
-  if(!S.bls.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucun bon de livraison</td></tr>';
-  else S.bls.forEach(b=>{const nbL=Array.isArray(b.lignes)?b.lignes.length:0;html+=`<tr><td>${fmtD(b.date_livraison)}</td><td>${b.clients?.nom||'—'}</td><td>${nbL}</td><td>${eur(b.total_revente)}</td><td>${b.facture?'<span class="badge ok">✓</span>':'<span class="badge warn">Non</span>'}</td></tr>`;});
+  el.innerHTML='<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openBLForm()">+ Nouveau bon</button></div><div id="blList" style="color:var(--muted)">Chargement…</div>';
+  // Le statut « facturé » se DÉRIVE de bl_ids → on charge les factures en même temps que les bons, et on
+  // construit l'index UNE fois, AVANT de rendre la première ligne (sinon toutes les puces affichent « Non »).
+  const [blR, facR] = await Promise.all([
+    sb.from('bons_livraison').select('*,clients(nom)').eq('organization_id',ORG.id).order('date_livraison',{ascending:false}),
+    sb.from('factures').select('id,numero,statut,bl_ids').eq('organization_id',ORG.id),
+  ]);
+  S.bls=blR.data||[]; S.facturesMin=facR.data||[];
+  BL_INDEX=blFactureIndex(S.facturesMin);
+  let html=`<table class="tbl"><thead><tr><th>Date</th><th>Client</th><th>Lignes</th><th>Total HT</th><th>Marge</th><th>Facturé</th></tr></thead><tbody>`;
+  if(!S.bls.length) html+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Aucun bon de livraison — « + Nouveau bon » pour commencer.</td></tr>';
+  else S.bls.forEach(b=>{
+    const nbL=Array.isArray(b.lignes)?b.lignes.length:0;
+    const tr=Number(b.total_revente||0), ta=Number(b.total_achat||0), marge=tr-ta; // affichage = totaux STOCKÉS (facturé = billed)
+    const fac=BL_INDEX.get(b.id);
+    const facCell=fac?`<span class="badge ok">✓ ${fac.numero||'facturé'}</span>`:'<span class="badge warn">Non</span>';
+    html+=`<tr onclick="openBLDetail('${b.id}')" style="cursor:pointer"><td>${fmtD(b.date_livraison)}</td><td>${b.clients?.nom||'—'}</td><td>${nbL}</td><td>${eur(tr)}</td><td style="color:${marge>=0?'var(--ok)':'var(--warn)'}">${eur(marge)}</td><td>${facCell}</td></tr>`;
+  });
   html+='</tbody></table>';
-  el.innerHTML+=html;
+  document.getElementById('blList').innerHTML=html;
+}
+
+function openBLDetail(id){
+  const b=(S.bls||[]).find(x=>x.id===id); if(!b){toast('Bon introuvable');return;}
+  const fac=BL_INDEX?BL_INDEX.get(id):null;
+  const lignes=Array.isArray(b.lignes)?b.lignes:[];
+  const ta=Number(b.total_achat||0), tr=Number(b.total_revente||0), marge=tr-ta, mpct=tr>0?(marge/tr*100):0;
+  const anyMissingTva=lignes.some(l=>l.tva==null||l.tva===''); // legacy < 28/03
+  const rows=lignes.map(l=>{
+    const lta=Number(l.tA||0), ltr=Number(l.tR||0), lm=ltr-lta;
+    const tvaCell=(l.tva==null||l.tva==='')?'<span style="color:var(--warn)">non renseignée</span>':(l.tva+'%');
+    return `<tr><td>${l.nom||'?'}</td><td style="text-align:right">${l.qte??''}</td><td style="text-align:right">${eur(l.a)}</td><td style="text-align:right">${eur(l.r)}</td><td style="text-align:center">${tvaCell}</td><td style="text-align:right">${eur(ltr)}</td><td style="text-align:right;color:${lm>=0?'var(--ok)':'var(--warn)'}">${eur(lm)}</td></tr>`;
+  }).join('');
+  const facBanner=fac?`<div class="section" style="border-color:var(--gold)"><b>Ce bon figure sur la facture ${fac.numero||''}.</b> Son contenu est verrouillé pour rester cohérent avec le document remis au client.
+    <button class="btn ghost sm" style="margin-left:8px" onclick="closeModal();openFacture('${fac.id}')">Ouvrir la facture</button>
+    <div style="color:var(--muted);font-size:12px;margin-top:6px">Pour corriger une erreur, passer par la facture (l'annuler et la rééditer) — le bon ne se modifie pas seul.</div></div>`:'';
+  const tvaWarn=anyMissingTva?`<div style="color:var(--warn);font-size:12px;margin-bottom:8px">⚠️ Certaines lignes n'ont pas de taux de TVA (bon antérieur au réglage). L'absence est affichée telle quelle ; la ventilation de TVA de la facture correspondante peut être approximative.</div>`:'';
+  const editBtn=fac?'':`<button class="btn" onclick="closeModal();editBLFromDetail('${id}')">✎ Modifier</button>`;
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:920px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+      <div><h2 style="margin-bottom:4px">Bon de livraison</h2><div style="color:var(--muted);font-size:13px">${b.clients?.nom||nameClient(b.client_id)} · ${fmtD(b.date_livraison)}</div></div>
+      <div style="text-align:right"><div style="font-size:22px;font-weight:800">${eur(tr)}</div><div style="color:var(--muted);font-size:12px">achat ${eur(ta)}</div><div style="color:${marge>=0?'var(--ok)':'var(--warn)'};font-weight:700;margin-top:2px">marge ${eur(marge)} (${mpct.toFixed(1)}%)</div></div>
+    </div>
+    ${facBanner}
+    <div class="section"><h3>Lignes</h3>${tvaWarn}
+      <table class="tbl"><thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th style="text-align:right">PU achat</th><th style="text-align:right">PU revente</th><th style="text-align:center">TVA</th><th style="text-align:right">Total HT</th><th style="text-align:right">Marge</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--muted)">Aucune ligne</td></tr>'}</tbody></table>
+    </div>
+    <div class="modal-actions">${editBtn}<button class="btn ghost" onclick="closeModal()">Fermer</button></div>
+  </div></div>`;
+}
+function editBLFromDetail(id){ const b=(S.bls||[]).find(x=>x.id===id); if(b) openBLForm(b); }
+
+// Pré-remplissage depuis les lignes DÉJÀ FACTURÉES du même client (ce qui a réellement été livré/facturé),
+// PAS depuis le catalogue produits (qui a dérivé depuis mars → taux faux). Désignation → {a,r,tva} le plus récent.
+function buildBLPrefill(clientId){
+  BL_PREFILL={};
+  (S.bls||[]).filter(b=>b.client_id===clientId).sort((a,b)=>String(b.date_livraison||'').localeCompare(String(a.date_livraison||''))).forEach(b=>{
+    (Array.isArray(b.lignes)?b.lignes:[]).forEach(l=>{ if(l.nom && !(l.nom in BL_PREFILL)) BL_PREFILL[l.nom]={a:Number(l.a)||0,r:Number(l.r)||0,tva:(l.tva==null?'':String(l.tva))}; });
+  });
+}
+function openBLForm(bl){
+  bl=bl||null;
+  // Verrou à l'OUVERTURE (le verrou à l'enregistrement est dans saveBL — jamais que l'UI).
+  if(bl && BL_INDEX && BL_INDEX.get(bl.id)){ const f=BL_INDEX.get(bl.id); alert('Ce bon figure sur la facture '+(f.numero||'')+' et n\'est plus modifiable.'); return; }
+  BL_EDIT_ID=bl?bl.id:null;
+  BL_LIGNES=(bl&&Array.isArray(bl.lignes))?bl.lignes.map(l=>({nom:l.nom||'',qte:Number(l.qte)||0,a:Number(l.a)||0,r:Number(l.r)||0,tva:(l.tva==null?'':String(l.tva))})):[{nom:'',qte:1,a:0,r:0,tva:''}];
+  const clientId=bl?bl.client_id:(S.clients[0]?.id||'');
+  const today=bl?bl.date_livraison:new Date().toISOString().slice(0,10);
+  buildBLPrefill(clientId);
+  document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:960px">
+    <h2>${bl?'Modifier le':'Nouveau'} bon de livraison</h2>
+    <div class="grid2">
+      <div class="fld"><label>Client *</label><select id="bl_cl" onchange="onBLClientChange()">${S.clients.map(c=>`<option value="${c.id}" ${c.id===clientId?'selected':''}>${c.nom}</option>`).join('')}</select></div>
+      <div class="fld"><label>Date de livraison *</label><input type="date" id="bl_date" value="${today}"></div>
+    </div>
+    <h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 8px;font-weight:600">Lignes — le taux de TVA est obligatoire</h3>
+    <div id="bl_lignes"></div>
+    <button class="btn ghost sm" onclick="addBLLigne()" style="margin-top:8px">+ Ajouter une ligne</button>
+    <div style="text-align:right;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:14px">
+      <div>Total achat HT : <b id="bl_tA">0,00 €</b></div>
+      <div>Total revente HT : <b id="bl_tR" style="font-size:16px">0,00 €</b></div>
+      <div style="margin-top:4px;color:var(--ok);font-weight:700">Marge : <span id="bl_marge">0,00 €</span></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveBL()">Enregistrer</button></div>
+  </div></div>`;
+  renderBLLignes();
+}
+function onBLClientChange(){ buildBLPrefill(val('bl_cl')); }
+function renderBLLignes(){
+  const c=document.getElementById('bl_lignes'); if(!c) return;
+  const COLS='style="display:grid;grid-template-columns:2.2fr .8fr 1fr 1fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:3px 0"';
+  let html=`<div ${COLS} class="bl-head" style="display:grid;grid-template-columns:2.2fr .8fr 1fr 1fr 1fr 1fr 1fr auto;gap:6px;font-size:10.5px;color:var(--muted);text-transform:uppercase;font-weight:600;padding:2px 0"><div>Désignation</div><div>Qté</div><div>PU achat</div><div>PU revente</div><div>TVA</div><div style="text-align:right">Total HT</div><div style="text-align:right">Marge</div><div></div></div>`;
+  BL_LIGNES.forEach((l,i)=>{
+    const t=blLineTotals(l);
+    html+=`<div ${COLS}>
+      <input type="text" value="${String(l.nom||'').replace(/"/g,'&quot;')}" onchange="updateBLLigne(${i},'nom',this.value)" list="blProdList" placeholder="Désignation">
+      <input type="number" step="0.01" value="${l.qte}" onchange="updateBLLigne(${i},'qte',this.value)">
+      <input type="number" step="0.0001" value="${l.a}" onchange="updateBLLigne(${i},'a',this.value)">
+      <input type="number" step="0.0001" value="${l.r}" onchange="updateBLLigne(${i},'r',this.value)">
+      <select onchange="updateBLLigne(${i},'tva',this.value)"><option value="">— TVA —</option>${TVA_TAUX.map(x=>`<option value="${x}" ${String(l.tva)===String(x)?'selected':''}>${x}%</option>`).join('')}</select>
+      <div style="text-align:right;font-weight:600">${eur(t.tR)}</div>
+      <div style="text-align:right;color:${t.marge>=0?'var(--ok)':'var(--warn)'}">${eur(t.marge)}</div>
+      <button class="btn ghost sm" onclick="removeBLLigne(${i})" aria-label="Supprimer la ligne">✕</button>
+    </div>`;
+  });
+  const names=[...new Set([...Object.keys(BL_PREFILL), ...S.produits.map(p=>p.nom)])];
+  html+=`<datalist id="blProdList">${names.map(n=>`<option value="${String(n).replace(/"/g,'&quot;')}"></option>`).join('')}</datalist>`;
+  c.innerHTML=html;
+  const tot=blTotals(BL_LIGNES);
+  document.getElementById('bl_tA').textContent=eur(tot.total_achat);
+  document.getElementById('bl_tR').textContent=eur(tot.total_revente);
+  document.getElementById('bl_marge').textContent=eur(tot.marge)+(tot.total_revente>0?` (${tot.marge_pct}%)`:'');
+}
+function updateBLLigne(i,field,v){
+  if(field==='nom'){
+    BL_LIGNES[i].nom=v;
+    const pf=BL_PREFILL[v]; // pré-remplissage depuis les lignes passées du client (n'écrase pas une valeur déjà saisie)
+    if(pf){ if(!Number(BL_LIGNES[i].a)) BL_LIGNES[i].a=pf.a; if(!Number(BL_LIGNES[i].r)) BL_LIGNES[i].r=pf.r; if(BL_LIGNES[i].tva===''||BL_LIGNES[i].tva==null) BL_LIGNES[i].tva=pf.tva; }
+  } else if(field==='tva'){ BL_LIGNES[i].tva=v; }
+  else { BL_LIGNES[i][field]=parseFloat(String(v).replace(',','.'))||0; }
+  renderBLLignes();
+}
+function addBLLigne(){ BL_LIGNES.push({nom:'',qte:1,a:0,r:0,tva:''}); renderBLLignes(); }
+function removeBLLigne(i){ BL_LIGNES.splice(i,1); renderBLLignes(); }
+async function saveBL(){
+  const clientId=val('bl_cl'); if(!clientId){toast('Client requis');return;}
+  const date=val('bl_date'); if(!date){toast('Date requise');return;}
+  // Verrou AU MOMENT de l'enregistrement (re-dérivé de bl_ids) — pas seulement à l'affichage.
+  if(BL_EDIT_ID && BL_INDEX && BL_INDEX.get(BL_EDIT_ID)){ const f=BL_INDEX.get(BL_EDIT_ID); toast('Ce bon est désormais sur la facture '+(f.numero||'')+' — enregistrement refusé.'); return; }
+  const errs=validateBLLignes(BL_LIGNES); if(errs.length){ toast(errs[0]); return; }
+  // Recalcul SYSTÉMATIQUE des totaux de ligne et du bon (jamais les valeurs saisies/stockées).
+  const lignes=BL_LIGNES.map(l=>{const t=blLineTotals(l);return {nom:String(l.nom).trim(),qte:Number(l.qte),a:Number(l.a),r:Number(l.r),tA:t.tA,tR:t.tR,tva:Number(l.tva)};});
+  const tot=blTotals(BL_LIGNES);
+  // On n'écrit PAS `facture` : le « facturé » est dérivé de bl_ids (source unique). La colonne reste héritée.
+  const payload={organization_id:ORG.id,client_id:clientId,date_livraison:date,lignes,total_achat:tot.total_achat,total_revente:tot.total_revente};
+  const{error}=BL_EDIT_ID?await sb.from('bons_livraison').update(payload).eq('id',BL_EDIT_ID):await sb.from('bons_livraison').insert(payload);
+  if(error){toast('Erreur : '+error.message);return;}
+  toast('✓ Bon enregistré'); closeModal(); renderBLs(document.getElementById('content'));
 }
 
 // ─────── CLIENTS ───────
