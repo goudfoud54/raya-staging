@@ -94,7 +94,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.7 — facture par regroupement de bons + lignes à l'écran (même source que le PDF)</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.8 — numérotation mensuelle configurable, attribuée sans trou par la base (trigger atomique)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -411,15 +411,13 @@ async function saveFactureFromBons(){
   // Anti double-facturation : re-dériver au moment de créer (un bon a pu être facturé entre-temps).
   if(!sel.every(b=>blEditable(b.id,NF_INDEX))){toast('Un des bons est déjà facturé — recharge la liste.');return;}
   const model=factureModel({bl_ids:sel.map(b=>b.id)}, sel, S.produits, S.fparam||{});
-  const annee=new Date(val('nf_date')).getFullYear();
-  // Numéro consommé ICI seulement (après validation) : ouvrir/annuler le formulaire ne consomme rien.
-  const{data:numData,error:eNum}=await sb.rpc('next_facture_number',{p_org:ORG.id,p_annee:annee}); if(eNum){toast('Erreur numérotation : '+eNum.message);return;}
-  const numero=`${S.fparam?.prefix_numero||''}${annee}-${String(numData||1).padStart(3,'0')}`;
-  // Facture PAR BONS : les lignes vivent dans les bons (bl_ids), PAS dans factures_lignes. On n'écrit pas
-  // le booléen `facture` des bons — leur statut « facturé » est dérivé de bl_ids (source unique).
-  const{error}=await sb.from('factures').insert({organization_id:ORG.id,numero,client_id:clientId,date_facture:val('nf_date'),bl_ids:sel.map(b=>b.id),total_ht:model.calcHT,total_ttc:model.calcTTC,statut:'emise'});
+  // Numéro attribué ATOMIQUEMENT par le trigger DB à l'insert (jamais de trou/doublon ; format réglable) :
+  // on insère SANS numero et on le relit. Ouvrir/annuler le formulaire ne consomme aucun numéro.
+  // Facture PAR BONS : lignes dans les bons (bl_ids), pas factures_lignes ; booléen `facture` non écrit
+  // (statut « facturé » dérivé de bl_ids — source unique).
+  const{data:fac,error}=await sb.from('factures').insert({organization_id:ORG.id,client_id:clientId,date_facture:val('nf_date'),bl_ids:sel.map(b=>b.id),total_ht:model.calcHT,total_ttc:model.calcTTC,statut:'emise'}).select('numero').single();
   if(error){toast('Erreur création facture : '+error.message);return;}
-  toast(`✓ Facture ${numero} créée (${sel.length} bon${sel.length>1?'s':''})`);
+  toast(`✓ Facture ${fac?.numero||''} créée (${sel.length} bon${sel.length>1?'s':''})`);
   closeModal(); renderFactures(document.getElementById('content'));
 }
 function renderLignes(){
@@ -459,11 +457,6 @@ function removeLigne(i){CURRENT_LIGNES.splice(i,1);renderLignes();}
 async function saveFacture(){
   if(!val('nf_cl')){toast('Client requis');return;}
   if(!CURRENT_LIGNES.length||CURRENT_LIGNES.every(l=>!l.designation)){toast('Au moins une ligne');return;}
-  const annee=new Date(val('nf_date')).getFullYear();
-  const{data:numData,error:eNum}=await sb.rpc('next_facture_number',{p_org:ORG.id,p_annee:annee});if(eNum){toast('Erreur numérotation : '+eNum.message);return;}
-  const n=numData||1;
-  const prefix=S.fparam?.prefix_numero||'';
-  const numero=`${prefix}${annee}-${String(n).padStart(3,'0')}`;
   let totHT=0,totTTC=0;
   const lignes=CURRENT_LIGNES.filter(l=>l.designation).map((l,idx)=>{
     const ht=(l.quantite||0)*(l.prix_unitaire_ht||0);
@@ -471,14 +464,15 @@ async function saveFacture(){
     totHT+=ht;totTTC+=ttc;
     return {designation:l.designation,quantite:l.quantite,prix_unitaire_ht:l.prix_unitaire_ht,tva_pct:l.tva_pct,total_ht:+ht.toFixed(2),total_ttc:+ttc.toFixed(2),ordre:idx};
   });
-  // NB : `factures` n'a pas de colonne `lignes` (A2) — les lignes vivent dans la table factures_lignes.
-  const{data:fac,error}=await sb.from('factures').insert({organization_id:ORG.id,numero,client_id:val('nf_cl'),date_facture:val('nf_date'),total_ht:+totHT.toFixed(2),total_ttc:+totTTC.toFixed(2),statut:'emise'}).select().single();
+  // Numéro attribué par le trigger DB (atomique) → insérer SANS numero et relire. `factures` n'a pas de
+  // colonne `lignes` (A2) — les lignes vivent dans factures_lignes.
+  const{data:fac,error}=await sb.from('factures').insert({organization_id:ORG.id,client_id:val('nf_cl'),date_facture:val('nf_date'),total_ht:+totHT.toFixed(2),total_ttc:+totTTC.toFixed(2),statut:'emise'}).select().single();
   if(error){toast('Erreur création facture : '+error.message);return;}
   // Insert lignes structurées
   const lignesPayload=lignes.map(l=>({...l,organization_id:ORG.id,facture_id:fac.id}));
   const{error:errL}=await sb.from('factures_lignes').insert(lignesPayload);
   if(errL){toast('Facture créée mais lignes non enregistrées : '+errL.message);}
-  else toast(`✓ Facture ${numero} créée`);
+  else toast(`✓ Facture ${fac.numero} créée`);
   closeModal();renderFactures(document.getElementById('content'));
 }
 
@@ -954,6 +948,13 @@ function renderParametres(el){
       <div class="fld"><label>Capital social (€)</label><input type="number" id="fp_cap" value="${p.capital_social||''}"></div>
       <div class="fld"><label>Préfixe N° facture</label><input id="fp_pre" value="${p.prefix_numero||''}" placeholder="N°"></div>
     </div>
+    <div class="fld"><label>Numérotation des factures</label>
+      <select id="fp_format">
+        <option value="mensuel" ${(p.format_numero||'mensuel')==='mensuel'?'selected':''}>Mensuelle — repart à 001 chaque mois (ex. N° 2026-08-001)</option>
+        <option value="annuel" ${p.format_numero==='annuel'?'selected':''}>Annuelle — continue sur l'année (ex. N° 2026-001)</option>
+      </select>
+      <div style="color:var(--muted);font-size:11.5px;margin-top:4px">Le préfixe ci-dessus est repris. Le numéro est attribué automatiquement, dans l'ordre et sans trou, au moment où la facture est créée.</div>
+    </div>
     <div class="fld"><label>Adresse</label><input id="fp_adr" value="${p.adresse||''}"></div>
     <div class="grid3">
       <div class="fld"><label>Code postal</label><input id="fp_cp" value="${p.code_postal||''}"></div>
@@ -1023,7 +1024,7 @@ function checkColorContrast(){
   el.innerHTML=msgs.length?('⚠️ '+msgs.join(' · ')):'';el.style.display=msgs.length?'block':'none';
 }
 async function saveFparam(){
-  const payload={organization_id:ORG.id,raison_sociale:val('fp_rs'),forme_juridique:val('fp_fj')||null,siret:val('fp_sir')||null,rcs:val('fp_rcs')||null,num_tva:val('fp_tva')||null,ape_code:val('fp_ape')||null,capital_social:num('fp_cap'),adresse:val('fp_adr')||null,code_postal:val('fp_cp')||null,ville:val('fp_vil')||null,telephone:val('fp_tel')||null,email:val('fp_em')||null,iban:val('fp_iban')||null,bic:val('fp_bic')||null,banque:val('fp_bk')||null,conditions_paiement:val('fp_cond')||null,penalites_retard:val('fp_pen')||null,mentions_complementaires:val('fp_mt')||null,prefix_numero:val('fp_pre')||'',couleur_accent:val('fp_accent')||null,couleur_bandeau:val('fp_bandeau')||null,mode_reglement:val('fp_reglement')||null};
+  const payload={organization_id:ORG.id,raison_sociale:val('fp_rs'),forme_juridique:val('fp_fj')||null,siret:val('fp_sir')||null,rcs:val('fp_rcs')||null,num_tva:val('fp_tva')||null,ape_code:val('fp_ape')||null,capital_social:num('fp_cap'),adresse:val('fp_adr')||null,code_postal:val('fp_cp')||null,ville:val('fp_vil')||null,telephone:val('fp_tel')||null,email:val('fp_em')||null,iban:val('fp_iban')||null,bic:val('fp_bic')||null,banque:val('fp_bk')||null,conditions_paiement:val('fp_cond')||null,penalites_retard:val('fp_pen')||null,mentions_complementaires:val('fp_mt')||null,prefix_numero:val('fp_pre')||'',format_numero:val('fp_format')||'mensuel',couleur_accent:val('fp_accent')||null,couleur_bandeau:val('fp_bandeau')||null,mode_reglement:val('fp_reglement')||null};
   if(LOGO_DATA!==undefined) payload.logo_url=LOGO_DATA; // n'écrit le logo que s'il a changé (sinon préservé)
   const{error}=await sb.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
   if(error){toast(error.message);return;}toast('✓ Paramètres enregistrés');LOGO_DATA=undefined;await loadCommonData();
