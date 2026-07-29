@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#c8a035">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.3"></script>
+<script src="../utils.js?v=1.4"></script>
 <script src="../kiosk-shared.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -88,6 +88,7 @@ const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 let SALARIE=null,PIN='',SNACK_ID=null,SNACK=null,SNACKS=[],PRODUITS=[],STOCK_MAX={},SAISIES_TODAY={},CMT_MODE={};
+let ORG_CUTOFF='05:00',CUTOFF_LOADED=false,SAISIES_DAY=null; // heure de bascule (jour d'exploitation) + jour figé du rendu
 
 // Config partagée avec badgeuse/HACCP/hub (kiosk-shared.js) : plus de picker local ici — un
 // appareil non configuré est renvoyé vers le hub, seul endroit qui gère setup + reconfig.
@@ -98,12 +99,34 @@ async function init(){
   const{data:snacks}=await sb.from('restaurants').select('id,nom,organization_id');SNACKS=snacks||[];
   SNACK=SNACKS.find(s=>s.id===SNACK_ID);
   if(!SNACK){EatimeKiosk.clearSnackConfig();location.href='../kiosk/';return;}
+  await loadCutoff();
   await loadStockData();
   pinScreen();
   EatimeKiosk.initWakeLock();
   EatimeKiosk.watchOnline(renderNetPill);
   EatimeKiosk.initIdleReturn(10, ()=>!!SALARIE);
   await EatimeKiosk.registerSW();
+}
+// Heure de bascule de l'organisation (jour d'exploitation). Lue en anon (colonne dédiée, non sensible).
+// Échec de lecture → on garde le défaut 05:00 MAIS on le SIGNALE à l'écran (CUTOFF_LOADED=false) : jamais
+// d'écart silencieux entre ce qu'on écrit et ce qu'on affiche — écriture ET entête utilisent ORG_CUTOFF.
+async function loadCutoff(){
+  try{
+    const{data,error}=await sb.from('organizations').select('journee_exploitation_debut').eq('id',SNACK.organization_id).maybeSingle();
+    if(!error && data && data.journee_exploitation_debut){ ORG_CUTOFF=data.journee_exploitation_debut; CUTOFF_LOADED=true; return; }
+  }catch(e){}
+  CUTOFF_LOADED=false;
+}
+// Garde-fou passage de bascule : si la tablette a franchi l'heure de bascule pendant qu'elle restait
+// ouverte, la journée d'exploitation a changé depuis le rendu → recharger la feuille du nouveau jour
+// plutôt qu'écrire dans la veille. Retourne true si rechargé (l'appelant s'abstient alors d'écrire).
+async function dayGuard(){
+  if(SAISIES_DAY && exploitationToday(ORG_CUTOFF)!==SAISIES_DAY){
+    await loadStockData();
+    if(SALARIE) inventaireScreen();
+    return true;
+  }
+  return false;
 }
 // Charge produits + stock_max + saisies du jour + mode commentaire. Rejoué à CHAQUE connexion PIN
 // (cf. validatePin) et pas seulement au boot : une tablette reste ouverte des jours, et un changement
@@ -112,7 +135,7 @@ async function init(){
 // partiel (réseau capricieux) ne doit jamais vider l'inventaire sous les pieds d'un salarié qui vient
 // de s'authentifier — on garde alors les données précédemment chargées.
 async function loadStockData(){
-  const today=todayYMD(); // jour métier local — même base que date_saisie écrit + l'alerte stock
+  const today=exploitationToday(ORG_CUTOFF); SAISIES_DAY=today; // jour d'EXPLOITATION (même base que l'écriture + l'alerte)
   const[p,m,s,c]=await Promise.all([
     sb.from('stock_produits').select('*').eq('actif',true).eq('organization_id',SNACK.organization_id).order('categorie').order('nom'),
     sb.from('stock_max').select('*').eq('actif',true).eq('restaurant_id',SNACK_ID),
@@ -170,10 +193,13 @@ function inventaireScreen(){
   const totalAFaire=PRODUITS.length;
   const totalFait=Object.keys(SAISIES_TODAY).length;
   const pct=totalAFaire?Math.round(totalFait/totalAFaire*100):0;
+  const exDay=SAISIES_DAY||exploitationToday(ORG_CUTOFF), civ=ymdLocal(Date.now()), night=exDay!==civ;
+  const humanDay=new Date(exDay+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
+  const cutWarn=CUTOFF_LOADED?'':' · <span style="color:#e06a5a">réglage d\'heure non chargé — défaut 05:00</span>';
   document.getElementById('scr').innerHTML=`<div class="scr">
     <button class="back" onclick="pinScreen()">↩ Sortir</button>
     <h1>Inventaire<small>${SNACK?.nom||''}</small></h1>
-    <div class="user">👋 ${SALARIE.prenom||''} ${SALARIE.nom} · ${new Date().toLocaleDateString('fr-FR')}</div>
+    <div class="user">👋 ${SALARIE.prenom||''} ${SALARIE.nom} · 📆 ${humanDay}${night?' <span style="color:#e0a84e">(saisie de nuit → veille)</span>':''}${cutWarn}</div>
     <div style="text-align:center;font-size:13px;color:var(--muted);margin-bottom:6px" id="cptr">${totalFait} / ${totalAFaire} produits saisis</div>
     <div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>
     <div id="prodList"></div>
@@ -240,6 +266,7 @@ function clearSaisieError(pid){
   const row=inp.closest('.prod-row');const msg=row&&row.querySelector('.saisie-err');if(msg)msg.remove();
 }
 async function saveSaisie(pid,vTxt){
+  if(await dayGuard()) return; // journée d'exploitation changée depuis le rendu → feuille rechargée
   const v=parseFloat((vTxt||'').replace(',','.'));
   if(isNaN(v)){
     // Vider une cellule = supprimer la saisie. On ne retire de la mémoire QUE si la base confirme.
@@ -260,7 +287,7 @@ async function saveSaisie(pid,vTxt){
     // pour ne pas le perdre si le salarié a écrit la remarque avant de saisir la quantité.
     const cf=document.querySelector(`.cmt-field[data-pid="${pid}"]`);
     const commentaire=cf?((cf.value||'').trim()||null):null;
-    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,commentaire,date_saisie:todayYMD()}).select().single();
+    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,commentaire,date_saisie:exploitationToday(ORG_CUTOFF)}).select().single();
     if(error){markSaisieError(pid);return;}
     SAISIES_TODAY[pid]=data;
   }
@@ -277,6 +304,7 @@ function toggleCmt(pid){
 // existe déjà → simple update du champ ; sinon il faut une quantité (quantite NOT NULL) → on crée la
 // ligne avec la quantité déjà tapée, ou on invite à saisir la quantité d'abord (sans perdre le texte).
 async function saveComment(pid,txt){
+  if(await dayGuard()) return;
   const comment=(txt||'').trim()||null;
   const ex=SAISIES_TODAY[pid];
   if(ex){
@@ -290,7 +318,7 @@ async function saveComment(pid,txt){
   const qInp=document.querySelector(`input.prod-input[data-pid="${pid}"]`);
   const qv=parseFloat((qInp&&qInp.value||'').replace(',','.'));
   if(isNaN(qv)){ markCmtHint(pid,'Saisis d\'abord la quantité pour enregistrer ce commentaire'); return; }
-  const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:qv,commentaire:comment,date_saisie:todayYMD()}).select().single();
+  const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:qv,commentaire:comment,date_saisie:exploitationToday(ORG_CUTOFF)}).select().single();
   if(error){markCmtHint(pid,'⚠ Commentaire non enregistré (réseau ?)');return;}
   SAISIES_TODAY[pid]=data;clearCmtHint(pid);refreshCounters(pid);markCmtSaved(pid);
 }
@@ -305,8 +333,9 @@ function clearCmtHint(pid){ const w=document.getElementById('cmt-'+pid); if(!w)r
 // Mode « commentaire seul » : enregistre UNIQUEMENT la remarque (quantite=NULL). Le produit est
 // considéré saisi quand la remarque est non vide ; vider le champ supprime la saisie (comme une qté).
 async function saveCommentOnly(pid,txt){
+  if(await dayGuard()) return;
   const comment=(txt||'').trim();
-  const d=todayYMD(); // date_saisie = jour métier local (pas UTC)
+  const d=exploitationToday(ORG_CUTOFF); // date_saisie = jour d'EXPLOITATION (garde-fou ci-dessus)
   if(!comment){
     if(SAISIES_TODAY[pid]){
       const{error}=await sb.from('stock_saisies').delete().eq('id',SAISIES_TODAY[pid].id);

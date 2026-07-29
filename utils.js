@@ -21,6 +21,41 @@
   function ymdLocal(d) { return new Date(d == null ? Date.now() : d).toLocaleDateString('fr-CA', { timeZone: APP_TZ }); }
   function todayYMD() { return ymdLocal(Date.now()); }
 
+  // ── Jour d'EXPLOITATION (journée de travail) ──────────────────────────────────────────────────
+  // COPIE volontairement identique de supabase/functions/check-stock-alerts/exploitation.mjs (que le
+  // navigateur ne peut pas importer). tests/datelocal_test.js prouve que les deux donnent le MÊME
+  // résultat sur tous les cas → une seule définition du jour, écriture et lecture alignées.
+  // Un snack ne change pas de journée à minuit : une saisie AVANT l'heure de bascule (cutoff, défaut
+  // 05:00, réglable par organisation) appartient à la journée de la VEILLE. Ancre midi UTC = anti-DST.
+  function cutoffToMinutes(v) {
+    if (v == null || v === '') return 300;
+    if (typeof v === 'number' && isFinite(v)) return v;
+    var m = String(v).match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return 300;
+    return (+m[1]) * 60 + (+m[2]);
+  }
+  function _parisParts(instant) {
+    var parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(instant == null ? Date.now() : instant));
+    var g = function (t) { return parts.find(function (p) { return p.type === t; }).value; };
+    var hh = g('hour'); if (hh === '24') hh = '00';
+    return { y: +g('year'), mo: +g('month'), d: +g('day'), hh: +hh, mm: +g('minute') };
+  }
+  function exploitationDay(instant, cutoff) {
+    var cut = cutoffToMinutes(cutoff);
+    var p = _parisParts(instant);
+    var tod = p.hh * 60 + p.mm;
+    var anchor = Date.UTC(p.y, p.mo - 1, p.d, 12, 0, 0);
+    if (tod < cut) anchor -= 86400000;
+    var dt = new Date(anchor);
+    var mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    var dd = String(dt.getUTCDate()).padStart(2, '0');
+    return dt.getUTCFullYear() + '-' + mm + '-' + dd;
+  }
+  function exploitationToday(cutoff) { return exploitationDay(Date.now(), cutoff); }
+
   // Échappement HTML robuste (canonique). NB : ne remplace pas les esc()/escH() locaux divergents.
   function escapeHtml(s) {
     return (s == null ? '' : String(s)).replace(/[<>&"']/g, c =>
@@ -86,11 +121,14 @@
     return { status: r.status, ok: r.ok && j.ok === true, pointage: j.pointage || null, error: j.error || null, retry: j.retry_after_s || null };
   }
 
-  const api = { fmtD, ymdLocal, todayYMD, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
+  const api = { fmtD, ymdLocal, todayYMD, cutoffToMinutes, exploitationDay, exploitationToday, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
   g.EatimeUtils = api;
   // Drop-in globaux :
   if (typeof g.fmtD === 'undefined') g.fmtD = fmtD;
   if (typeof g.ymdLocal === 'undefined') g.ymdLocal = ymdLocal;
   if (typeof g.todayYMD === 'undefined') g.todayYMD = todayYMD;
+  if (typeof g.cutoffToMinutes === 'undefined') g.cutoffToMinutes = cutoffToMinutes;
+  if (typeof g.exploitationDay === 'undefined') g.exploitationDay = exploitationDay;
+  if (typeof g.exploitationToday === 'undefined') g.exploitationToday = exploitationToday;
   g.kioskId = kioskId; g.verifyPin = verifyPin; g.createPointage = createPointage;
 })(window);

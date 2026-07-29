@@ -79,7 +79,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Paramètres · v0.2 — état des alertes visible (stock/retard) + bouton « alerte test »</small></div>
+    <div class="brand">Eatime360 <small>· Paramètres · v0.3 — journée d'exploitation (heure de bascule par organisation)</small></div>
     <div style="display:flex;gap:8px">
       <a href="../" class="btn ghost">Portail</a>
       <button class="btn ghost" onclick="logout()">↩</button>
@@ -170,6 +170,18 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       </div>
       <div style="color:var(--muted);font-size:11.5px">
         Par défaut, un salarié ne peut badger que sur le snack auquel il est affecté (sauf s'il est marqué "multi-snack"). Active cette option si tu envoies régulièrement des salariés dépanner un autre snack : ils pourront badger partout avec leur code, sans que ça change leur affectation de planning.
+      </div>
+    </div>
+
+    <!-- JOURNÉE D'EXPLOITATION -->
+    <div class="section">
+      <h3>Journée d'exploitation</h3>
+      <div class="fld" style="display:flex;align-items:center;gap:10px">
+        <label for="f_expl_debut">Une nouvelle journée commence à</label>
+        <input type="time" id="f_expl_debut" style="width:auto">
+      </div>
+      <div style="color:var(--muted);font-size:11.5px">
+        Une saisie de stock faite <b>avant</b> cette heure est rattachée à la journée de la <b>veille</b> (défaut 05:00). Un snack qui ferme à minuit ne change pas de journée de travail à minuit : la feuille remplie à 00h13 est celle de la soirée écoulée. C'est une convention comptable, la même pour tous les restaurants de l'organisation.
       </div>
     </div>
 
@@ -606,6 +618,7 @@ function renderForm(){
   document.getElementById('f_col2').value=ORG.couleur_secondaire||'#5b9cff';
   document.getElementById('f_col2_t').value=ORG.couleur_secondaire||'#5b9cff';
   document.getElementById('f_badgeuse_libre').checked=!!ORG.badgeuse_libre;
+  document.getElementById('f_expl_debut').value=(ORG.journee_exploitation_debut||'05:00:00').slice(0,5);
   if(ORG.logo_url){
     document.getElementById('logoBox').innerHTML=`<img src="${ORG.logo_url}" style="max-width:80px;max-height:60px;border-radius:4px">`;
     document.getElementById('rmLogoBtn').style.display='inline-block';
@@ -1348,6 +1361,7 @@ async function saveAll(){
     couleur_secondaire:document.getElementById('f_col2').value,
     coef_charges:parseFloat(document.getElementById('f_coef').value)||1.420,
     badgeuse_libre:document.getElementById('f_badgeuse_libre').checked,
+    journee_exploitation_debut:document.getElementById('f_expl_debut').value||'05:00',
     permissions:newPerms
   };
   const{error}=await sb.from('organizations').update(payload).eq('id',ORG.id);

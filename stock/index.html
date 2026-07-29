@@ -7,7 +7,7 @@
 <title>Eatime360 — Stock</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=1"></script>
-<script src="../utils.js?v=1.3"></script>
+<script src="../utils.js?v=1.4"></script>
 <link rel="stylesheet" href="../ui.css?v=1">
 <script src="../ui.js?v=1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -131,7 +131,7 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Stock · v0.8 — filtre Historique corrigé (barre d'outils vs liste) + dates métier en jour local (fin du décalage UTC)</small></div>
+    <div class="brand">Eatime360 <small>· Stock · v0.9 — journée d'exploitation (saisie de nuit rattachée à la veille, bascule réglable par organisation)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -238,9 +238,9 @@ function wrapTables(){
 
 async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
-  const today=todayYMD();
-  const since=new Date();since.setDate(since.getDate()-30);
-  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',ymdLocal(since)).order('date_saisie',{ascending:false});
+  const cut=ORG.journee_exploitation_debut;                 // heure de bascule de l'organisation
+  const today=exploitationToday(cut);                        // journée d'exploitation en cours
+  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',exploitationDay(Date.now()-30*86400000,cut)).order('date_saisie',{ascending:false});
   const SL=saisies||[];
   const last={};SL.forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
   const aujourdhui=SL.filter(s=>s.date_saisie===today);
@@ -276,7 +276,8 @@ async function renderDashboard(el){
 }
 
 async function renderSaisie(el){
-  const today=todayYMD();
+  const cut=ORG.journee_exploitation_debut;
+  const today=exploitationToday(cut); S.saisieDay=today;      // journée d'exploitation figée pour ce rendu (garde-fou saveSaisie)
   const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today);
   const byProd={};(saisies||[]).forEach(s=>{byProd[s.produit_id]=s;});S.saisiesAujourdhui=byProd;
   const max={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>max[m.produit_id]=m);
@@ -284,10 +285,13 @@ async function renderSaisie(el){
   const disabled=new Set(S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif===false).map(m=>m.produit_id));
   const prodsSuivis=S.produits.filter(p=>!disabled.has(p.id));
   const byCat={};prodsSuivis.forEach(p=>{const c=p.categorie||'Divers';(byCat[c]=byCat[c]||[]).push(p);});
-  let html=`<div class="toolbar">
+  const civ=ymdLocal(Date.now()), night=today!==civ;
+  const humanDay=new Date(today+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
+  let html=`<div style="margin-bottom:10px;font-size:13px">📆 Journée d'exploitation : <b>${humanDay}</b>${night?` · <span style="color:var(--warn)">saisie de nuit — rattachée à la veille</span>`:''}</div>
+  <div class="toolbar">
     <input id="saisie_search" placeholder="Filtrer produit…" oninput="filterSaisie()">
     <div style="flex:1"></div>
-    <span style="color:var(--muted);font-size:12.5px">${Object.keys(byProd).length} / ${prodsSuivis.length} saisis aujourd'hui</span>
+    <span style="color:var(--muted);font-size:12.5px">${Object.keys(byProd).length} / ${prodsSuivis.length} saisis ce jour</span>
   </div>`;
   Object.keys(byCat).sort().forEach(cat=>{
     html+=`<div class="section"><h3>${cat} (${byCat[cat].length})</h3>
@@ -316,7 +320,11 @@ async function renderSaisie(el){
 function filterSaisie(){const q=val('saisie_search').toLowerCase();document.querySelectorAll('[data-pname]').forEach(tr=>{tr.style.display=tr.dataset.pname.includes(q)?'':'none';});}
 async function saveSaisie(pid,vTxt){
   const v=parseFloat((vTxt||'').replace(',','.'));
-  const d=todayYMD(); // date_saisie = jour métier local (pas UTC : sinon décalé la nuit)
+  const d=exploitationToday(ORG.journee_exploitation_debut); // date_saisie = jour d'EXPLOITATION (pas jour civil)
+  // Garde-fou passage de bascule : si la tablette est restée ouverte au-delà de l'heure de bascule, le
+  // jour d'exploitation a changé depuis le rendu → recharger la feuille du nouveau jour plutôt que
+  // d'écrire (ou mettre à jour une ligne de la veille) dans le mauvais jour, en silence.
+  if(S.saisieDay && d!==S.saisieDay){ toast("Nouvelle journée d'exploitation — feuille rechargée"); renderSaisie(document.getElementById('content')); return; }
   // Chaque écriture est contrôlée : avant, UPDATE/DELETE avalaient l'erreur et le toast "✓ Saisi"
   // s'affichait quand même → l'admin croyait une saisie enregistrée alors que la base n'avait rien reçu.
   if(isNaN(v)){
@@ -782,9 +790,9 @@ async function saveMax(pid,vTxt){
 // que #histList. Dates par défaut en jour métier local (todayYMD/ymdLocal), pas en jour UTC.
 async function renderHistorique(el){
   el.innerHTML=`<div class="toolbar">
-    <input type="date" id="hist_from" value="${ymdLocal(Date.now()-30*86400000)}">
+    <input type="date" id="hist_from" value="${exploitationDay(Date.now()-30*86400000,ORG.journee_exploitation_debut)}">
     <span style="color:var(--muted)">→</span>
-    <input type="date" id="hist_to" value="${todayYMD()}">
+    <input type="date" id="hist_to" value="${exploitationToday(ORG.journee_exploitation_debut)}">
     <select id="hist_prod"><option value="">Tous produits</option>${S.produits.map(p=>`<option value="${p.id}">${p.nom}</option>`).join('')}</select>
     <button class="btn sm" onclick="loadHistorique()">Filtrer</button>
     <input id="hist_search" placeholder="🔍 Rechercher un produit…" oninput="filterHistorique()">
