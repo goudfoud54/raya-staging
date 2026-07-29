@@ -207,10 +207,10 @@ const PRIO_ICONS = { basse:'⚪', normale:'🔵', haute:'🟠', urgente:'🔴' }
 async function init(){
   const { data: { session } } = await sb.auth.getSession();
   if (!session) { location.href = '../auth/index.html'; return; }
-  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire, permissions)').eq('id', session.user.id).maybeSingle();
+  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, module_exceptions, organizations(nom, couleur_primaire, permissions)').eq('id', session.user.id).maybeSingle();
   if (!profile) return;
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
-  if (!EatimeAccess.canAccessModule('pilotage', profile.role, profile.organizations?.permissions)) {
+  if (!EatimeAccess.canAccessModule('pilotage', profile, profile.organizations?.permissions)) {
     document.body.innerHTML = EatimeAccess.renderAccessDenied('Pilotage d’équipe');
     return;
   }

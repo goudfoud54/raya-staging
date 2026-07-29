@@ -94,7 +94,7 @@ table.tbl tr:hover{background:rgba(255,255,255,.02)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· HACCP · v0.1</small></div>
+    <div class="brand">Eatime360 <small>· HACCP · v0.2</small></div>
     <div style="display:flex;gap:8px;align-items:center">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -148,7 +148,7 @@ async function loadProfileAndShow(){
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
   ORG=org||{};
   // Accès contrôlé par la config org (access.js) — ce module n'avait AUCUNE vérification de rôle avant.
-  if(!EatimeAccess.canAccessModule('haccp', profile.role, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('HACCP');return;}
+  if(!EatimeAccess.canAccessModule('haccp', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('HACCP');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   if(ORG.suspended && ME.role!=='super_admin'){
     document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue. Contacter le service client.</div>';

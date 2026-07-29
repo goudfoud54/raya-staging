@@ -80,7 +80,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Paramètres · v0.4 — onglet Tablettes (versions kiosques : à jour / ancienne / muette)</small></div>
+    <div class="brand">Eatime360 <small>· Paramètres · v0.5 — exceptions d'accès par utilisateur · onglet Tablettes (versions kiosques : à jour / ancienne / muette)</small></div>
     <div style="display:flex;gap:8px">
       <a href="../" class="btn ghost">Portail</a>
       <button class="btn ghost" onclick="logout()">↩</button>
@@ -484,10 +484,14 @@ async function login(){
 async function loadProfileAndShow(){
   const{data:{session}}=await sb.auth.getSession();if(!session)return;
   const{data:profile}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
-  if(!profile||!['admin','super_admin'].includes(profile.role)){document.getElementById('err').textContent='Accès refusé.';await sb.auth.signOut();return;}
+  if(!profile){document.getElementById('err').textContent='Accès refusé.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
   ORG=org||{};
+  // Accès contrôlé par access.js comme tous les autres modules (plus de liste de rôles codée en dur
+  // ici) : sinon une exception accordant ou retirant « Paramètres » resterait sans effet sur cette
+  // page — le défaut d'origine qui avait motivé la création d'access.js.
+  if(!EatimeAccess.canAccessModule('parametres', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Paramètres');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   document.getElementById('lock').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
@@ -734,6 +738,13 @@ async function loadUsers(){
     const{data}=await sb.from('profiles').select('id,full_name,email,role,salarie_id').eq('organization_id',ORG.id).order('role').order('full_name');
     profiles=(data||[]).map(p=>({...p,auth_email:p.email,last_sign_in_at:null}));
   }
+  // Les exceptions par module viennent d'une lecture DIRECTE de profiles : l'edge function
+  // admin-users ne renvoie pas cette colonne (liste de colonnes explicite côté serveur), et la RLS
+  // autorise déjà un admin à lire les profils de son organisation. Une page qui oublierait cette
+  // fusion afficherait « hérité » partout alors que des exceptions existent.
+  const{data:excRows}=await sb.from('profiles').select('id,module_exceptions').eq('organization_id',ORG.id);
+  const excById={};(excRows||[]).forEach(r=>{excById[r.id]=r.module_exceptions||{};});
+  profiles=profiles.map(p=>({...p,module_exceptions:p.module_exceptions||excById[p.id]||{}}));
   USERS_CACHE=profiles;
   const{data:invs}=await sb.from('invitations').select('id,email,role,token,expires_at,accepted_at,created_at').eq('organization_id',ORG.id).is('accepted_at',null).order('created_at',{ascending:false});
   let html='<div style="margin-bottom:6px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Membres actifs</div>';
@@ -751,6 +762,7 @@ async function loadUsers(){
           <div style="color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.auth_email||p.email||''}${linkLbl?` · 🔗 ${linkLbl}`:''}</div>
         </div>
         <span style="background:${ROLE_TAG[p.role]||'#444'}33;color:${ROLE_TAG[p.role]||'#aaa'};padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase">${p.role}</span>
+        ${excChip(p)}
         <button class="btn ghost sm" onclick="openEditUser('${p.id}')">✎ Éditer</button>
         ${p.id===ME.id?'':`<button class="btn ghost sm" onclick="removeUser('${p.id}','${(p.full_name||p.auth_email||p.email||'').replace(/'/g,'')}')">✕</button>`}
       </div>`;
@@ -1119,7 +1131,98 @@ async function saveEditResto(id){
   toast('✓ Restaurant + alertes mis à jour');closeEditResto();loadRestos();
 }
 
+// ──────────────────  EXCEPTIONS D'ACCÈS PAR UTILISATEUR (v6.30)  ──────────────────
+// Trois états par module : hérité du rôle (défaut) · autorisé explicitement · refusé explicitement.
+// Le « refusé » est indispensable : sans lui, retirer Facturation à UN manager obligerait à
+// rétrograder le rôle de tous et à remonter les accès un par un.
+// L'écriture passe par un UPDATE DIRECT sur profiles (et NON par l'edge function admin-users, qui
+// tourne en service_role et contournerait le trigger) : c'est donc bien le chemin protégé par
+// protect_profile_privilege qui est exercé en production.
+
+// Nombre d'exceptions posées sur un profil (pastille dans la liste des membres).
+function excCount(p){
+  const e=(p&&p.module_exceptions)||{};
+  return Object.keys(e).filter(k=>e[k]===true||e[k]===false).length;
+}
+function excChip(p){
+  if(p.role==='super_admin')return '';
+  const n=excCount(p);
+  if(!n)return '';
+  // Pas d'info-bulle ici : cette page ne charge pas encore le socle d'interface partagé, donc
+  // aucune bulle ne s'afficherait (cf. le harnais des info-bulles). Le libellé se suffit à lui-même.
+  return `<span style="background:#8a5bff22;color:#a98bff;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700">${n} exception${n>1?'s':''} d'accès</span>`;
+}
+
+// Bloc « Accès aux modules » de la modale : une ligne par module = réglage + accès EFFECTIF.
+function euModulesHtml(u){
+  if(u.role==='super_admin'){
+    return `<div style="border-top:1px solid var(--line);padding-top:14px">
+      <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Accès aux modules</label>
+      <div style="color:var(--muted);font-size:12px;line-height:1.5">👑 <b>Super admin</b> : accès à tous les modules, en toutes circonstances.<br>Les exceptions individuelles ne s'appliquent pas à ce rôle.</div>
+    </div>`;
+  }
+  const isSelf=u.id===ME.id;
+  const exc=u.module_exceptions||{};
+  const lignes=MODULES_LIST.map(m=>{
+    const v=exc[m]===true?'true':(exc[m]===false?'false':'');
+    return `<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;border-bottom:1px solid var(--line)">
+      <div style="flex:1;min-width:0;font-size:12.5px">${MODULES_LBL[m]}</div>
+      <select id="euex_${m}" ${isSelf?'disabled':''} onchange="euRecalcAcces()" style="width:132px;padding:5px 6px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:11.5px">
+        <option value=""      ${v===''     ?'selected':''}>Hérité du rôle</option>
+        <option value="true"  ${v==='true' ?'selected':''}>✓ Autorisé</option>
+        <option value="false" ${v==='false'?'selected':''}>✕ Refusé</option>
+      </select>
+      <div id="euacc_${m}" style="width:168px;text-align:right;font-size:11.5px;font-weight:600"></div>
+    </div>`;
+  }).join('');
+  return `<div style="border-top:1px solid var(--line);padding-top:14px">
+    <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Accès aux modules</label>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">La colonne de droite est l'accès <b>réellement appliqué</b>, une fois le rôle, les permissions de l'organisation et les exceptions combinés.</div>
+    <div id="eu_roleWarn" style="display:none;background:#c8a03518;border:1px solid #c8a03555;color:#e0b84a;border-radius:8px;padding:8px 10px;font-size:11.5px;margin-bottom:10px"></div>
+    <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">${lignes}</div>
+    ${isSelf?'<div style="font-size:11px;color:var(--muted);margin-top:6px">Tu ne peux pas modifier tes propres exceptions — c\'est ce qui empêche un utilisateur de s\'accorder un accès lui-même (règle appliquée aussi côté base).</div>':''}
+  </div>`;
+}
+
+// Lit les 3 états dans la modale → objet d'exceptions (clé absente = hérité, on ne stocke rien).
+function euCollectExceptions(){
+  const out={};
+  MODULES_LIST.forEach(m=>{
+    const el=document.getElementById('euex_'+m);
+    if(!el)return;
+    if(el.value==='true')out[m]=true;
+    else if(el.value==='false')out[m]=false;
+  });
+  return out;
+}
+
+// Recalcule et affiche l'accès EFFECTIF, avec sa provenance. Utilise EatimeAccess (la même fonction
+// que le portail et chaque page module) : ce qui est affiché ici est ce qui sera appliqué.
+function euRecalcAcces(){
+  const roleEl=document.getElementById('eu_role');
+  if(!roleEl||!document.getElementById('euex_'+MODULES_LIST[0]))return;
+  const profil={role:roleEl.value,module_exceptions:euCollectExceptions()};
+  MODULES_LIST.forEach(m=>{
+    const cell=document.getElementById('euacc_'+m);
+    if(!cell)return;
+    const d=EatimeAccess.describeAccess(m,profil,ORG.permissions);
+    cell.textContent=d.texte;
+    cell.style.color=d.allowed?'#5bbf7a':'var(--muted)';
+  });
+  // Changement de rôle avec des exceptions posées : on le dit, on n'efface rien (cf. rapport).
+  const warn=document.getElementById('eu_roleWarn');
+  if(warn){
+    const u=USERS_CACHE.find(x=>x.id===EU_ID);
+    const n=Object.keys(profil.module_exceptions).length;
+    if(u&&roleEl.value!==u.role&&n>0){
+      warn.style.display='block';
+      warn.innerHTML=`⚠️ Le rôle passe de <b>${u.role}</b> à <b>${roleEl.value}</b>. Les ${n} exception${n>1?'s sont conservées':' est conservée'} : l'accès effectif ci-dessous tient déjà compte du nouveau rôle. Vérifie-le avant d'enregistrer.`;
+    } else warn.style.display='none';
+  }
+}
+
 // ────────────────────────────────  MODALE ÉDITION USER  ────────────────────────────────
+let EU_ID=null;
 function openEditUser(id){
   const u=USERS_CACHE.find(x=>x.id===id);if(!u)return;
   const isSelf=u.id===ME.id;
@@ -1168,6 +1271,8 @@ function openEditUser(id){
         <div style="font-size:11px;color:var(--muted);margin-top:4px">L'espace perso /moi/ utilise ce lien pour afficher le planning et les indispos.</div>
       </div>
 
+      ${euModulesHtml(u)}
+
       <div style="border-top:1px solid var(--line);padding-top:14px">
         <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Réinitialiser le mot de passe</label>
         <div style="display:flex;gap:8px">
@@ -1186,10 +1291,16 @@ function openEditUser(id){
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  EU_ID=u.id;
   EatimeAutocomplete.enhance(document.getElementById('eu_salarie'), { placeholder:'Aucune — tape un nom…' });
+  // L'accès effectif doit être visible d'emblée ET se recalculer au moindre changement de rôle,
+  // pour répondre d'un coup d'œil à « à quoi cette personne a-t-elle accès ? ».
+  const roleSel=document.getElementById('eu_role');
+  if(roleSel)roleSel.addEventListener('change',euRecalcAcces);
+  euRecalcAcces();
   overlay.addEventListener('click',e=>{if(e.target===overlay)closeEditUser();});
 }
-function closeEditUser(){const m=document.getElementById('editUserModal');if(m)m.remove();}
+function closeEditUser(){const m=document.getElementById('editUserModal');if(m)m.remove();EU_ID=null;}
 function genPwd(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghjkmnpqrstuvwxyz';let p='';for(let i=0;i<12;i++)p+=c.charAt(Math.floor(Math.random()*c.length));document.getElementById('eu_pwd').value=p;}
 async function saveEditUser(id){
   const u=USERS_CACHE.find(x=>x.id===id);if(!u)return;
@@ -1206,6 +1317,17 @@ async function saveEditUser(id){
     if(u.id!==ME.id && newRole!==u.role)patch.role=newRole;
     if((newSal||null)!==(u.salarie_id||null))patch.salarie_id=newSal;
     if(Object.keys(patch).length){await callAdminUsers({action:'update_profile',id,...patch});}
+    // 1 bis. Exceptions par module — UPDATE DIRECT, volontairement PAS via admin-users :
+    // l'edge function tourne en service_role et contournerait protect_profile_privilege. En passant
+    // ici, l'écriture est soumise au même garde-fou que celui qui bloque l'auto-attribution.
+    if(u.role!=='super_admin' && u.id!==ME.id){
+      const nouv=euCollectExceptions();
+      const ancien=u.module_exceptions||{};
+      if(JSON.stringify(nouv)!==JSON.stringify(ancien)){
+        const{error:exErr}=await sb.from('profiles').update({module_exceptions:nouv}).eq('id',id);
+        if(exErr){err.textContent='Exceptions : '+exErr.message;return;}
+      }
+    }
     // 2. update email
     if(newEmail && newEmail!==(u.auth_email||u.email||'').toLowerCase()){
       await callAdminUsers({action:'update_email',id,email:newEmail});

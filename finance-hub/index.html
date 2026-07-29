@@ -69,7 +69,7 @@ function showTab(id){
 async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){ location.href='../'; return; }
-  const{data:profile}=await sb.from('profiles').select('role,organization_id').eq('id',session.user.id).maybeSingle();
+  const{data:profile}=await sb.from('profiles').select('role,organization_id,module_exceptions').eq('id',session.user.id).maybeSingle();
   if(!profile){ location.href='../'; return; }
   const[{data:org},{data:mods}]=await Promise.all([
     sb.from('organizations').select('permissions,couleur_primaire').eq('id',profile.organization_id).maybeSingle(),
@@ -82,7 +82,7 @@ async function init(){
 
   // Accessible ET pas en maintenance (sauf super_admin) — un onglet en maintenance disparaît, mais
   // ne bloque pas l'autre onglet du hub (ex: Finance en maintenance ⇒ seul Facturation reste).
-  ACCESS=TABS.filter(t=>EatimeAccess.canAccessModule(t.id,profile.role,perms) && (isSuper || !maint[t.id]));
+  ACCESS=TABS.filter(t=>EatimeAccess.canAccessModule(t.id, profile,perms) && (isSuper || !maint[t.id]));
   if(!ACCESS.length){ location.href='../'; return; }
 
   const bar=document.getElementById('hubBar');

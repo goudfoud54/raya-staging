@@ -38,17 +38,87 @@
   //  - si ORG.permissions définit explicitement le module (même []), c'est cette valeur qui prime.
   //  - sinon on retombe sur DEFAULT_PERMS[moduleId] (fallback par module → pas de régression quand
   //    une org a des permissions sauvegardées AVANT que ce module soit configurable).
+  // Une valeur malformée (chaîne, objet, null) vaut « aucun rôle autorisé » et NON « on essaie
+  // quand même » : sans le Array.isArray, `'admin'.includes('admin')` renvoie true et une valeur
+  // corrompue accorderait l'accès. Même verdict que module_access_decide() en base (jsonb_typeof).
   function rolesFor(moduleId, orgPermissions) {
     if (orgPermissions && Object.prototype.hasOwnProperty.call(orgPermissions, moduleId)) {
-      return orgPermissions[moduleId] || [];
+      const v = orgPermissions[moduleId];
+      return Array.isArray(v) ? v : [];
     }
-    return DEFAULT_PERMS[moduleId] || [];
+    const d = DEFAULT_PERMS[moduleId];
+    return Array.isArray(d) ? d : [];   // module inconnu → aucun rôle (échec fermé)
   }
 
-  function canAccessModule(moduleId, role, orgPermissions) {
-    if (role === 'super_admin') return true;
+  // Exception individuelle (profiles.module_exceptions) — TROIS états, jamais deux :
+  //   true  = autorisé explicitement · false = refusé explicitement · absent/null/autre = hérité.
+  // Comparaisons strictes obligatoires : `if (exceptions[m])` confondrait « refusé » et « hérité ».
+  function exceptionFor(moduleId, exceptions) {
+    if (!exceptions || typeof exceptions !== 'object') return null;
+    const v = exceptions[moduleId];
+    if (v === true) return true;
+    if (v === false) return false;
+    return null;
+  }
+
+  // SOURCE DE VÉRITÉ UNIQUE de la décision d'accès, côté navigateur. Doit rester identique à
+  // `module_access_decide()` en Postgres (migration v6.30) — la parité est vérifiée par
+  // tests/acces_test.js (structurel, hors ligne) et scripts/parite_acces_sql.js (exécuté en base).
+  //
+  // Ordre de décision, du plus fort au plus faible :
+  //   1. super_admin       → toujours autorisé, jamais concerné par les exceptions ;
+  //   2. exception         → l'exception individuelle prime sur le rôle, dans les deux sens ;
+  //   3. permissions org   → la liste de rôles configurée par l'organisation pour ce module ;
+  //   4. défaut du module  → DEFAULT_PERMS.
+  //
+  // Renvoie { allowed, source, roles } où `source` sert à l'écran Paramètres pour dire D'OÙ vient
+  // l'accès : 'super_admin' | 'exception' | 'org' | 'defaut'.
+  function effectiveAccess(moduleId, profileOrRole, orgPermissions) {
+    const isProfile = profileOrRole && typeof profileOrRole === 'object';
+    const role = isProfile ? profileOrRole.role : profileOrRole;
+    // Un appel à l'ancienne signature (rôle nu) ignorerait les exceptions → accès accordé à tort
+    // quand une exception le refuse. On ne peut pas échouer fermé (page blanche en prod), donc on
+    // crie dans la console ; tests/acces_test.js interdit ce cas dans le dépôt.
+    if (!isProfile && typeof console !== 'undefined' && console.warn) {
+      console.warn('[EatimeAccess] canAccessModule appelé avec un rôle nu (« ' + role + ' ») au lieu du profil : '
+        + 'les exceptions individuelles sont IGNORÉES pour le module « ' + moduleId + ' ».');
+    }
+    if (role === 'super_admin') return { allowed: true, source: 'super_admin', roles: null };
+    // Rôle inconnu → refus, AVANT toute autre règle (échec fermé : sans ça un rôle absent
+    // obtiendrait les modules ouverts à '*'). Identique au garde-fou de module_access_decide().
+    if (role === null || role === undefined || role === '') return { allowed: false, source: 'role-inconnu', roles: null };
+
+    const exc = exceptionFor(moduleId, isProfile ? profileOrRole.module_exceptions : null);
+    if (exc === true) return { allowed: true, source: 'exception', roles: null };
+    if (exc === false) return { allowed: false, source: 'exception', roles: null };
+
     const rs = rolesFor(moduleId, orgPermissions);
-    return rs.includes('*') || rs.includes(role);
+    const fromOrg = !!(orgPermissions && Object.prototype.hasOwnProperty.call(orgPermissions, moduleId));
+    return { allowed: rs.includes('*') || rs.includes(role), source: fromOrg ? 'org' : 'defaut', roles: rs };
+  }
+
+  // Le booléen utilisé par le portail et par chaque page module. Simple projection d'effectiveAccess :
+  // impossible que les deux divergent (exigence « une seule logique »).
+  // `profileOrRole` : passer le PROFIL complet (il porte module_exceptions). Un rôle nu reste accepté
+  // pour ne pas casser une page oubliée, mais il ignore les exceptions et journalise un avertissement.
+  function canAccessModule(moduleId, profileOrRole, orgPermissions) {
+    return effectiveAccess(moduleId, profileOrRole, orgPermissions).allowed;
+  }
+
+  const ROLE_LABELS = { super_admin: 'super admin', admin: 'admin', manager: 'manager', salarie: 'salarié' };
+
+  // Phrase lisible par un administrateur : « autorisé (exception) », « autorisé (rôle manager) »,
+  // « refusé (rôle) ». Utilisée par Paramètres › Utilisateurs pour montrer le RÉSULTAT, pas le réglage.
+  function describeAccess(moduleId, profileOrRole, orgPermissions) {
+    const eff = effectiveAccess(moduleId, profileOrRole, orgPermissions);
+    const role = (profileOrRole && typeof profileOrRole === 'object') ? profileOrRole.role : profileOrRole;
+    const rl = ROLE_LABELS[role] || role || '—';
+    let why;
+    if (eff.source === 'super_admin') why = 'super admin';
+    else if (eff.source === 'exception') why = 'exception';
+    else if (eff.allowed) why = 'rôle ' + rl;
+    else why = 'rôle';
+    return Object.assign({}, eff, { texte: (eff.allowed ? 'autorisé' : 'refusé') + ' (' + why + ')' });
   }
 
   // Remplit un élément (ou document.body) avec un écran "accès refusé" standard + lien portail.
@@ -62,5 +132,5 @@
       + '</div>';
   }
 
-  g.EatimeAccess = { DEFAULT_PERMS, canAccessModule, rolesFor, renderAccessDenied };
-})(window);
+  g.EatimeAccess = { DEFAULT_PERMS, canAccessModule, effectiveAccess, exceptionFor, describeAccess, rolesFor, renderAccessDenied };
+})(typeof window !== 'undefined' ? window : globalThis);

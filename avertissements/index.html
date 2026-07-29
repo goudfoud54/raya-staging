@@ -119,7 +119,7 @@ textarea{resize:vertical;min-height:80px}
 <body>
 
 <header>
-  <h1>⚠️ Avertissements & Sanctions <small style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">v0.1 — info-bulles maison</small></h1>
+  <h1>⚠️ Avertissements & Sanctions <small style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">v0.2 — info-bulles maison</small></h1>
   <span class="badge" id="orgBadge">—</span>
   <span class="sp"></span>
   <button class="btn ghost" onclick="location.href='../index.html'">← Retour</button>
@@ -458,10 +458,10 @@ let S = { dossiers:[], salaries:[], restos:[], profile:null, params:null, antece
 async function init(){
   const { data:{ session } } = await sb.auth.getSession();
   if (!session) { location.href = '../auth/index.html'; return; }
-  const { data: profile, error: pErr } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire, permissions)').eq('id', session.user.id).maybeSingle();
+  const { data: profile, error: pErr } = await sb.from('profiles').select('id, full_name, email, role, organization_id, module_exceptions, organizations(nom, couleur_primaire, permissions)').eq('id', session.user.id).maybeSingle();
   if (pErr || !profile) { document.body.innerHTML = '<div class="empty" style="margin:80px auto;max-width:500px">⚠️ Impossible de charger votre profil. Rechargez la page.</div>'; return; }
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
-  if (!EatimeAccess.canAccessModule('avertissements', profile.role, profile.organizations?.permissions)) { document.body.innerHTML = EatimeAccess.renderAccessDenied('Avertissements'); return; }
+  if (!EatimeAccess.canAccessModule('avertissements', profile, profile.organizations?.permissions)) { document.body.innerHTML = EatimeAccess.renderAccessDenied('Avertissements'); return; }
   S.profile = profile;
   const fp = await sb.from('fact_parametres').select('*').eq('organization_id', profile.organization_id).maybeSingle();
   S.params = fp.data || {};

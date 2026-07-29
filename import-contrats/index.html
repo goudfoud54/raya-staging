@@ -183,7 +183,7 @@ async function login(){
 async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){document.getElementById('lock').classList.remove('hidden');return;}
-  const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id').eq('id',session.user.id).maybeSingle();
+  const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id,module_exceptions').eq('id',session.user.id).maybeSingle();
   if(!profile){document.getElementById('lock').classList.remove('hidden');document.getElementById('loginErr').textContent='Profil introuvable';await sb.auth.signOut();return;}
   ME=profile;
   const[orgRes,salRes,snRes]=await Promise.all([
@@ -193,7 +193,7 @@ async function init(){
   ]);
   ORG=orgRes.data; SALARIES=salRes.data||[]; SNACKS=snRes.data||[];
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
-  if(!EatimeAccess.canAccessModule('import-contrats', profile.role, ORG?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Import IA contrats');return;}
+  if(!EatimeAccess.canAccessModule('import-contrats', profile, ORG?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Import IA contrats');return;}
   document.getElementById('lock').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('userInfo').textContent='Connecté : '+(profile.full_name||profile.email)+' · '+profile.role+' · '+ORG.nom;

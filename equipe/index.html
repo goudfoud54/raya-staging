@@ -94,7 +94,7 @@ window.addEventListener('message',function(e){
 async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){ location.href='../'; return; }
-  const{data:profile}=await sb.from('profiles').select('role,organization_id').eq('id',session.user.id).maybeSingle();
+  const{data:profile}=await sb.from('profiles').select('role,organization_id,module_exceptions').eq('id',session.user.id).maybeSingle();
   if(!profile){ location.href='../'; return; }
   const[{data:org},{data:mods}]=await Promise.all([
     sb.from('organizations').select('permissions,couleur_primaire').eq('id',profile.organization_id).maybeSingle(),
@@ -107,7 +107,7 @@ async function init(){
 
   // Onglets accessibles = accessibles (access.js) ET pas en maintenance (sauf super_admin), un id
   // par onglet — même granularité que le portail/les pages, la fusion en hub ne change pas les droits.
-  ACCESS=TABS.filter(t=>EatimeAccess.canAccessModule(t.id,profile.role,perms) && (isSuper || !maint[t.id]));
+  ACCESS=TABS.filter(t=>EatimeAccess.canAccessModule(t.id, profile,perms) && (isSuper || !maint[t.id]));
   if(!ACCESS.length){ location.href='../'; return; } // aucun sous-module utilisable → retour portail
 
   const bar=document.getElementById('hubBar');

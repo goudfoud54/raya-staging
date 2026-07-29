@@ -261,10 +261,10 @@ async function init(){
   // Auth
   const { data: { session } } = await sb.auth.getSession();
   if (!session) { location.href = '../auth/index.html'; return; }
-  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, organizations(nom, couleur_primaire, permissions)').eq('id', session.user.id).maybeSingle();
+  const { data: profile } = await sb.from('profiles').select('id, full_name, email, role, organization_id, module_exceptions, organizations(nom, couleur_primaire, permissions)').eq('id', session.user.id).maybeSingle();
   if (!profile) { alert('Profil introuvable'); return; }
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
-  if (!EatimeAccess.canAccessModule('calendrier', profile.role, profile.organizations?.permissions)) { document.body.innerHTML = EatimeAccess.renderAccessDenied('Calendrier RH'); return; }
+  if (!EatimeAccess.canAccessModule('calendrier', profile, profile.organizations?.permissions)) { document.body.innerHTML = EatimeAccess.renderAccessDenied('Calendrier RH'); return; }
   S.profile = profile;
   document.getElementById('orgBadge').textContent = profile.organizations?.nom || 'org';
   if (profile.organizations?.couleur_primaire) {

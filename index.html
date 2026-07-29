@@ -96,7 +96,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
     <div class="kiosk-head">📟 Kiosques terrain <span>· tablette PIN, à installer en salle</span></div>
     <div class="modules kiosk-grid" id="kioskModules"></div>
   </div>
-  <div class="footer">Eatime360 · v9.7 · Sécurité : inscription publique retirée (accès sur invitation)</div>
+  <div class="footer">Eatime360 · v9.8 · permissions individuelles par utilisateur (exceptions par module)</div>
 </div>
 
 <script>
@@ -124,7 +124,7 @@ const MODULES=[
 ];
 // Un sous-module est "utilisable" s'il est accessible ET pas en maintenance (sauf super_admin).
 function subUsable(sub){
-  if(!EatimeAccess.canAccessModule(sub, ME.role, ORG.permissions)) return false;
+  if(!EatimeAccess.canAccessModule(sub, ME, ORG.permissions)) return false;
   const mt=MAINT[sub];
   return !(mt && mt.en_maintenance && ME.role!=='super_admin');
 }
@@ -134,7 +134,7 @@ function subUsable(sub){
 // quand Finance est en maintenance).
 function cardVisible(m){
   if(m.hub) return m.hub.some(subUsable);
-  return EatimeAccess.canAccessModule(m.id, ME.role, ORG.permissions);
+  return EatimeAccess.canAccessModule(m.id, ME, ORG.permissions);
 }
 const ROLE_LBL={super_admin:'Super admin',admin:'Admin',manager:'Manager',salarie:'Salarié'};
 // Defaults + logique d'accès : source de vérité unique dans access.js (EatimeAccess).

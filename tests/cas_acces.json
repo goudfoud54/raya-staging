@@ -1,0 +1,50 @@
+{
+  "_lisez_moi": [
+    "JEU DE CAS COMMUN aux DEUX implémentations de la décision d'accès :",
+    "  • navigateur : effectiveAccess() dans access.js   → exercé par tests/acces_test.js (hors ligne)",
+    "  • base       : module_access_decide() en Postgres → exercé par scripts/parite_acces_sql.js",
+    "Les deux runners lisent CE fichier. Si les deux implémentations divergent sur un seul cas,",
+    "l'un des deux tombe rouge. Ajouter un cas ici le fait automatiquement vérifier des deux côtés.",
+    "",
+    "Champs : module · role · perms (organizations.permissions, null = non configuré) ·",
+    "exception (true = autorisé, false = refusé, null = hérité du rôle) · attendu (booléen)."
+  ],
+  "cas": [
+    { "nom": "rôle seul — manager sur planning (défaut admin+manager)", "module": "planning", "role": "manager", "perms": null, "exception": null, "attendu": true },
+    { "nom": "rôle seul — manager sur facturation (défaut admin)", "module": "facturation", "role": "manager", "perms": null, "exception": null, "attendu": false },
+    { "nom": "rôle seul — admin sur facturation", "module": "facturation", "role": "admin", "perms": null, "exception": null, "attendu": true },
+    { "nom": "rôle seul — salarié sur moi (défaut *)", "module": "moi", "role": "salarie", "perms": null, "exception": null, "attendu": true },
+    { "nom": "rôle seul — salarié sur salaries", "module": "salaries", "role": "salarie", "perms": null, "exception": null, "attendu": false },
+
+    { "nom": "LE BESOIN — manager 1 avec exception AUTORISANT facturation", "module": "facturation", "role": "manager", "perms": null, "exception": true, "attendu": true },
+    { "nom": "LE BESOIN — manager 2 sans exception sur facturation", "module": "facturation", "role": "manager", "perms": null, "exception": null, "attendu": false },
+
+    { "nom": "exception REFUSANT retire un accès donné par le rôle", "module": "planning", "role": "manager", "perms": null, "exception": false, "attendu": false },
+    { "nom": "exception REFUSANT sur un accès déjà absent (sans effet)", "module": "salaries", "role": "manager", "perms": null, "exception": false, "attendu": false },
+    { "nom": "exception REFUSANT à un admin sur son module par défaut", "module": "finance", "role": "admin", "perms": null, "exception": false, "attendu": false },
+
+    { "nom": "super_admin — jamais affecté par une exception refusant", "module": "facturation", "role": "super_admin", "perms": null, "exception": false, "attendu": true },
+    { "nom": "super_admin — jamais affecté, même perms org vides", "module": "planning", "role": "super_admin", "perms": { "planning": [] }, "exception": false, "attendu": true },
+    { "nom": "super_admin — module inconnu", "module": "module-inexistant", "role": "super_admin", "perms": null, "exception": null, "attendu": true },
+
+    { "nom": "module inconnu — manager, sans exception (défaut = admin)", "module": "module-inexistant", "role": "manager", "perms": null, "exception": null, "attendu": false },
+    { "nom": "module inconnu — admin, sans exception (échec fermé des deux côtés)", "module": "module-inexistant", "role": "admin", "perms": null, "exception": null, "attendu": false },
+    { "nom": "module inconnu — exception AUTORISANT (l'exception prime)", "module": "module-inexistant", "role": "manager", "perms": null, "exception": true, "attendu": true },
+
+    { "nom": "perms org — liste explicite incluant le rôle", "module": "facturation", "role": "manager", "perms": { "facturation": ["admin", "manager"] }, "exception": null, "attendu": true },
+    { "nom": "perms org — liste explicite excluant le rôle", "module": "planning", "role": "manager", "perms": { "planning": ["admin"] }, "exception": null, "attendu": false },
+    { "nom": "perms org — liste VIDE = accès retiré volontairement", "module": "planning", "role": "manager", "perms": { "planning": [] }, "exception": null, "attendu": false },
+    { "nom": "perms org — joker *", "module": "facturation", "role": "salarie", "perms": { "facturation": ["*"] }, "exception": null, "attendu": true },
+    { "nom": "perms org — module absent de la config → défaut du module", "module": "planning", "role": "manager", "perms": { "autre-module": ["admin"] }, "exception": null, "attendu": true },
+    { "nom": "perms org — objet vide → défaut du module", "module": "facturation", "role": "manager", "perms": {}, "exception": null, "attendu": false },
+
+    { "nom": "priorité — l'exception REFUSANT prime sur des perms org qui autorisent", "module": "facturation", "role": "manager", "perms": { "facturation": ["*"] }, "exception": false, "attendu": false },
+    { "nom": "priorité — l'exception AUTORISANT prime sur des perms org qui refusent", "module": "facturation", "role": "manager", "perms": { "facturation": [] }, "exception": true, "attendu": true },
+
+    { "nom": "rôle inattendu sur un module ouvert à * — autorisé (c'est le sens de '*' : tout utilisateur connecté)", "module": "moi", "role": "role-inexistant", "perms": null, "exception": null, "attendu": true },
+    { "nom": "rôle inattendu sur un module restreint — refusé", "module": "facturation", "role": "role-inexistant", "perms": null, "exception": null, "attendu": false },
+    { "nom": "rôle vide — échec fermé", "module": "moi", "role": "", "perms": null, "exception": null, "attendu": false },
+    { "nom": "rôle null — échec fermé", "module": "moi", "role": null, "perms": null, "exception": null, "attendu": false },
+    { "nom": "perms org malformées (chaîne au lieu de tableau) → refus", "module": "facturation", "role": "admin", "perms": { "facturation": "admin" }, "exception": null, "attendu": false }
+  ]
+}

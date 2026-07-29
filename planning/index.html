@@ -278,7 +278,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.55 · sécurité : formulaire d\'inscription publique retiré (accès sur invitation uniquement)';
+const VERSION='v0.56 · permissions individuelles : l\'accès au module tient compte des exceptions par utilisateur';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -533,7 +533,7 @@ async function loadProfileAndShow(){
   ME=profile;
   const{data:org}=await sb.from('organizations').select('couleur_primaire,coef_charges,permissions,logo_url,nom').eq('id',profile.organization_id).maybeSingle();
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
-  if(!EatimeAccess.canAccessModule('planning', profile.role, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Planning');return;}
+  if(!EatimeAccess.canAccessModule('planning', profile, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Planning');return;}
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
   ORG=org||{};
   showApp();

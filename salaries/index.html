@@ -236,7 +236,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.19 · sécurité : formulaire d\'inscription publique retiré (accès sur invitation uniquement)';
+const VERSION='v0.20 · permissions individuelles : l\'accès au module tient compte des exceptions par utilisateur';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -322,7 +322,7 @@ async function loadProfileAndShow(){
   ME=profile;
   const{data:org}=await sb.from('organizations').select('couleur_primaire,logo_url,permissions').eq('id',profile.organization_id).maybeSingle();
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
-  if(!EatimeAccess.canAccessModule('salaries', profile.role, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Gestion Salariés');return;}
+  if(!EatimeAccess.canAccessModule('salaries', profile, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Gestion Salariés');return;}
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
   showApp();
 }

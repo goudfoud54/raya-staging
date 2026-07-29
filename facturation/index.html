@@ -94,7 +94,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.5 — bons de livraison : création/édition, détail, marge, verrou si facturé (bl_ids = source unique)</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.6 — bons de livraison : création/édition, détail, marge, verrou si facturé (bl_ids = source unique)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -139,7 +139,7 @@ async function loadProfileAndShow(){
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();ORG=org||{};
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
-  if(!EatimeAccess.canAccessModule('facturation', profile.role, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Facturation');return;}
+  if(!EatimeAccess.canAccessModule('facturation', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Facturation');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   if(ORG.suspended && ME.role!=='super_admin'){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue.</div>';return;}
   document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');

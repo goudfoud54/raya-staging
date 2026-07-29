@@ -12,6 +12,7 @@
 <meta name="theme-color" content="#c8a035">
 <link rel="apple-touch-icon" href="../icons/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../access.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -149,6 +150,10 @@ async function loadAndShow(){
   if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();ORG=org||{};
+  // Cette page n'avait aucun contrôle d'accès : le module « moi » est ouvert à tous par défaut ('*'),
+  // mais sans ce passage par access.js une exception le refusant n'aurait aucun effet ici — la carte
+  // aurait disparu du portail alors que l'URL directe continuait de fonctionner.
+  if(!EatimeAccess.canAccessModule('moi', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Mon espace');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   if(ORG.suspended){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue.</div>';return;}
   // Charger la fiche salarié liée

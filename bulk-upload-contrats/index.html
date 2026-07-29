@@ -114,11 +114,11 @@ async function login(){
 async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){document.getElementById('lock').classList.remove('hidden');return;}
-  const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id').eq('id',session.user.id).maybeSingle();
+  const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id,module_exceptions').eq('id',session.user.id).maybeSingle();
   if(!profile){document.getElementById('lock').classList.remove('hidden');document.getElementById('loginErr').textContent='Profil introuvable';await sb.auth.signOut();return;}
   const{data:org}=await sb.from('organizations').select('permissions').eq('id',profile.organization_id).maybeSingle();
   // Même permission que le module Import contrats (access.js).
-  if(!EatimeAccess.canAccessModule('import-contrats', profile.role, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Upload contrats');return;}
+  if(!EatimeAccess.canAccessModule('import-contrats', profile, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Upload contrats');return;}
   // Charge les salariés de l'organisation (plus d'UUID en dur — S4). La RLS isole déjà ; on double-filtre côté requête.
   const{data:sals,error:errS}=await sb.from('salaries').select('id,nom,prenom').eq('organization_id',profile.organization_id).eq('actif',true).order('nom');
   if(errS){document.getElementById('loginErr').textContent='Erreur chargement salariés : '+errS.message;return;}
