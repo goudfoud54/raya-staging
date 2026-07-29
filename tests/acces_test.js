@@ -150,6 +150,24 @@ const sansColonne = PAGES.filter(f => {
 });
 t('toute page appelant canAccessModule lit bien module_exceptions', sansColonne.length === 0, sansColonne.join(', '));
 
+// Le jeton de cache de access.js doit être IDENTIQUE partout. La signature de canAccessModule a
+// changé en v6.30 : un navigateur qui garderait l'ancien access.js en cache face à une page neuve
+// (ou l'inverse) donnerait un verdict faux — et dans un sens, il échoue OUVERT (page ancienne +
+// access.js neuf = rôle nu = exceptions ignorées = accès refusé quand même accordé, sans symptôme).
+// Un bump partiel est donc pire que pas de bump : on l'interdit mécaniquement.
+const jetons = new Set();
+const sansJeton = [];
+PAGES.forEach(f => {
+  const src = fs.readFileSync(path.join(RACINE, f), 'utf8');
+  const inc = src.match(/src="[^"]*access\.js(\?v=([^"]*))?"/);
+  if (!inc) { sansJeton.push(f + ' (pas d’inclusion <script src>)'); return; }
+  if (!inc[2]) { sansJeton.push(f + ' (inclusion sans ?v=)'); return; }
+  jetons.add(inc[2]);
+});
+t('toute page incluant access.js porte un jeton ?v=', sansJeton.length === 0, sansJeton.join(', '));
+t('un seul et même jeton ?v= sur toutes les pages (bump partiel interdit)',
+  jetons.size === 1, 'jetons trouvés : ' + [...jetons].join(', '));
+
 // ══════════ F. L'écran Paramètres couvre exactement les modules connus ══════════
 const PARAM = fs.readFileSync(path.join(RACINE, 'parametres', 'index.html'), 'utf8');
 const mListe = PARAM.match(/const MODULES_LIST=\[([^\]]*)\]/);
