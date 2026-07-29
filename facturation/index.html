@@ -1203,6 +1203,10 @@ async function saveBL(){
   const payload={organization_id:ORG.id,client_id:clientId,date_livraison:date,lignes,total_achat:tot.total_achat,total_revente:tot.total_revente};
   const{error}=BL_EDIT_ID?await sb.from('bons_livraison').update(payload).eq('id',BL_EDIT_ID):await sb.from('bons_livraison').insert(payload);
   if(error){toast('Erreur : '+error.message);return;}
+  // Le rapprochement de la mercuriale s'appuie sur ces lignes : son cache devient faux dès qu'un bon
+  // change. Sans cette invalidation, revenir sur le Catalogue dans la même session afficherait des
+  // écarts calculés sur les prix d'AVANT la modification — faux sans rien signaler.
+  MERC_BLS=null;
   toast('✓ Bon enregistré'); closeModal(); renderBLs(document.getElementById('content'));
 }
 
@@ -1245,7 +1249,14 @@ async function renderCatalogue(el){
   // ne doivent pas attendre 51 bons pour s'afficher.
   paintCatalogue(el,null);
   await ensureMercBLs();
-  if(TAB==='catalogue') paintCatalogue(el,mercModel('interne'));
+  // Le second rendu reconstruit le tableau : sans ça, la recherche tapée pendant le chargement des
+  // bons serait effacée sous les doigts du patron. On la conserve et on la ré-applique.
+  const q=(document.getElementById('prod_q')||{}).value||'';
+  if(TAB==='catalogue'){
+    paintCatalogue(el,mercModel('interne'));
+    const champ=document.getElementById('prod_q');
+    if(champ && q){ champ.value=q; filterCat(); }
+  }
 }
 function paintCatalogue(el,model){
   const parNom=new Map();
