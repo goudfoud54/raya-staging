@@ -12,6 +12,8 @@
 <script src="../ui.js?v=1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<!-- SheetJS : écriture .xlsx uniquement (jamais de lecture de fichier — cf. rapport de chantier). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
@@ -94,7 +96,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.8 — numérotation mensuelle configurable, attribuée sans trou par la base (trigger atomique)</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.9 — mercuriale : export Excel et PDF (interne ou tarif client) + alerte sur les prix qui ont dérivé</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -565,6 +567,193 @@ async function buildFactureModel(f){
   return factureModel(f, bls, S.produits, S.fparam||{});
 }
 
+// ─────── MERCURIALE — modèle PUR (aucune dépendance jsPDF / XLSX / DOM / base) ───────
+// Deux documents tirés des mêmes données, et c'est le point sensible :
+//   • 'interne' — la mercuriale du patron : prix d'achat et marge compris. Ne sort pas de la maison.
+//   • 'client'  — le tarif envoyé au restaurateur livré : prix de vente et TVA, RIEN d'autre.
+// Le mode agit sur le MODÈLE, pas sur le rendu : en mode 'client', `prix_achat` et `marge*`
+// n'existent tout simplement pas dans les objets renvoyés. Un export qui voudrait les écrire ne
+// pourrait pas les trouver — alors qu'un simple « on saute la colonne à l'affichage » se serait
+// fait contourner à la première évolution du PDF ou du tableur.
+
+// Clé de rapprochement catalogue ↔ lignes de bons de livraison : minuscules, bords rognés, espaces
+// internes compactés. Volontairement PAS plus (ni accents, ni ponctuation) : c'est exactement la
+// normalisation vérifiée en base, qui rapproche 76 des 78 produits. L'élargir rendrait les chiffres
+// de contrôle non reproductibles sans rien régler — les 2 restants ont de vrais noms différents.
+function _cleProduit(nom){ return String(nom==null?'':nom).trim().toLowerCase().replace(/\s+/g,' '); }
+
+// Dernier prix pratiqué par désignation, d'après les LIGNES des bons de livraison (le plus récent
+// par date de livraison gagne). Map clé → {nom, date, a, r}.
+// NB : « dernier prix livré », pas « dernier prix facturé » — on lit TOUS les bons, y compris ceux
+// pas encore portés sur une facture. C'est le prix le plus récemment pratiqué, donc le bon repère.
+function dernierPrixLivres(bls){
+  const out=new Map();
+  const ordonnes=[...(bls||[])].sort((x,y)=>String(y.date_livraison||'').localeCompare(String(x.date_livraison||'')));
+  for(const b of ordonnes){
+    for(const l of (Array.isArray(b.lignes)?b.lignes:[])){
+      const k=_cleProduit(l&&l.nom);
+      if(!k||out.has(k))continue;                     // première rencontre = la plus récente
+      out.set(k,{nom:l.nom,date:b.date_livraison||null,a:Number(l.a)||0,r:Number(l.r)||0});
+    }
+  }
+  return out;
+}
+
+// Marge unitaire — MÊME convention que blLineTotals/blTotals : marge = revente − achat, et
+// pourcentage rapporté au prix de REVENTE (pas au prix d'achat), arrondi à 0,1 comme sur l'écran
+// des bons. Une seule formule dans l'application, donc jamais deux pourcentages pour un même produit.
+// Différence assumée avec blLineTotals : ici on ne pré-arrondit pas au centime. blLineTotals arrondit
+// un MONTANT facturé (qté × prix), qui se règle au centime ; un prix unitaire de catalogue porte
+// jusqu'à 4 décimales, et arrondir avant de soustraire fausserait la marge affichée dans le tableur.
+// Prix de revente absent ou nul → marge non calculable : on renvoie null, jamais 0 ni un infini.
+function margeUnitaire(prix_achat,prix_revente){
+  const a=(prix_achat==null||prix_achat==='')?null:Number(prix_achat);
+  const r=(prix_revente==null||prix_revente==='')?null:Number(prix_revente);
+  const aOk=a!=null&&!isNaN(a), rOk=r!=null&&!isNaN(r)&&r>0;
+  if(!rOk) return {marge:null,marge_pct:null,sansPrixRevente:true};
+  if(!aOk) return {marge:null,marge_pct:null,sansPrixRevente:false};
+  const marge=+(r-a).toFixed(4);
+  return {marge,marge_pct:+((marge/r)*100).toFixed(1),sansPrixRevente:false};
+}
+
+// Écart entre un prix du catalogue et le dernier prix livré.
+// Deux natures, à ne pas confondre — sinon le signal se noie dans le bruit :
+//   • 'arrondi' : ≤ 1 centime. Le catalogue stocke jusqu'à 4 décimales, les lignes de bon en
+//     stockent 2 : 27,4575 au catalogue ressort à 27,46 sur le bon. Ce n'est pas un changement de
+//     prix, c'est une différence de représentation.
+//   • 'reel'    : au-delà. Un prix a bougé — au patron de décider s'il aligne ou non.
+// Les DEUX valeurs sont renvoyées dans les deux cas : rien n'est masqué, seule l'alerte est calibrée.
+// La comparaison se fait sur les valeurs ARRONDIES AU CENTIME, parce que c'est à ce niveau que
+// l'argent se facture : « 22,8091 au catalogue » se facture 22,81, et un bon qui porte 22,82 est
+// à un centime — pas à un changement de prix. Comparer les valeurs brutes classerait cet écart de
+// 0,0109 comme réel sur la seule foi de la 4e décimale. Les valeurs BRUTES restent renvoyées telles
+// quelles : c'est la classification qui est calibrée, pas l'information.
+function ecartPrix(valeurCatalogue,valeurLivree){
+  const c=Number(valeurCatalogue)||0, d=Number(valeurLivree)||0;
+  const diff=+(c-d).toFixed(4);
+  if(diff===0) return null;
+  const diffCent=Math.abs(+(Math.round(c*100)/100-Math.round(d*100)/100).toFixed(2));
+  return {catalogue:c,livre:d,diff,type:diffCent<=0.01?'arrondi':'reel'};
+}
+
+// Modèle complet de la mercuriale : produits groupés par catégorie, marges, écarts de prix.
+// opts = { mode:'interne'|'client', date:'AAAA-MM-JJ', organisation:'…' }
+function mercurialeModel(produits,bls,opts){
+  opts=opts||{};
+  const mode=opts.mode==='client'?'client':'interne';
+  const dernier=dernierPrixLivres(bls);
+  const lignes=[];
+  let nonRapproches=0, ecartsReels=0, ecartsArrondis=0, sansPrixRevente=0;
+
+  for(const p of (produits||[])){
+    const m=margeUnitaire(p.prix_achat,p.prix_revente);
+    if(m.sansPrixRevente) sansPrixRevente++;
+    const base={
+      nom:p.nom||'',
+      cat:(p.cat==null||p.cat==='')?'Sans catégorie':String(p.cat),
+      grammage:p.grammage||'',
+      unite:p.unite||'',
+      grammage_unite:[p.grammage||'',p.unite||''].filter(Boolean).join(' '),
+      // Un prix de vente absent OU nul est ramené à null : la base ne sait pas les distinguer
+      // (saveProd écrit `num(...)||0`, donc « non renseigné » se stocke en 0). Puisqu'aucune marge
+      // n'en est calculable, on ne l'affiche pas comme un prix — écran, PDF et tableur montrent tous
+      // « — » / une cellule vide, et `sansPrixRevente` porte l'information. Un 0 laissé tel quel se
+      // trierait et se moyennerait dans le tableur comme un vrai tarif.
+      prix_revente:m.sansPrixRevente?null:Number(p.prix_revente),
+      tva:p.tva==null?null:Number(p.tva),
+      sansPrixRevente:m.sansPrixRevente,
+    };
+    if(mode==='interne'){
+      const ref=dernier.get(_cleProduit(p.nom))||null;
+      // Produit jamais livré : on le DIT (« non rapproché »), on ne le compte surtout pas comme
+      // identique — c'est la différence entre « prix vérifié » et « prix jamais confronté au réel ».
+      const eR=ref?ecartPrix(base.prix_revente,ref.r):null;
+      const eA=ref?ecartPrix(p.prix_achat,ref.a):null;
+      if(!ref) nonRapproches++;
+      else{
+        if((eR&&eR.type==='reel')||(eA&&eA.type==='reel')) ecartsReels++;
+        else if(eR||eA) ecartsArrondis++;
+      }
+      base.prix_achat=(p.prix_achat==null||p.prix_achat==='')?null:Number(p.prix_achat);
+      base.marge=m.marge;
+      base.marge_pct=m.marge_pct;
+      base.rapproche=!!ref;
+      base.dernier=ref?{date:ref.date,achat:ref.a,revente:ref.r,nom:ref.nom}:null;
+      base.ecart_revente=eR;
+      base.ecart_achat=eA;
+    }
+    lignes.push(base);
+  }
+
+  // Groupement par catégorie : catégories par ordre alphabétique, et à l'intérieur on CONSERVE
+  // l'ordre reçu (l'écran charge les produits triés par nom) — donc l'ordre de l'écran, par paquets.
+  const parCat=new Map();
+  for(const l of lignes){ if(!parCat.has(l.cat)) parCat.set(l.cat,[]); parCat.get(l.cat).push(l); }
+  const groupes=[...parCat.keys()].sort((a,b)=>a.localeCompare(b,'fr')).map(cat=>({cat,lignes:parCat.get(cat)}));
+
+  return {
+    mode,
+    date:opts.date||null,
+    organisation:opts.organisation||'',
+    groupes,
+    nbProduits:lignes.length,
+    nbCategories:groupes.length,
+    // Le bilan de rapprochement n'a de sens qu'en interne (le tarif client ignore les prix d'achat).
+    controle:mode==='interne'?{rapproches:lignes.length-nonRapproches,nonRapproches,ecartsReels,ecartsArrondis,sansPrixRevente}:null,
+  };
+}
+
+// Colonnes de la mercuriale — UNE SEULE définition, partagée par le PDF ET le tableur. Deux listes
+// de colonnes séparées finiraient par diverger (le piège « deux fonctions qui écrivent le même
+// rendu »), et surtout : en mode client, les colonnes de prix d'achat et de marge ne sont pas
+// « sautées à l'affichage », elles ne sont pas produites du tout.
+// `type` sert au formatage : 'texte' | 'euro' | 'pourcent'. `largeur` est en mm (PDF) / caractères (tableur).
+function mercurialeColonnes(mode){
+  const cols=[
+    {cle:'nom',            titre:'Désignation',     type:'texte',    largeur:56},
+    {cle:'cat',            titre:'Catégorie',       type:'texte',    largeur:26},
+    {cle:'grammage_unite', titre:'Grammage',        type:'texte',    largeur:20},
+    {cle:'prix_revente',   titre:'Prix de vente HT',type:'euro',     largeur:26},
+    {cle:'tva',            titre:'TVA',             type:'pourcent', largeur:15},
+  ];
+  if(mode==='client') return cols;
+  cols.splice(3,0,{cle:'prix_achat',titre:"Prix d'achat HT",type:'euro',largeur:26});
+  cols.push({cle:'marge',titre:'Marge',type:'euro',largeur:22},
+            {cle:'marge_pct',titre:'Marge %',type:'pourcent',largeur:16});
+  return cols;
+}
+
+// Feuille de calcul de la mercuriale — PURE : matrice de cellules + métadonnées de colonnes.
+// Les nombres restent des NOMBRES (jamais des chaînes déjà formatées avec « € ») : c'est ce qui
+// permet de trier, filtrer et recalculer dans le tableur sans rien reformater. Le formatage
+// d'affichage est posé à part, par le format de cellule.
+// Une valeur absente (prix de vente non renseigné, donc marge incalculable) donne une cellule VIDE,
+// jamais un zéro : un zéro se trierait et se moyennerait comme un vrai prix.
+function mercurialeFeuille(model){
+  const cols=mercurialeColonnes(model.mode);
+  const titre=model.mode==='client'?'TARIF':'MERCURIALE (document interne)';
+  const aoa=[
+    [titre+(model.organisation?' — '+model.organisation:'')],
+    ['Édité le '+(_dateLong(model.date)||'')+' · '+model.nbProduits+' produits · '+model.nbCategories+' catégories'],
+    [],
+    cols.map(c=>c.titre),
+  ];
+  const ligneEntete=aoa.length-1;
+  const lignesCategorie=[];
+  for(const g of model.groupes){
+    lignesCategorie.push(aoa.length);
+    aoa.push([g.cat]);                                   // bandeau de catégorie, sur la 1re colonne
+    for(const l of g.lignes){
+      aoa.push(cols.map(c=>{
+        const v=l[c.cle];
+        if(v==null||v==='') return null;                 // cellule vide, surtout pas 0
+        return c.type==='texte'?String(v):Number(v);
+      }));
+    }
+  }
+  return {aoa,colonnes:cols,ligneEntete,lignesCategorie,nbLignes:aoa.length};
+}
+
 // ─────── PDF (rendu jsPDF ; le logo est la seule image, tout le reste est du texte vectoriel) ───────
 async function downloadFacturePDF(id){
   toast('Génération PDF…');
@@ -687,6 +876,151 @@ async function downloadFacturePDF(id){
     if(N>1)doc.text(`page ${i}/${N}`,R,PH-8,{align:'right'});
   }
   doc.save(`Facture_${(f.numero||'').replace(/[^a-zA-Z0-9-]/g,'_')}.pdf`);
+}
+
+// ─────── MERCURIALE — exports (tableur + PDF) ───────
+// Les deux exports partent du MÊME modèle pur et des MÊMES colonnes. Le mode ('interne' | 'client')
+// est décidé une seule fois, en entrée : ni le tableur ni le PDF ne « filtrent » quoi que ce soit.
+let MERC_BLS=null;   // bons de livraison réduits (date + lignes), UNIQUEMENT pour le rapprochement.
+                     // État séparé de S.bls exprès : S.bls porte des lignes complètes (id, client)
+                     // utilisées par l'écran des bons et l'édition, et l'écraser ici les casserait.
+async function ensureMercBLs(){
+  if(MERC_BLS) return MERC_BLS;
+  const{data,error}=await sb.from('bons_livraison').select('date_livraison,lignes').eq('organization_id',ORG.id);
+  if(error){toast('Prix livrés indisponibles : '+error.message);MERC_BLS=[];return MERC_BLS;}
+  MERC_BLS=data||[];
+  return MERC_BLS;
+}
+function mercModel(mode){
+  return mercurialeModel(S.produits,MERC_BLS||[],{
+    mode,
+    date:(window.EatimeUtils&&EatimeUtils.todayYMD)?EatimeUtils.todayYMD():new Date().toISOString().slice(0,10),
+    organisation:(S.fparam&&S.fparam.raison_sociale)||ORG.nom||'',
+  });
+}
+// Nom de fichier explicite : « mercuriale-interne » vs « tarif-client ». Le mauvais fichier envoyé
+// au mauvais destinataire est précisément le risque qu'on cherche à écarter — autant qu'il se lise
+// dans le nom, avant même d'ouvrir le document.
+function mercNomFichier(model,ext){
+  return (model.mode==='client'?'tarif-client':'mercuriale-interne')+'-'+(model.date||'')+'.'+ext;
+}
+
+async function downloadMercurialeXLSX(mode){
+  if(typeof XLSX==='undefined'){toast('Bibliothèque tableur non chargée — recharge la page');return;}
+  toast('Génération du tableur…');
+  await ensureMercBLs();
+  const model=mercModel(mode);
+  const f=mercurialeFeuille(model);
+  const ws=XLSX.utils.aoa_to_sheet(f.aoa);              // nombres passés en Number → cellules t:'n'
+  // Formats d'affichage par colonne (le contenu reste numérique et donc triable/calculable).
+  // Le pourcentage est écrit en NOMBRE (5,5) avec un format « 0.0"%" » : avec le format natif 0.0%,
+  // Excel multiplierait par 100 et afficherait 550,0 %.
+  const FMT={euro:'#,##0.00\\ "€"',pourcent:'0.0"%"',texte:null};
+  const nbCols=f.colonnes.length;
+  for(let r=f.ligneEntete+1;r<f.nbLignes;r++){
+    for(let c=0;c<nbCols;c++){
+      const ref=XLSX.utils.encode_cell({r,c});
+      const cell=ws[ref];
+      if(!cell||cell.t!=='n')continue;
+      const fmt=FMT[f.colonnes[c].type];
+      if(fmt)cell.z=fmt;
+    }
+  }
+  ws['!cols']=f.colonnes.map(c=>({wch:Math.max(10,Math.round(c.largeur*0.75))}));
+  // Filtre automatique sur la ligne d'en-tête → tri et filtre immédiats, sans rien reformater.
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:f.ligneEntete,c:0},e:{r:f.nbLignes-1,c:nbCols-1}})};
+  ws['!freeze']={xSplit:0,ySplit:f.ligneEntete+1};
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,model.mode==='client'?'Tarif':'Mercuriale');
+  XLSX.writeFile(wb,mercNomFichier(model,'xlsx'));
+  toast('✓ Tableur téléchargé');
+}
+
+async function downloadMercurialePDF(mode){
+  toast('Génération PDF…');
+  await ensureMercBLs();
+  const model=mercModel(mode);
+  const cols=mercurialeColonnes(model.mode);
+  const par=S.fparam||{};
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:'mm',format:'a4',compress:true});
+  const PW=doc.internal.pageSize.getWidth(),PH=doc.internal.pageSize.getHeight(),L=14,R=PW-14;
+  const accent=_hexToRgb(par.couleur_accent)||_hexToRgb(ORG.couleur_primaire)||[232,98,42];
+  const bandeau=_hexToRgb(par.couleur_bandeau)||[58,58,64];
+  const bandeauTxt=_textColorFor(bandeau), accentTxt=_textColorFor(accent);
+
+  // ── En-tête : même construction que la facture (logo + identité à gauche, titre à droite) ──
+  const topY=16; let hx=L;
+  if(par.logo_url){try{const pr=doc.getImageProperties(par.logo_url);const bw=30,bh=16,rr=Math.min(bw/pr.width,bh/pr.height);const fmt=/image\/png/i.test(par.logo_url)?'PNG':'JPEG';doc.addImage(par.logo_url,fmt,L,topY,pr.width*rr,pr.height*rr);hx=L+34;}catch(e){hx=L;}}
+  doc.setTextColor(30);doc.setFont(undefined,'bold');doc.setFontSize(13);
+  doc.text(par.raison_sociale||ORG.nom||'',hx,topY+5);
+  doc.setFont(undefined,'normal');doc.setFontSize(8.5);doc.setTextColor(110);
+  let ay=topY+10.5;
+  if(par.adresse){doc.text(String(par.adresse),hx,ay);ay+=3.6;}
+  const cpv=`${par.code_postal||''} ${par.ville||''}`.trim();if(cpv){doc.text(cpv,hx,ay);ay+=3.6;}
+  if(par.telephone){doc.text(String(par.telephone),hx,ay);ay+=3.6;}
+  doc.setTextColor(20);doc.setFont(undefined,'bold');doc.setFontSize(22);
+  doc.text(model.mode==='client'?'TARIF':'MERCURIALE',R,topY+6,{align:'right'});
+  // La DATE d'édition : une mercuriale sans date ne dit pas de quand elle parle.
+  doc.setFont(undefined,'normal');doc.setFontSize(10);doc.setTextColor(90);
+  doc.text('Édité le '+_dateLong(model.date),R,topY+13,{align:'right'});
+  doc.setFontSize(8.5);doc.setTextColor(120);
+  doc.text(model.nbProduits+' produits · '+model.nbCategories+' catégories',R,topY+18.5,{align:'right'});
+
+  let y=Math.max(ay,topY+24)+2;
+  // Marqueur bien visible sur le document interne : il contient les prix d'achat et les marges.
+  if(model.mode!=='client'){
+    doc.setFillColor(accent[0],accent[1],accent[2]);doc.rect(L,y,R-L,7,'F');
+    doc.setTextColor(accentTxt[0],accentTxt[1],accentTxt[2]);doc.setFont(undefined,'bold');doc.setFontSize(8.5);
+    doc.text('DOCUMENT INTERNE — contient les prix d\'achat et les marges. Ne pas transmettre à un client.',L+2,y+4.7);
+    doc.setFont(undefined,'normal');
+    y+=11;
+  }
+
+  // ── Tableau : bandeaux de catégorie intercalés en colSpan (autoTable gère la pagination) ──
+  const nb=cols.length;
+  const cellule=(l,c)=>{
+    const v=l[c.cle];
+    if(v==null||v==='') return '—';                        // jamais un « 0,00 € » trompeur
+    if(c.type==='euro') return _eurPdf(v);
+    if(c.type==='pourcent') return _fmtTva(v);
+    return String(v);
+  };
+  const body=[];
+  model.groupes.forEach(g=>{
+    body.push([{content:g.cat,colSpan:nb,styles:{fillColor:bandeau,textColor:bandeauTxt,fontStyle:'bold',halign:'left',fontSize:8.5}}]);
+    g.lignes.forEach(l=>body.push(cols.map(c=>cellule(l,c))));
+  });
+  if(!body.length)body.push([{content:'Aucun produit au catalogue',colSpan:nb,styles:{halign:'center',textColor:[150,150,150]}}]);
+  const columnStyles={};
+  cols.forEach((c,i)=>{columnStyles[i]={cellWidth:c.largeur*(nb>6?0.86:1),halign:c.type==='texte'?'left':(c.type==='pourcent'?'center':'right')};});
+  doc.autoTable({
+    startY:y,
+    head:[cols.map(c=>c.titre.toUpperCase())],
+    body,
+    theme:'plain',
+    styles:{fontSize:8,cellPadding:{top:1.5,bottom:1.5,left:2,right:2},textColor:[35,35,40],lineColor:[232,232,236],lineWidth:0.1},
+    headStyles:{fillColor:bandeau,textColor:bandeauTxt,fontStyle:'bold',fontSize:7.5},
+    alternateRowStyles:{fillColor:[248,248,250]},
+    columnStyles,
+    margin:{top:18,bottom:20,left:L,right:14},
+  });
+
+  // ── Pied de page sur toutes les pages ──
+  const forme=par.forme_juridique||'';
+  const legal=[par.raison_sociale||ORG.nom,[par.adresse,cpv].filter(Boolean).join(' '),
+               par.telephone?('Tél : '+par.telephone):'',par.siret?('SIRET '+par.siret):''].filter(Boolean).join(' · ');
+  const N=doc.getNumberOfPages();
+  for(let i=1;i<=N;i++){
+    doc.setPage(i);
+    doc.setDrawColor(accent[0],accent[1],accent[2]);doc.setLineWidth(0.3);doc.line(L,PH-15,R,PH-15);
+    doc.setFontSize(6.8);doc.setTextColor(130);doc.setFont(undefined,'normal');
+    if(legal)doc.text(legal,PW/2,PH-11,{align:'center'});
+    doc.text((model.mode==='client'?'Tarif':'Mercuriale interne')+' — édité le '+_dateLong(model.date),L,PH-8);
+    if(N>1)doc.text(`page ${i}/${N}`,R,PH-8,{align:'right'});
+  }
+  doc.save(mercNomFichier(model,'pdf'));
+  toast('✓ PDF téléchargé');
 }
 
 // ═══ BL — fonctions PURES (testées : tests/bl_test.js) ═══════════════════════════════════════════
@@ -905,10 +1239,72 @@ async function saveClient(){
 async function delClient(id){if(!confirm('Supprimer ce client ?'))return;const{error}=await sb.from('clients').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderClients(document.getElementById('content'));}
 
 // ─────── CATALOGUE ───────
-function renderCatalogue(el){
-  let html=`<div class="toolbar"><input id="prod_q" placeholder="Rechercher…" oninput="filterCat()"><div style="flex:1"></div><button class="btn" onclick="openProd()">+ Nouveau produit</button></div>
-    <table class="tbl"><thead><tr><th>Nom</th><th>Catégorie</th><th>PU HT</th><th>TVA</th><th></th></tr></thead><tbody id="catTbody">`;
-  S.produits.forEach(p=>{html+=`<tr data-pn="${p.nom.toLowerCase()}"><td><b>${p.nom}</b></td><td style="color:var(--muted);font-size:12px">${p.cat||'—'}</td><td><b>${eur(p.prix_revente)}</b></td><td>${p.tva||5.5}%</td><td><button class="btn ghost sm" onclick='openProd(${JSON.stringify(p).replace(/'/g,"&#39;")})' data-tip="Modifier le produit" aria-label="Modifier le produit">✎</button> <button class="btn ghost sm" onclick="delProd('${p.id}')" data-tip="Supprimer le produit" aria-label="Supprimer le produit">✕</button></td></tr>`;});
+async function renderCatalogue(el){
+  // Le rapprochement a besoin des bons de livraison, que loadCommonData ne charge pas (l'onglet
+  // Catalogue n'en avait jamais eu besoin). On affiche d'abord, on complète ensuite : 78 produits
+  // ne doivent pas attendre 51 bons pour s'afficher.
+  paintCatalogue(el,null);
+  await ensureMercBLs();
+  if(TAB==='catalogue') paintCatalogue(el,mercModel('interne'));
+}
+function paintCatalogue(el,model){
+  const parNom=new Map();
+  if(model) model.groupes.forEach(g=>g.lignes.forEach(l=>parNom.set(l.nom,l)));
+  const c=model?model.controle:null;
+
+  // Bandeau de contrôle : ce qui a dérivé, ce qui n'a pas pu être rapproché. Les deux comptes sont
+  // donnés séparément — un produit jamais livré n'est PAS un produit dont le prix est confirmé.
+  let banniere='';
+  if(c){
+    const bouts=[];
+    if(c.ecartsReels) bouts.push(`<b style="color:var(--warn)">${c.ecartsReels} produit${c.ecartsReels>1?'s':''} au prix différent du dernier bon de livraison</b>`);
+    if(c.ecartsArrondis) bouts.push(`${c.ecartsArrondis} différence${c.ecartsArrondis>1?'s':''} d'arrondi (≤ 1 centime, sans conséquence)`);
+    if(c.nonRapproches) bouts.push(`${c.nonRapproches} produit${c.nonRapproches>1?'s':''} jamais livré${c.nonRapproches>1?'s':''} — prix jamais confronté au réel`);
+    if(c.sansPrixRevente) bouts.push(`${c.sansPrixRevente} sans prix de vente`);
+    if(bouts.length) banniere=`<div style="background:rgba(224,169,58,.10);border:1px solid rgba(224,169,58,.35);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12.5px;line-height:1.6">
+      ⚠️ ${bouts.join(' · ')}<br><span style="color:var(--muted)">Le prix affiché en dessous est celui du dernier bon de livraison. À toi de décider si tu alignes le catalogue — un prix a pu changer volontairement.</span></div>`;
+  }
+
+  let html=`<div class="toolbar"><input id="prod_q" placeholder="Rechercher…" oninput="filterCat()"><div style="flex:1"></div>
+      <select id="merc_mode" style="padding:8px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px">
+        <option value="interne">Mercuriale interne (avec prix d'achat et marge)</option>
+        <option value="client">Tarif client (sans prix d'achat ni marge)</option>
+      </select>
+      <button class="btn ghost" onclick="downloadMercurialeXLSX(val('merc_mode'))" data-tip="Exporter en tableur (.xlsx)" aria-label="Exporter en tableur (.xlsx)">📊 Excel</button>
+      <button class="btn ghost" onclick="downloadMercurialePDF(val('merc_mode'))" data-tip="Exporter en PDF" aria-label="Exporter en PDF">📄 PDF</button>
+      <button class="btn" onclick="openProd()">+ Nouveau produit</button></div>
+    <div style="font-size:11.5px;color:var(--muted);margin:-4px 0 10px">L'export reprend <b>tout</b> le catalogue, groupé par catégorie — la recherche ci-dessus ne filtre que l'affichage.</div>
+    ${banniere}
+    <table class="tbl"><thead><tr><th>Nom</th><th>Catégorie</th><th style="text-align:right">PA HT</th><th style="text-align:right">PV HT</th><th style="text-align:right">Marge</th><th>TVA</th><th>Dernier prix livré</th><th></th></tr></thead><tbody id="catTbody">`;
+
+  S.produits.forEach(p=>{
+    const l=parNom.get(p.nom)||null;
+    const marge=l?(l.marge==null?'<span style="color:var(--muted)">—</span>'
+      :`<span style="color:${l.marge>=0?'var(--ok)':'var(--bad)'}">${eur(l.marge)}${l.marge_pct==null?'':` <span style="color:var(--muted);font-size:11px">${String(l.marge_pct).replace('.',',')} %</span>`}</span>`):'…';
+    // Colonne de contrôle : les DEUX valeurs, catalogue et dernier livré, pour décider sur pièce.
+    let ctrl='<span style="color:var(--muted)">…</span>';
+    if(l){
+      if(!l.rapproche) ctrl='<span style="color:var(--muted)">jamais livré</span>';
+      else{
+        const parts=[];
+        [['revente',l.ecart_revente,'vente'],['achat',l.ecart_achat,'achat']].forEach(([,e,lbl])=>{
+          if(!e)return;
+          const reel=e.type==='reel';
+          parts.push(`<span style="color:${reel?'var(--warn)':'var(--muted)'};font-weight:${reel?700:400}">${lbl} ${eur(e.catalogue)} → ${eur(e.livre)}${reel?'':' <span style="font-size:10px">(arrondi)</span>'}</span>`);
+        });
+        ctrl=parts.length?parts.join('<br>'):'<span style="color:var(--ok)">✓ conforme</span>';
+      }
+    }
+    html+=`<tr data-pn="${String(p.nom).toLowerCase()}">
+      <td><b>${p.nom}</b>${l&&l.sansPrixRevente?' <span style="color:var(--warn);font-size:10.5px">sans prix de vente</span>':''}</td>
+      <td style="color:var(--muted);font-size:12px">${p.cat||'—'}</td>
+      <td style="text-align:right;color:var(--muted)">${p.prix_achat==null?'—':eur(p.prix_achat)}</td>
+      <td style="text-align:right"><b>${p.prix_revente?eur(p.prix_revente):'<span style="color:var(--warn)">—</span>'}</b></td>
+      <td style="text-align:right">${marge}</td>
+      <td>${p.tva==null?'5,5':String(p.tva).replace('.',',')}%</td>
+      <td style="font-size:11.5px">${ctrl}</td>
+      <td style="white-space:nowrap"><button class="btn ghost sm" onclick='openProd(${JSON.stringify(p).replace(/'/g,"&#39;")})' data-tip="Modifier le produit" aria-label="Modifier le produit">✎</button> <button class="btn ghost sm" onclick="delProd('${p.id}')" data-tip="Supprimer le produit" aria-label="Supprimer le produit">✕</button></td></tr>`;
+  });
   html+='</tbody></table>';
   el.innerHTML=html;
 }
