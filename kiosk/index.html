@@ -14,8 +14,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Eatime Kiosk">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.2"></script>
-<script src="../kiosk-shared.js?v=1"></script>
+<script src="../utils.js?v=1.5"></script>
+<script src="../kiosk-shared.js?v=2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -170,7 +170,10 @@ async function init(){
   EatimeKiosk.setupLongPress(document.getElementById('k-snack'), openReconfig);
   EatimeKiosk.initWakeLock();
   EatimeKiosk.watchOnline(renderNetPill);
-  await EatimeKiosk.registerSW();
+  // Occupé : écran de configuration ou de reconfiguration (connexion admin) ouvert.
+  const hubBusy=()=>{const vis=id=>{const e=document.getElementById(id);return e&&!e.classList.contains('hidden');};return vis('setup')||vis('rc_login')||vis('rc_options');};
+  await EatimeKiosk.registerSW({isBusy:hubBusy}); // recharge auto quand aucune config/connexion en cours
+  EatimeKiosk.initHeartbeat({supaUrl:SUPA_URL,anonKey:SUPA_KEY,kioskType:'hub',restaurant_id:SNACK.id,organization_id:SNACK.organization_id});
 }
 
 function renderGrid(){

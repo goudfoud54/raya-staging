@@ -56,6 +56,39 @@
   }
   function exploitationToday(cutoff) { return exploitationDay(Date.now(), cutoff); }
 
+  // ── Kiosques : état d'une tablette + décision de mise à jour auto (logique PURE, testée) ──────
+  // Classe un heartbeat en trois états DISTINCTS (confondre les deux derniers rendrait l'écran
+  // inutilisable comme feu vert au lot 2) :
+  //   'a_jour'    : vue récemment ET exécute la version courante ;
+  //   'ancienne'  : vue récemment MAIS exécute une version dépassée ;
+  //   'muette'    : plus de signe depuis > muteMs (éteinte / hors ligne / en panne) — prime sur tout ;
+  //   'inconnue'  : version courante ou exécutée indéterminée.
+  // row = { running_version, seen_at } ; current = CACHE_VERSION courante ; nowMs, muteMs en ms.
+  function kioskStatus(row, current, nowMs, muteMs) {
+    if (muteMs == null) muteMs = 15 * 60 * 1000;
+    var seen = row && row.seen_at ? Date.parse(row.seen_at) : NaN;
+    var ageMs = isFinite(seen) ? Math.max(0, nowMs - seen) : Infinity;
+    if (ageMs > muteMs) return { state: 'muette', ageMs: ageMs };           // le temps prime
+    var rv = (row && row.running_version) || null;
+    if (!rv || !current) return { state: 'inconnue', ageMs: ageMs };
+    return { state: rv === current ? 'a_jour' : 'ancienne', ageMs: ageMs };
+  }
+
+  // Décision de recharger automatiquement une tablette. C'est l'INVARIANT DE SÉCURITÉ : jamais pendant
+  // qu'un travail est en cours (session/saisie/champ non vidé → isBusy), jamais tant qu'il y a eu une
+  // interaction récente, et pas deux fois coup sur coup (garde-fou anti-boucle sur un mauvais déploiement).
+  // s = { pending, isBusy, lastInteractionMs, lastAutoAt } ; opts = { idleMs, cooldownMs }.
+  function shouldAutoUpdate(s, nowMs, opts) {
+    opts = opts || {};
+    var idleMs = opts.idleMs == null ? 5 * 60 * 1000 : opts.idleMs;
+    var cooldownMs = opts.cooldownMs == null ? 10 * 60 * 1000 : opts.cooldownMs;
+    if (!s || !s.pending) return false;                                     // pas de nouvelle version en attente
+    if (s.isBusy) return false;                                             // travail en cours → jamais
+    if (nowMs - s.lastInteractionMs < idleMs) return false;                 // interaction récente
+    if (s.lastAutoAt && (nowMs - s.lastAutoAt) < cooldownMs) return false;  // anti-boucle
+    return true;
+  }
+
   // Échappement HTML robuste (canonique). NB : ne remplace pas les esc()/escH() locaux divergents.
   function escapeHtml(s) {
     return (s == null ? '' : String(s)).replace(/[<>&"']/g, c =>
@@ -121,7 +154,7 @@
     return { status: r.status, ok: r.ok && j.ok === true, pointage: j.pointage || null, error: j.error || null, retry: j.retry_after_s || null };
   }
 
-  const api = { fmtD, ymdLocal, todayYMD, cutoffToMinutes, exploitationDay, exploitationToday, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
+  const api = { fmtD, ymdLocal, todayYMD, cutoffToMinutes, exploitationDay, exploitationToday, kioskStatus, shouldAutoUpdate, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
   g.EatimeUtils = api;
   // Drop-in globaux :
   if (typeof g.fmtD === 'undefined') g.fmtD = fmtD;
@@ -130,5 +163,7 @@
   if (typeof g.cutoffToMinutes === 'undefined') g.cutoffToMinutes = cutoffToMinutes;
   if (typeof g.exploitationDay === 'undefined') g.exploitationDay = exploitationDay;
   if (typeof g.exploitationToday === 'undefined') g.exploitationToday = exploitationToday;
+  if (typeof g.kioskStatus === 'undefined') g.kioskStatus = kioskStatus;
+  if (typeof g.shouldAutoUpdate === 'undefined') g.shouldAutoUpdate = shouldAutoUpdate;
   g.kioskId = kioskId; g.verifyPin = verifyPin; g.createPointage = createPointage;
 })(window);

@@ -8,8 +8,8 @@
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#c8a035">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.2"></script>
-<script src="../kiosk-shared.js?v=1"></script>
+<script src="../utils.js?v=1.5"></script>
+<script src="../kiosk-shared.js?v=2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--pause:#5b9cff}
@@ -177,7 +177,11 @@ async function init(){
   // Le pointage en cours (modale #act ouverte) bloque le retour auto au hub — jamais interrompre
   // un salarié en train de choisir son action.
   EatimeKiosk.initIdleReturn(10, ()=>!document.getElementById('act').classList.contains('hidden'));
-  await EatimeKiosk.registerSW(); // câble lui-même #updBar si une vraie nouvelle version est détectée
+  // Occupé (jamais recharger) : PIN en cours de frappe, salarié sélectionné, ou modale d'action ouverte
+  // → couvre toute la séquence code → pointage, la seule action réelle non rattrapable.
+  const kioskBusy=()=>(pinBuf&&pinBuf.length>0)||!!curSal||!document.getElementById('act').classList.contains('hidden');
+  await EatimeKiosk.registerSW({isBusy:kioskBusy}); // #updBar + recharge auto quand rien n'est en cours
+  EatimeKiosk.initHeartbeat({supaUrl:SUPA_URL,anonKey:SUPA_KEY,kioskType:'badgeuse',restaurant_id:SNACK.id,organization_id:SNACK.organization_id});
 }
 
 function renderNetPill(online){

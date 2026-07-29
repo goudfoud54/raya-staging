@@ -111,11 +111,74 @@
     document.body.classList.add('upd-open'); // réserve l'espace en bas — ne masque jamais les boutons d'action
   }
 
-  async function registerSW() {
+  // ── Mise à jour automatique quand rien n'est en cours ─────────────────────────────────────────
+  let _swReg = null;          // registration courante (le heartbeat y lit un éventuel worker "waiting")
+  let _autoArmed = false;     // n'arme le minuteur d'auto-update qu'une seule fois
+  const AUTO_KEY = 'eatime_last_autoupdate';
+
+  // Un champ de saisie contient du texte non enregistré → occupé (ne JAMAIS recharger par-dessus).
+  function hasUnsavedInput() {
+    const el = document.activeElement;
+    return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && String(el.value || '').trim() !== '');
+  }
+
+  // Quand une VRAIE nouvelle version est en attente : recharge automatiquement dès que rien n'est en
+  // cours (isBusy du module OU champ non vidé) ET après un délai d'inactivité, avec un garde-fou
+  // anti-boucle (localStorage). L'invariant de décision est PUR et testé : EatimeUtils.shouldAutoUpdate.
+  // La bannière manuelle reste toujours active en parallèle (l'utilisateur peut recharger tout de suite).
+  function armAutoUpdate(reg, isBusy) {
+    if (_autoArmed) return;
+    _autoArmed = true;
+    let last = Date.now();
+    const bump = () => { last = Date.now(); };
+    ['pointerdown', 'keydown', 'touchstart'].forEach(ev => document.addEventListener(ev, bump, { passive: true }));
+    setInterval(() => {
+      if (!reg.waiting) return;                 // plus rien en attente (déjà activé)
+      const decide = g.EatimeUtils && g.EatimeUtils.shouldAutoUpdate;
+      if (!decide) return;                      // utils absent → on laisse la bannière manuelle
+      const busy = hasUnsavedInput() || !!(isBusy && isBusy());
+      let lastAutoAt = null;
+      try { const v = localStorage.getItem(AUTO_KEY); if (v) lastAutoAt = +v; } catch (e) {}
+      if (!decide({ pending: true, isBusy: busy, lastInteractionMs: last, lastAutoAt: lastAutoAt }, Date.now())) return;
+      try { localStorage.setItem(AUTO_KEY, String(Date.now())); } catch (e) {}
+      try { reg.waiting.postMessage('SKIP_WAITING'); } catch (e) {}
+      setTimeout(() => location.reload(), 4000); // filet : controllerchange recharge normalement avant
+    }, 30000);
+  }
+
+  // ── Heartbeat : signale l'état de la tablette via l'edge kiosk-ping (service_role) — jamais d'écriture
+  // anon directe. running_version = CACHE_VERSION du SW ACTIF (code exécuté) ; update_staged = version
+  // d'un SW "waiting" (nouvelle version téléchargée, en attente). Démarrage + toutes les 5 min. Silencieux
+  // en cas d'échec (ne bloque jamais le kiosque).
+  const HEARTBEAT_MS = 5 * 60 * 1000;
+  async function reportHeartbeat(cfg) {
+    try {
+      const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
+      const running = controller ? await askVersion(controller) : null;
+      const staged = (_swReg && _swReg.waiting) ? await askVersion(_swReg.waiting) : null;
+      await fetch(cfg.supaUrl + '/functions/v1/kiosk-ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.anonKey, apikey: cfg.anonKey },
+        body: JSON.stringify({
+          organization_id: cfg.organization_id, restaurant_id: cfg.restaurant_id,
+          kiosk_type: cfg.kioskType, running_version: running, update_staged: staged,
+        }),
+      });
+    } catch (e) {}
+  }
+  function initHeartbeat(cfg) {
+    if (!cfg || !cfg.supaUrl || !cfg.restaurant_id || !cfg.organization_id || !cfg.kioskType) return;
+    reportHeartbeat(cfg);
+    setInterval(() => reportHeartbeat(cfg), HEARTBEAT_MS);
+  }
+
+  async function registerSW(opts) {
+    opts = opts || {};
     if (!('serviceWorker' in navigator)) return null;
     const root = siteRoot();
     try {
       const reg = await navigator.serviceWorker.register(root + 'sw.js', { scope: root });
+      _swReg = reg;
 
       // Compare la VERSION RÉELLE (postMessage) du worker "waiting" contre celle actuellement
       // active avant d'afficher quoi que ce soit. `reg.waiting` seul ne suffit pas : un serveur
@@ -136,6 +199,7 @@
         const [waitingV, activeV] = await Promise.all([askVersion(waitingWorker), askVersion(activeWorkerAtStart)]);
         if (!waitingV || !activeV || waitingV === activeV) return;
         wireUpdateBanner(reg);
+        armAutoUpdate(reg, opts.isBusy); // + recharge auto quand rien n'est en cours
       }
 
       if (reg.waiting) checkRealUpdate();
@@ -213,6 +277,8 @@
   g.EatimeKiosk = {
     getSnackConfig, setSnackConfig, clearSnackConfig,
     registerSW,
+    initHeartbeat,
+    hasUnsavedInput,
     initWakeLock,
     watchOnline,
     setupLongPress,

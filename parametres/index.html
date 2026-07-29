@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=1"></script>
 <script src="../alertes.js?v=1"></script>
+<script src="../utils.js?v=1.5"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -79,7 +80,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Paramètres · v0.3 — journée d'exploitation (heure de bascule par organisation)</small></div>
+    <div class="brand">Eatime360 <small>· Paramètres · v0.4 — onglet Tablettes (versions kiosques : à jour / ancienne / muette)</small></div>
     <div style="display:flex;gap:8px">
       <a href="../" class="btn ghost">Portail</a>
       <button class="btn ghost" onclick="logout()">↩</button>
@@ -94,6 +95,7 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
       <button class="tab" data-tab="restaurants" onclick="setTab('restaurants')">🏪 Restaurants</button>
       <button class="tab" data-tab="permissions" onclick="setTab('permissions')">🔐 Permissions</button>
       <button class="tab" data-tab="integrations" onclick="setTab('integrations')">🔌 Intégrations</button>
+      <button class="tab" data-tab="tablettes" onclick="setTab('tablettes')">🖥 Tablettes</button>
       <button class="tab hidden" id="tab_superadmin" data-tab="superadmin" onclick="setTab('superadmin')">🛡 Super admin</button>
     </div>
 
@@ -376,6 +378,15 @@ table.perms input[type=checkbox]{cursor:pointer;width:16px;height:16px}
     </div>
     </div>
 
+    <!-- ─────────── ONGLET TABLETTES ─────────── -->
+    <div class="tab-pane" data-pane="tablettes">
+      <div class="section">
+        <h3>🖥 Tablettes (kiosques)</h3>
+        <div style="color:var(--muted);font-size:12.5px;margin-bottom:12px">État de chaque tablette : la version qu'elle exécute réellement, une éventuelle mise à jour en attente, et son dernier signe de vie. Les tablettes se mettent à jour toutes seules quand rien n'est en cours ; cet écran permet de le vérifier — et de repérer une tablette éteinte ou en panne.</div>
+        <div id="tabletsList"><div style="color:var(--muted)">Chargement…</div></div>
+      </div>
+    </div>
+
     <!-- ─────────── ONGLET SUPER ADMIN ─────────── -->
     <div class="tab-pane" data-pane="superadmin">
 
@@ -502,7 +513,7 @@ async function loadProfileAndShow(){
     loadWaUserStatus();
   }
   // Onglet par défaut : lien direct #onglet (ex. depuis le planning) > dernière vue > Apparence
-  const validTabs=['apparence','organisation','societe','utilisateurs','restaurants','permissions','integrations','superadmin'];
+  const validTabs=['apparence','organisation','societe','utilisateurs','restaurants','permissions','integrations','tablettes','superadmin'];
   const hashTab=(location.hash||'').replace('#','');
   const last=validTabs.includes(hashTab)?hashTab:(localStorage.getItem('parametres_tab')||'apparence');
   setTab(last);
@@ -511,7 +522,50 @@ function setTab(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('active',p.dataset.pane===name));
   localStorage.setItem('parametres_tab',name);
+  if(name==='tablettes') renderTablettes();
   window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ─────────── ONGLET TABLETTES (marqueur de version des kiosques) ───────────
+// La version « courante » = la CACHE_VERSION réellement déployée, lue directement dans sw.js (hors
+// périmètre du service worker → lecture réseau fiable). On la compare à ce que chaque tablette exécute.
+async function fetchCurrentKioskVersion(){
+  try{ const r=await fetch('../sw.js',{cache:'no-store'}); const t=await r.text(); const m=t.match(/CACHE_VERSION\s*=\s*'([^']+)'/); return m?m[1]:null; }catch(e){ return null; }
+}
+function _ageLabel(ms){
+  if(!isFinite(ms)) return 'jamais';
+  const min=Math.round(ms/60000);
+  if(min<1) return "à l'instant"; if(min<60) return min+' min';
+  const h=Math.round(min/60); if(h<24) return h+' h'; return Math.round(h/24)+' j';
+}
+async function renderTablettes(){
+  const host=document.getElementById('tabletsList'); if(!host) return;
+  host.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
+  const current=await fetchCurrentKioskVersion();
+  // RLS scope la lecture à l'organisation de l'utilisateur (super_admin voit tout).
+  const{data,error}=await sb.from('kiosk_heartbeats').select('*, restaurants:restaurant_id(nom)').order('kiosk_type');
+  if(error){host.innerHTML='<div style="color:var(--warn)">Erreur : '+error.message+'</div>';return;}
+  const rows=data||[];
+  if(!rows.length){host.innerHTML='<div style="color:var(--muted)">Aucune tablette n\'a encore signalé sa présence. Après déploiement, chaque kiosque se signale au démarrage puis toutes les 5 min.</div>';return;}
+  const now=Date.now();
+  const TYPE_LBL={badgeuse:'Badgeuse',stock:'Stock',haccp:'HACCP',hub:'Accueil'};
+  const STATE={a_jour:{t:'✅ à jour',c:'var(--ok)'},ancienne:{t:'⚠️ version ancienne',c:'var(--warn)'},muette:{t:'🔇 muette',c:'#e06a5a'},inconnue:{t:'· indéterminée',c:'var(--muted)'}};
+  let html=`<div style="color:var(--muted);font-size:12px;margin-bottom:8px">Version déployée actuelle : <b>${current||'inconnue (lecture de sw.js impossible)'}</b></div>
+  <table class="tbl"><thead><tr><th>Restaurant</th><th>Kiosque</th><th>État</th><th>Exécute</th><th>Dernier signe</th><th></th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const s=kioskStatus(r,current,now); const meta=STATE[s.state]||STATE.inconnue;
+    const staged=(s.state==='ancienne'&&r.update_staged)?` <span style="color:var(--muted);font-size:11px">(${r.update_staged} téléchargée, en attente)</span>`:'';
+    const seen=(s.state==='muette')?`<span style="color:${STATE.muette.c};font-weight:600">depuis ${_ageLabel(s.ageMs)}</span>`:('il y a '+_ageLabel(now-Date.parse(r.seen_at)));
+    html+=`<tr><td><b>${r.restaurants?.nom||'?'}</b></td><td>${TYPE_LBL[r.kiosk_type]||r.kiosk_type}</td><td style="color:${meta.c};font-weight:600">${meta.t}</td><td style="font-size:12px">${r.running_version||'—'}${staged}</td><td style="font-size:12px;color:var(--muted)">${seen}</td><td><button class="btn ghost sm" onclick="delTablet('${r.id}')">Retirer</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  host.innerHTML=html;
+}
+async function delTablet(id){
+  if(!confirm('Retirer cette tablette de la liste ?\nSi elle est encore en service, elle réapparaîtra à son prochain signalement (dans quelques minutes).')) return;
+  const{error}=await sb.from('kiosk_heartbeats').delete().eq('id',id);
+  if(error){toast('Erreur : '+error.message);return;}
+  renderTablettes();
 }
 
 // ─────────── ONGLET SOCIÉTÉ (identité légale + signature) ───────────

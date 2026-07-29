@@ -8,8 +8,8 @@
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#c8a035">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.2"></script>
-<script src="../kiosk-shared.js?v=1"></script>
+<script src="../utils.js?v=1.5"></script>
+<script src="../kiosk-shared.js?v=2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 .hidden{display:none!important}
@@ -93,7 +93,8 @@ async function init(){
   EatimeKiosk.initWakeLock();
   EatimeKiosk.watchOnline(renderNetPill);
   EatimeKiosk.initIdleReturn(10, ()=>!!SALARIE);
-  await EatimeKiosk.registerSW();
+  await EatimeKiosk.registerSW({isBusy:()=>(PIN&&PIN.length>0)||!!SALARIE}); // recharge auto quand rien n'est en cours (les formulaires HACCP n'existent qu'avec SALARIE)
+  EatimeKiosk.initHeartbeat({supaUrl:SUPA_URL,anonKey:SUPA_KEY,kioskType:'haccp',restaurant_id:SNACK_ID,organization_id:SNACK_ORG});
 }
 function renderNetPill(online){
   const el=document.getElementById('net-pill');
