@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#c8a035">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.2"></script>
+<script src="../utils.js?v=1.3"></script>
 <script src="../kiosk-shared.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -112,7 +112,7 @@ async function init(){
 // partiel (réseau capricieux) ne doit jamais vider l'inventaire sous les pieds d'un salarié qui vient
 // de s'authentifier — on garde alors les données précédemment chargées.
 async function loadStockData(){
-  const today=new Date().toISOString().slice(0,10);
+  const today=todayYMD(); // jour métier local — même base que date_saisie écrit + l'alerte stock
   const[p,m,s,c]=await Promise.all([
     sb.from('stock_produits').select('*').eq('actif',true).eq('organization_id',SNACK.organization_id).order('categorie').order('nom'),
     sb.from('stock_max').select('*').eq('actif',true).eq('restaurant_id',SNACK_ID),
@@ -260,7 +260,7 @@ async function saveSaisie(pid,vTxt){
     // pour ne pas le perdre si le salarié a écrit la remarque avant de saisir la quantité.
     const cf=document.querySelector(`.cmt-field[data-pid="${pid}"]`);
     const commentaire=cf?((cf.value||'').trim()||null):null;
-    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,commentaire,date_saisie:new Date().toISOString().slice(0,10)}).select().single();
+    const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,commentaire,date_saisie:todayYMD()}).select().single();
     if(error){markSaisieError(pid);return;}
     SAISIES_TODAY[pid]=data;
   }
@@ -290,7 +290,7 @@ async function saveComment(pid,txt){
   const qInp=document.querySelector(`input.prod-input[data-pid="${pid}"]`);
   const qv=parseFloat((qInp&&qInp.value||'').replace(',','.'));
   if(isNaN(qv)){ markCmtHint(pid,'Saisis d\'abord la quantité pour enregistrer ce commentaire'); return; }
-  const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:qv,commentaire:comment,date_saisie:new Date().toISOString().slice(0,10)}).select().single();
+  const{data,error}=await sb.from('stock_saisies').insert({organization_id:SNACK.organization_id,restaurant_id:SNACK.id,produit_id:pid,quantite:qv,commentaire:comment,date_saisie:todayYMD()}).select().single();
   if(error){markCmtHint(pid,'⚠ Commentaire non enregistré (réseau ?)');return;}
   SAISIES_TODAY[pid]=data;clearCmtHint(pid);refreshCounters(pid);markCmtSaved(pid);
 }
@@ -306,7 +306,7 @@ function clearCmtHint(pid){ const w=document.getElementById('cmt-'+pid); if(!w)r
 // considéré saisi quand la remarque est non vide ; vider le champ supprime la saisie (comme une qté).
 async function saveCommentOnly(pid,txt){
   const comment=(txt||'').trim();
-  const d=new Date().toISOString().slice(0,10);
+  const d=todayYMD(); // date_saisie = jour métier local (pas UTC)
   if(!comment){
     if(SAISIES_TODAY[pid]){
       const{error}=await sb.from('stock_saisies').delete().eq('id',SAISIES_TODAY[pid].id);

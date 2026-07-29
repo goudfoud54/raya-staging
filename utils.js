@@ -10,6 +10,17 @@
   // Date courte FR — impl identique à facturation/finance/haccp/moi/stock (drop-in `fmtD`).
   function fmtD(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('fr-FR'); }
 
+  // Jour « métier » (date d'exploitation) au fuseau de l'app, en 'YYYY-MM-DD'. Force Europe/Paris —
+  // EXACTEMENT comme l'edge check-stock-alerts (toLocaleDateString('fr-CA',{timeZone:'Europe/Paris'})),
+  // donc les écritures de `date_saisie` et l'alerte partagent le MÊME jour, par construction.
+  // ⚠️ Ne PAS utiliser `new Date().toISOString().slice(0,10)` pour un jour métier : ça renvoie le jour
+  // UTC, décalé la nuit (entre minuit et ~02h à Paris, il renvoie la VEILLE). Piège documenté dans
+  // CLAUDE.md. Ici : logique pure, déterministe quel que soit le fuseau de l'appareil, et testée
+  // (tests/datelocal_test.js). Si un jour l'app dépasse la France, remplacer APP_TZ par un réglage org.
+  var APP_TZ = 'Europe/Paris';
+  function ymdLocal(d) { return new Date(d == null ? Date.now() : d).toLocaleDateString('fr-CA', { timeZone: APP_TZ }); }
+  function todayYMD() { return ymdLocal(Date.now()); }
+
   // Échappement HTML robuste (canonique). NB : ne remplace pas les esc()/escH() locaux divergents.
   function escapeHtml(s) {
     return (s == null ? '' : String(s)).replace(/[<>&"']/g, c =>
@@ -75,9 +86,11 @@
     return { status: r.status, ok: r.ok && j.ok === true, pointage: j.pointage || null, error: j.error || null, retry: j.retry_after_s || null };
   }
 
-  const api = { fmtD, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
+  const api = { fmtD, ymdLocal, todayYMD, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
   g.EatimeUtils = api;
   // Drop-in globaux :
   if (typeof g.fmtD === 'undefined') g.fmtD = fmtD;
+  if (typeof g.ymdLocal === 'undefined') g.ymdLocal = ymdLocal;
+  if (typeof g.todayYMD === 'undefined') g.todayYMD = todayYMD;
   g.kioskId = kioskId; g.verifyPin = verifyPin; g.createPointage = createPointage;
 })(window);

@@ -7,7 +7,7 @@
 <title>Eatime360 — Stock</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=1"></script>
-<script src="../utils.js?v=1.2"></script>
+<script src="../utils.js?v=1.3"></script>
 <link rel="stylesheet" href="../ui.css?v=1">
 <script src="../ui.js?v=1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -131,7 +131,7 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Stock · v0.7 — info-bulles maison sur tous les title restants (badges, cases, sélecteurs)</small></div>
+    <div class="brand">Eatime360 <small>· Stock · v0.8 — filtre Historique corrigé (barre d'outils vs liste) + dates métier en jour local (fin du décalage UTC)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -238,9 +238,9 @@ function wrapTables(){
 
 async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
-  const today=new Date().toISOString().slice(0,10);
+  const today=todayYMD();
   const since=new Date();since.setDate(since.getDate()-30);
-  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',since.toISOString().slice(0,10)).order('date_saisie',{ascending:false});
+  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',ymdLocal(since)).order('date_saisie',{ascending:false});
   const SL=saisies||[];
   const last={};SL.forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
   const aujourdhui=SL.filter(s=>s.date_saisie===today);
@@ -276,7 +276,7 @@ async function renderDashboard(el){
 }
 
 async function renderSaisie(el){
-  const today=new Date().toISOString().slice(0,10);
+  const today=todayYMD();
   const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today);
   const byProd={};(saisies||[]).forEach(s=>{byProd[s.produit_id]=s;});S.saisiesAujourdhui=byProd;
   const max={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>max[m.produit_id]=m);
@@ -316,7 +316,7 @@ async function renderSaisie(el){
 function filterSaisie(){const q=val('saisie_search').toLowerCase();document.querySelectorAll('[data-pname]').forEach(tr=>{tr.style.display=tr.dataset.pname.includes(q)?'':'none';});}
 async function saveSaisie(pid,vTxt){
   const v=parseFloat((vTxt||'').replace(',','.'));
-  const d=new Date().toISOString().slice(0,10);
+  const d=todayYMD(); // date_saisie = jour métier local (pas UTC : sinon décalé la nuit)
   // Chaque écriture est contrôlée : avant, UPDATE/DELETE avalaient l'erreur et le toast "✓ Saisi"
   // s'affichait quand même → l'admin croyait une saisie enregistrée alors que la base n'avait rien reçu.
   if(isNaN(v)){
@@ -608,7 +608,7 @@ async function exportBesoinPDF(){
       theme:'grid',styles:{fontSize:8,overflow:'linebreak'},margin:{left:14,right:16},headStyles:{fillColor:[200,160,53]}});
     y=doc.lastAutoTable.finalY+8;
   }
-  doc.save(`Besoin_${(multi?'groupe':titre.replace(/\s+/g,'_'))}_${new Date().toISOString().slice(0,10)}.pdf`);
+  doc.save(`Besoin_${(multi?'groupe':titre.replace(/\s+/g,'_'))}_${todayYMD()}.pdf`);
 }
 
 function renderProduits(el){
@@ -776,17 +776,28 @@ async function saveMax(pid,vTxt){
   toast('✓');
 }
 
+// La barre d'outils (dates, produit, recherche) n'est rendue qu'UNE fois, à l'ouverture de l'onglet.
+// Le bouton « Filtrer » n'appelle PLUS renderHistorique (qui reconstruisait ses propres champs et
+// écrasait les dates/produit AVANT de les lire — bug patron) mais loadHistorique(), qui ne touche
+// que #histList. Dates par défaut en jour métier local (todayYMD/ymdLocal), pas en jour UTC.
 async function renderHistorique(el){
   el.innerHTML=`<div class="toolbar">
-    <input type="date" id="hist_from" value="${new Date(Date.now()-30*86400000).toISOString().slice(0,10)}">
+    <input type="date" id="hist_from" value="${ymdLocal(Date.now()-30*86400000)}">
     <span style="color:var(--muted)">→</span>
-    <input type="date" id="hist_to" value="${new Date().toISOString().slice(0,10)}">
+    <input type="date" id="hist_to" value="${todayYMD()}">
     <select id="hist_prod"><option value="">Tous produits</option>${S.produits.map(p=>`<option value="${p.id}">${p.nom}</option>`).join('')}</select>
-    <button class="btn sm" onclick="renderHistorique(document.getElementById('content'))">Filtrer</button>
+    <button class="btn sm" onclick="loadHistorique()">Filtrer</button>
     <input id="hist_search" placeholder="🔍 Rechercher un produit…" oninput="filterHistorique()">
     <div style="flex:1"></div>
     <button class="btn ghost sm" onclick="genererSnapshotMensuel()" data-tip="Agrège les saisies du mois précédent en snapshot et libère stock_saisies">📸 Snapshot mensuel</button>
   </div><div id="histList">Chargement…</div>`;
+  await loadHistorique();
+}
+// Charge UNIQUEMENT la liste (#histList) selon les critères courants de la barre d'outils. Séparé du
+// rendu de la barre pour que « Filtrer » ne réinitialise pas les champs qu'il vient de lire.
+async function loadHistorique(){
+  const host=document.getElementById('histList'); if(!host) return; // barre pas encore rendue
+  host.innerHTML='Chargement…';
   let q=sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',val('hist_from')).lte('date_saisie',val('hist_to')).order('date_saisie',{ascending:false}).limit(500);
   if(val('hist_prod')) q=q.eq('produit_id',val('hist_prod'));
   const{data}=await q;const list=data||[];
@@ -794,7 +805,8 @@ async function renderHistorique(el){
   if(!list.length) html+='<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px">Aucune saisie sur la période</td></tr>';
   else list.forEach(s=>{const p=S.produits.find(x=>x.id===s.produit_id);const cmt=s.commentaire?String(s.commentaire).replace(/</g,'&lt;'):'';const qte=s.quantite==null?'<span style="color:var(--muted)">—</span>':s.quantite;const pname=(p?.nom||'(supprimé)').toLowerCase().replace(/"/g,'');html+=`<tr data-pname="${pname}"><td>${fmtD(s.date_saisie)}</td><td><b>${p?.nom||'(supprimé)'}</b>${cmt?`<div style="font-size:11px;color:var(--warn);margin-top:2px">💬 ${cmt}</div>`:''}</td><td>${qte}</td><td style="color:var(--muted);font-size:12px">${p?.categorie||''}</td></tr>`;});
   html+='</tbody></table>';
-  document.getElementById('histList').innerHTML=html;
+  host.innerHTML=html;
+  filterHistorique(); // ré-applique la recherche texte courante (elle survit au rechargement de liste)
 }
 // Recherche texte libre côté client sur les lignes déjà rendues (pas de re-requête serveur) — même
 // pattern que filterMax()/filterBesoin(). Le <select> "Tous produits" filtre côté serveur ; ceci
@@ -808,8 +820,11 @@ function filterHistorique(){
 async function genererSnapshotMensuel(){
   if(!confirm('Générer un snapshot du mois précédent et purger les saisies détaillées correspondantes ?\nLes données restent consultables sous forme agrégée.'))return;
   const now=new Date();const lastMonth=new Date(now.getFullYear(),now.getMonth()-1,1);
-  const monthStart=lastMonth.toISOString().slice(0,10);
-  const monthEnd=new Date(now.getFullYear(),now.getMonth(),0).toISOString().slice(0,10);
+  // Bornes du mois précédent en jour métier local. AVANT (toISOString) : décalées d'un jour — le début
+  // tombait sur le 30 du mois d'avant et la fin sur l'avant-dernier jour → le DERNIER jour du mois était
+  // exclu de l'agrégat ET laissé non purgé. ymdLocal corrige les deux bornes.
+  const monthStart=ymdLocal(lastMonth);
+  const monthEnd=ymdLocal(new Date(now.getFullYear(),now.getMonth(),0));
   toast('Génération du snapshot…');
   const{data:saisiesAll}=await sb.from('stock_saisies').select('*').eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd);
   // Le snapshot est NUMÉRIQUE → on n'agrège que les saisies avec quantité. Les saisies « commentaire
@@ -822,7 +837,7 @@ async function genererSnapshotMensuel(){
   await sb.from('stock_snapshots_mensuels').upsert(snaps,{onConflict:'organization_id,restaurant_id,produit_id,annee,mois'});
   await sb.from('stock_saisies').delete().eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd).not('quantite','is',null);
   toast(`✓ Snapshot ${snaps.length} lignes · ${saisies.length} saisies purgées`);
-  renderHistorique(document.getElementById('content'));
+  loadHistorique(); // recharge la liste en conservant les critères (barre d'outils déjà en place)
 }
 
 function closeModal(){document.getElementById('modalHost').innerHTML='';}

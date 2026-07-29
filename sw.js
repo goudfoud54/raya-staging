@@ -13,7 +13,7 @@
 //     passe en "waiting" et n'active jamais tant que la page ne l'a pas explicitement demandé
 //     (message SKIP_WAITING), donc jamais de rechargement forcé pendant une saisie en cours.
 
-const CACHE_VERSION = 'eatime-kiosk-v8';
+const CACHE_VERSION = 'eatime-kiosk-v9';
 
 const SCOPED_DIRS = ['kiosk/', 'badgeuse/', 'stock-kiosk/', 'haccp-kiosk/'];
 
