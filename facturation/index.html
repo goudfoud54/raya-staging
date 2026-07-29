@@ -94,7 +94,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.6 — bons de livraison : création/édition, détail, marge, verrou si facturé (bl_ids = source unique)</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.7 — facture par regroupement de bons + lignes à l'écran (même source que le PDF)</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -233,19 +233,26 @@ function filterFactures(){renderFacturesList();}
 async function openFacture(id){
   const{data:f}=await sb.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
   if(!f){toast('Facture introuvable');return;}
-  // Lignes détaillées depuis la table relationnelle (factures.lignes n'existe pas — A2)
-  const{data:fl}=await sb.from('factures_lignes').select('*').eq('facture_id',id).order('ordre');
-  const lignes=fl||[];
+  const model=await buildFactureModel(f); // MÊME chemin que le PDF (buildFactureModel → factureModel) : écran = PDF
   const paiements=f.fact_paiements||[];
   const totPaye=encaisseFacture(f);
   const restant=Math.max(0,Number(f.total_ttc)-totPaye);
+  // Lignes regroupées par bon de livraison (comme le PDF), ou à plat pour une facture manuelle.
+  const lignesHtml=model.groups.length?model.groups.map(g=>{
+    const head=g.titre?`<tr><td colspan="5" style="background:var(--surface);font-weight:600;color:var(--gold);font-size:12px;padding:6px 8px">${g.titre}</td></tr>`:'';
+    return head+g.lignes.map(l=>`<tr><td>${l.nom||'?'}</td><td style="text-align:right">${l.qte}</td><td style="text-align:right">${eur(l.puHT)}</td><td style="text-align:center">${_fmtTva(l.tva)}</td><td style="text-align:right"><b>${eur(l.totalHT)}</b></td></tr>`).join('');
+  }).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--muted)">Aucune ligne</td></tr>';
+  // Ventilation TVA seulement si elle se reconcilie au centime (même garde-fou que le PDF) ; sinon dire pourquoi.
+  const tvaHtml=model.tvaReconciles
+    ?Object.values(model.tvaByRate).sort((a,b)=>a.taux-b.taux).map(t=>`<div style="color:var(--muted);font-size:12.5px">TVA ${_fmtTva(t.taux)} sur ${eur(t.base)} HT : <b>${eur(t.montant)}</b></div>`).join('')
+    :`<div style="color:var(--warn);font-size:12px">Ventilation par taux non affichée : certaines lignes n'ont pas de taux de TVA (bon antérieur au réglage). TVA globale : <b>${eur(model.tvaStockee)}</b>.</div>`;
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:880px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">
-      <div><h2 style="font-size:20px;margin-bottom:4px">Facture ${f.numero}</h2><div style="color:var(--muted);font-size:13px">${f.clients?.nom||'—'} · ${fmtD(f.date_facture)}</div></div>
+      <div><h2 style="font-size:20px;margin-bottom:4px">Facture ${f.numero}</h2><div style="color:var(--muted);font-size:13px">${f.clients?.nom||'—'} · ${fmtD(f.date_facture)}${f.bl_ids&&f.bl_ids.length?` · ${f.bl_ids.length} bon${f.bl_ids.length>1?'s':''}`:''}</div></div>
       <div style="text-align:right">
         <div style="font-size:24px;font-weight:800">${eur(f.total_ttc)}</div>
         <div style="color:var(--muted);font-size:12px">HT ${eur(f.total_ht)}</div>
-        <span class="badge ${f.statut==='paye'?'ok':f.statut==='partiel'?'warn':'info'}" style="margin-top:6px">${STATUTS[f.statut]}</span>
+        <span class="badge ${f.statut==='paye'?'ok':f.statut==='partiel'?'warn':f.statut==='annulee'?'bad':'info'}" style="margin-top:6px">${STATUTS[f.statut]}</span>
       </div>
     </div>
     <div class="grid2" style="margin-bottom:14px">
@@ -253,9 +260,8 @@ async function openFacture(id){
       <div class="kpi"><div class="lbl">Reste dû</div><div class="val" style="font-size:18px;color:${restant>0?'var(--warn)':'var(--ok)'}">${eur(restant)}</div></div>
     </div>
     <div class="section"><h3>Lignes</h3>
-      <table class="tbl"><thead><tr><th>Désignation</th><th>Qté</th><th>PU HT</th><th>TVA</th><th>Total HT</th></tr></thead><tbody>
-      ${lignes.map(l=>`<tr><td>${l.nom||l.designation||'?'}</td><td>${l.qte||l.quantite||1}</td><td>${eur(l.pu_ht||l.prix_unitaire_ht)}</td><td>${l.tva||l.tva_pct||5.5}%</td><td><b>${eur((l.qte||l.quantite||1)*(l.pu_ht||l.prix_unitaire_ht||0))}</b></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--muted)">Pas de lignes détaillées (ancien format BL)</td></tr>'}
-      </tbody></table>
+      <table class="tbl"><thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th style="text-align:right">PU HT</th><th style="text-align:center">TVA</th><th style="text-align:right">Total HT</th></tr></thead><tbody>${lignesHtml}</tbody></table>
+      <div style="text-align:right;margin-top:10px">${tvaHtml}<div style="margin-top:5px;font-size:14px">Total HT <b>${eur(model.totalHT)}</b> · Total TTC <b style="color:var(--gold)">${eur(model.totalTTC)}</b></div></div>
     </div>
     <div class="section"><h3>Paiements (${paiements.length})</h3>
       <table class="tbl"><thead><tr><th>Date</th><th>Mode</th><th>Référence</th><th>Montant</th><th></th></tr></thead><tbody>
@@ -315,26 +321,106 @@ async function annulerFacture(id){
 }
 
 let CURRENT_LIGNES=[];
-function openFactureForm(){
-  CURRENT_LIGNES=[{designation:'',quantite:1,prix_unitaire_ht:0,tva_pct:S.fparam?.tva_defaut||5.5}];
+let NF_MODE='bons', NF_BONS=[], NF_CLIENT_BONS=[], NF_INDEX=null;
+async function openFactureForm(){
+  NF_MODE='bons'; NF_BONS=[];
+  CURRENT_LIGNES=[{designation:'',quantite:1,prix_unitaire_ht:0,tva_pct:S.fparam?.tva_defaut||5.5}]; // pour le mode manuel
+  // Charge bons + factures pour proposer les bons NON facturés (dérivation blEditable — bl_ids source unique).
+  const [blR,facR]=await Promise.all([
+    sb.from('bons_livraison').select('*,clients(nom)').eq('organization_id',ORG.id).order('date_livraison',{ascending:false}),
+    sb.from('factures').select('id,numero,statut,bl_ids').eq('organization_id',ORG.id),
+  ]);
+  S.bls=blR.data||[]; NF_INDEX=blFactureIndex(facR.data||[]);
   const today=new Date().toISOString().slice(0,10);
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:920px">
     <h2>Nouvelle facture</h2>
     <div class="grid2">
-      <div class="fld"><label>Client *</label><select id="nf_cl">${S.clients.map(c=>`<option value="${c.id}">${c.nom}</option>`).join('')}</select></div>
+      <div class="fld"><label>Client *</label><select id="nf_cl" onchange="onNFClientChange()">${S.clients.map(c=>`<option value="${c.id}">${c.nom}</option>`).join('')}</select></div>
       <div class="fld"><label>Date facture</label><input type="date" id="nf_date" value="${today}"></div>
     </div>
-    <h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 10px;font-weight:600">Lignes</h3>
-    <div id="nf_lignes"></div>
-    <button class="btn ghost sm" onclick="addLigne()" style="margin-top:8px">+ Ajouter une ligne</button>
-    <div style="text-align:right;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:14px">
-      <div>Total HT : <b id="nf_tHT">0,00 €</b></div>
-      <div>TVA : <b id="nf_tTVA">0,00 €</b></div>
-      <div style="font-size:18px;margin-top:6px">Total TTC : <b id="nf_tTTC" style="color:var(--gold)">0,00 €</b></div>
+    <div style="display:flex;gap:8px;margin:14px 0 4px">
+      <button class="btn ghost sm" id="mode_bons" onclick="setFactureMode('bons')">📦 Regrouper des bons</button>
+      <button class="btn ghost sm" id="mode_manuel" onclick="setFactureMode('manuel')">✎ Saisie manuelle</button>
     </div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveFacture()">Créer la facture</button></div>
+    <div id="nf_body"></div>
   </div></div>`;
-  renderLignes();
+  onNFClientChange();
+  setFactureMode('bons');
+}
+function setFactureMode(m){
+  NF_MODE=m;
+  const b=document.getElementById('mode_bons'), man=document.getElementById('mode_manuel');
+  if(b) b.classList.toggle('active',m==='bons'); if(man) man.classList.toggle('active',m==='manuel');
+  renderFactureMode();
+}
+function onNFClientChange(){
+  const cid=val('nf_cl');
+  NF_CLIENT_BONS=(S.bls||[]).filter(b=>b.client_id===cid && blEditable(b.id,NF_INDEX)); // uniquement non facturés
+  NF_BONS=NF_BONS.filter(id=>NF_CLIENT_BONS.some(b=>b.id===id)); // purge une sélection d'un autre client
+  if(NF_MODE==='bons') renderFactureMode();
+}
+function renderFactureMode(){
+  const body=document.getElementById('nf_body'); if(!body) return;
+  if(NF_MODE==='manuel'){
+    body.innerHTML=`<h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 10px;font-weight:600">Lignes</h3>
+      <div id="nf_lignes"></div>
+      <button class="btn ghost sm" onclick="addLigne()" style="margin-top:8px">+ Ajouter une ligne</button>
+      <div style="text-align:right;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:14px">
+        <div>Total HT : <b id="nf_tHT">0,00 €</b></div>
+        <div>TVA : <b id="nf_tTVA">0,00 €</b></div>
+        <div style="font-size:18px;margin-top:6px">Total TTC : <b id="nf_tTTC" style="color:var(--gold)">0,00 €</b></div>
+      </div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveFacture()">Créer la facture</button></div>`;
+    renderLignes();
+    return;
+  }
+  // Mode « regrouper des bons » (le flux réel du patron)
+  const bons=NF_CLIENT_BONS||[];
+  if(!bons.length){
+    body.innerHTML=`<div style="color:var(--muted);padding:16px;text-align:center">Ce client n'a aucun bon non facturé.<br><span style="font-size:12px">Crée des bons dans l'onglet « Bons de livraison », ou passe en saisie manuelle.</span></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`;
+    return;
+  }
+  const list=bons.map(b=>{
+    const tr=Number(b.total_revente||0), nbL=Array.isArray(b.lignes)?b.lignes.length:0, checked=NF_BONS.includes(b.id)?'checked':'';
+    return `<label style="display:flex;gap:10px;align-items:center;padding:7px 2px;border-bottom:1px solid var(--line);cursor:pointer">
+      <input type="checkbox" ${checked} onchange="toggleNFBon('${b.id}')" style="width:auto">
+      <span style="flex:1">${fmtD(b.date_livraison)} <span style="color:var(--muted);font-size:12px">· ${nbL} ligne${nbL>1?'s':''}</span></span>
+      <b>${eur(tr)}</b></label>`;
+  }).join('');
+  const sel=bons.filter(b=>NF_BONS.includes(b.id));
+  let preview='<div style="color:var(--muted);margin-top:12px">Coche au moins un bon pour voir le total.</div>';
+  if(sel.length){
+    const m=factureModel({bl_ids:sel.map(b=>b.id)}, sel, S.produits, S.fparam||{});
+    preview=`<div style="text-align:right;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:14px">
+      <div>Total HT : <b>${eur(m.calcHT)}</b></div>
+      <div>TVA : <b>${eur(m.calcTVA)}</b>${m.tvaReconciles?'':' <span style="color:var(--warn);font-size:11px">(certaines lignes sans taux)</span>'}</div>
+      <div style="font-size:18px;margin-top:6px">Total TTC : <b style="color:var(--gold)">${eur(m.calcTTC)}</b></div>
+    </div>`;
+  }
+  body.innerHTML=`<h3 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px;font-weight:600">Bons non facturés de ce client</h3>
+    <div style="max-height:260px;overflow:auto">${list}</div>
+    ${preview}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveFactureFromBons()" ${sel.length?'':'disabled'}>Créer la facture (${sel.length} bon${sel.length>1?'s':''})</button></div>`;
+}
+function toggleNFBon(id){ if(NF_BONS.includes(id)) NF_BONS=NF_BONS.filter(x=>x!==id); else NF_BONS.push(id); renderFactureMode(); }
+async function saveFactureFromBons(){
+  const clientId=val('nf_cl'); if(!clientId){toast('Client requis');return;}
+  const sel=(NF_CLIENT_BONS||[]).filter(b=>NF_BONS.includes(b.id));
+  if(!sel.length){toast('Coche au moins un bon');return;}
+  // Anti double-facturation : re-dériver au moment de créer (un bon a pu être facturé entre-temps).
+  if(!sel.every(b=>blEditable(b.id,NF_INDEX))){toast('Un des bons est déjà facturé — recharge la liste.');return;}
+  const model=factureModel({bl_ids:sel.map(b=>b.id)}, sel, S.produits, S.fparam||{});
+  const annee=new Date(val('nf_date')).getFullYear();
+  // Numéro consommé ICI seulement (après validation) : ouvrir/annuler le formulaire ne consomme rien.
+  const{data:numData,error:eNum}=await sb.rpc('next_facture_number',{p_org:ORG.id,p_annee:annee}); if(eNum){toast('Erreur numérotation : '+eNum.message);return;}
+  const numero=`${S.fparam?.prefix_numero||''}${annee}-${String(numData||1).padStart(3,'0')}`;
+  // Facture PAR BONS : les lignes vivent dans les bons (bl_ids), PAS dans factures_lignes. On n'écrit pas
+  // le booléen `facture` des bons — leur statut « facturé » est dérivé de bl_ids (source unique).
+  const{error}=await sb.from('factures').insert({organization_id:ORG.id,numero,client_id:clientId,date_facture:val('nf_date'),bl_ids:sel.map(b=>b.id),total_ht:model.calcHT,total_ttc:model.calcTTC,statut:'emise'});
+  if(error){toast('Erreur création facture : '+error.message);return;}
+  toast(`✓ Facture ${numero} créée (${sel.length} bon${sel.length>1?'s':''})`);
+  closeModal(); renderFactures(document.getElementById('content'));
 }
 function renderLignes(){
   const c=document.getElementById('nf_lignes');
@@ -475,17 +561,23 @@ function statutFacture(totalTTC,encaisse){
   return encaisse>=Number(totalTTC)?'paye':encaisse>0?'partiel':'emise';
 }
 
+// SOURCE UNIQUE des lignes affichables d'une facture (écran ET PDF passent par ici → jamais deux rendus
+// qui divergent). Charge selon l'origine — bons de livraison (bl_ids) ou lignes manuelles (factures_lignes,
+// posées sur f._lignes) — puis délègue au modèle PUR factureModel (groupé par livraison + ventilation TVA).
+async function buildFactureModel(f){
+  let bls=[];
+  if(f.bl_ids&&f.bl_ids.length){ const{data}=await sb.from('bons_livraison').select('id,date_livraison,lignes').in('id',f.bl_ids); bls=data||[]; }
+  else{ const{data}=await sb.from('factures_lignes').select('*').eq('facture_id',f.id).order('ordre'); f._lignes=data||[]; }
+  return factureModel(f, bls, S.produits, S.fparam||{});
+}
+
 // ─────── PDF (rendu jsPDF ; le logo est la seule image, tout le reste est du texte vectoriel) ───────
 async function downloadFacturePDF(id){
   toast('Génération PDF…');
   const{data:f}=await sb.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
   if(!f){toast('Facture introuvable');return;}
   const par=S.fparam||{};
-  // Lignes : soit via les bons de livraison (bl_ids), soit via factures_lignes (facture saisie à la main).
-  let bls=[];
-  if(f.bl_ids&&f.bl_ids.length){const{data}=await sb.from('bons_livraison').select('id,date_livraison,lignes').in('id',f.bl_ids);bls=data||[];}
-  else{const{data}=await sb.from('factures_lignes').select('*').eq('facture_id',id).order('ordre');f._lignes=data||[];}
-  const model=factureModel(f,bls,S.produits,par);
+  const model=await buildFactureModel(f); // MÊME chargement/modèle que la fiche à l'écran (openFacture)
 
   const accent=_hexToRgb(par.couleur_accent)||_hexToRgb(ORG.couleur_primaire)||[232,98,42];
   const bandeau=_hexToRgb(par.couleur_bandeau)||[58,58,64];

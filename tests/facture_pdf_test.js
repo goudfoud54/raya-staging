@@ -96,4 +96,17 @@ t('aucun site ne rajoute montant_paye au total du détail (single source)',
   (h.match(/\+\s*Number\(\s*f\.montant_paye/g)||[]).length===0);
 t('encaisseFacture est bien défini une seule fois', (h.match(/function encaisseFacture\(/g)||[]).length===1);
 
+// ── Facture par regroupement de bons : totaux cohérents (calcTTC = calcHT + calcTVA) ──
+t('regroupement : Total TTC = HT + TVA (calc)', +(m.calcHT+m.calcTVA).toFixed(2)===m.calcTTC);
+t('regroupement : calcTVA exposé pour l\'aperçu (12,25)', m.calcTVA===12.25);
+
+// ── Garde-fou de CÂBLAGE : écran ET PDF passent par la MÊME fonction (buildFactureModel → factureModel).
+// C'est ce qui garantit « écran = PDF » ; le double chemin est le montage qui a déjà divergé deux fois ici.
+const openF=h.slice(h.indexOf('async function openFacture(id)'), h.indexOf('async function addPaiement'));
+t('openFacture ne requête PLUS factures_lignes lui-même', !/factures_lignes/.test(openF));
+t('openFacture passe par buildFactureModel', /buildFactureModel\(/.test(openF));
+const pdfF=h.slice(h.indexOf('async function downloadFacturePDF(id)'), h.indexOf('doc.save('));
+t('le PDF passe par buildFactureModel (même source que l\'écran)', /buildFactureModel\(/.test(pdfF));
+t('buildFactureModel : un seul chargeur de lignes de facture', (h.match(/function buildFactureModel\(/g)||[]).length===1);
+
 console.log(ok?'\nALL PASS':'\nSOME FAILED');process.exit(ok?0:1);
