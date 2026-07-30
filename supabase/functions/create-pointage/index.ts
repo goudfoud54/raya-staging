@@ -11,15 +11,19 @@
 //      moins de 60 s (protection contre un double-clic ou un replay de requête).
 // Entrée  : { organization_id, restaurant_id, salarie_id, type, pin, kiosk_id }
 // Sortie  : 200 { ok:true, pointage:{id,type,ts} } | 401/409/429 { ok:false, error }
+//
+// v6.32 — La limitation ne repose plus sur le seul `kiosk_id` fourni par l'appelant. C'est ici
+// que se joue l'enjeu de paie : fabriquer les heures d'un salarié impose d'itérer les PIN contre
+// SON salarie_id, dimension que l'attaquant ne peut pas contourner. Décision déléguée à
+// _shared/pin-ratelimit.mjs, partagée avec verify-pin (une seule règle, pas deux qui dérivent).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { decidePin, ipCliente, LIMITES } from '../_shared/pin-ratelimit.mjs';
 
 const SUPA_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-const MAX_FAILS = 5;
-const WINDOW_S = 300;
-const RETENTION_H = 24;
 const DOUBLE_TAP_S = 60; // fenêtre anti double-tap : même type que le pointage précédent
+const IP_FIABLE = false; // cf. verify-pin : enregistrée pour vérification, pas encore décisionnelle
 
 const TYPES = new Set(['arrivee', 'pause_debut', 'pause_fin', 'sortie']);
 // Transitions valides : à partir de l'état courant (déduit du dernier pointage du jour), quels
@@ -57,20 +61,40 @@ Deno.serve(async (req) => {
   if (!TYPES.has(type)) return json({ ok: false, error: 'Type de pointage invalide' }, 400);
   if (!/^\d{4}$/.test(pin)) return json({ ok: false, error: 'Code invalide' }, 401); // v6.18 : PIN strict 4 chiffres
 
+  const client_ip = ipCliente(req.headers.get('x-forwarded-for'), null);
   const sb = createClient(SUPA_URL, SERVICE_KEY);
 
   // Housekeeping (partagé avec verify-pin sur la même table pin_attempts).
-  await sb.from('pin_attempts').delete().lt('ts', new Date(Date.now() - RETENTION_H * 3600_000).toISOString());
+  await sb.from('pin_attempts').delete().lt('ts', new Date(Date.now() - LIMITES.RETENTION_H * 3600_000).toISOString());
 
-  // Rate-limit par tablette (même logique que verify-pin) : protège aussi create-pointage contre
-  // un bruteforce de PIN qui viserait directement cet endpoint plutôt que verify-pin.
-  const since = new Date(Date.now() - WINDOW_S * 1000).toISOString();
-  const { data: fails } = await sb.from('pin_attempts')
-    .select('ts').eq('kiosk_id', kiosk_id).eq('ok', false).gte('ts', since).order('ts', { ascending: true });
-  if ((fails?.length || 0) >= MAX_FAILS) {
-    const oldest = new Date(fails![0].ts).getTime();
-    const retry = Math.max(1, Math.ceil((oldest + WINDOW_S * 1000 - Date.now()) / 1000));
-    return json({ ok: false, error: 'Trop de tentatives. Réessaie plus tard.', retry_after_s: retry }, 429);
+  const { data: connu } = await sb.from('kiosk_registry')
+    .select('kiosk_id').eq('organization_id', organization_id).eq('kiosk_id', kiosk_id).maybeSingle();
+  const kioskConnu = !!connu;
+
+  const depuis = new Date(Date.now() - LIMITES.INCONNU_FENETRE_S * 1000).toISOString();
+  const { data: echecs, error: eLect } = await sb.from('pin_attempts')
+    .select('ts,kiosk_id,salarie_id,client_ip,kiosk_connu').eq('organization_id', organization_id)
+    .eq('ok', false).gte('ts', depuis);
+  // ⚠️ ORDRE IMPÉRATIF : migrations/v6.32_pin_ratelimit.sql doit être appliquée AVANT ce
+  // déploiement (cf. le même garde-fou dans verify-pin). Le service continue plutôt que de
+  // bloquer le pointage, mais l'anomalie est journalisée à chaque requête, en clair.
+  if (eLect) console.error(
+    '[create-pointage] ⛔ LIMITATION INACTIVE — lecture de pin_attempts impossible : ' + eLect.message +
+    ' · La migration v6.32_pin_ratelimit.sql est-elle appliquée ? Tant que non, le PIN n\'est pas protégé contre le bruteforce.');
+  const lignes = (echecs || []).map(a => ({ ...a, ms: new Date(a.ts).getTime() }));
+
+  const d = decidePin({
+    kioskConnu,
+    echecsKiosk:   lignes.filter(a => a.kiosk_id === kiosk_id).map(a => a.ms),
+    echecsSalarie: lignes.filter(a => a.salarie_id === salarie_id).map(a => a.ms),
+    echecsOrg:     lignes.filter(a => !a.kiosk_connu).map(a => a.ms),
+    echecsIp:      lignes.filter(a => !a.kiosk_connu && a.client_ip === client_ip).map(a => a.ms),
+    ipFiable:      IP_FIABLE,
+    maintenant:    Date.now(),
+  });
+  if (!d.autorise) {
+    console.warn('[create-pointage] 429', JSON.stringify({ motif: d.motif, org: organization_id, salarie_id, kiosk_id, kioskConnu, client_ip }));
+    return json({ ok: false, error: 'Trop de tentatives. Réessaie plus tard.', retry_after_s: d.retryApresS }, 429);
   }
 
   // 1) Le salarié doit appartenir à l'organisation ET le restaurant à la même organisation
@@ -82,7 +106,9 @@ Deno.serve(async (req) => {
 
   const pinOk = !!sal && !!resto && sal.actif !== false && sal.pin_badgeuse === pin;
   if (!pinOk) {
-    await sb.from('pin_attempts').insert({ organization_id, restaurant_id, kiosk_id, ok: false });
+    const { error: eIns } = await sb.from('pin_attempts')
+      .insert({ organization_id, restaurant_id, kiosk_id, ok: false, salarie_id, client_ip, kiosk_connu: kioskConnu });
+    if (eIns) console.error('[create-pointage] insert pin_attempts:', eIns.message);
     return json({ ok: false, error: !sal || !resto ? 'Salarié/restaurant introuvable' : sal.actif === false ? 'Salarié inactif' : 'Code incorrect' }, 401);
   }
 
@@ -105,11 +131,14 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: `Action impossible dans l'état actuel (dernier pointage : ${last?.type || 'aucun'})` }, 409);
   }
 
-  // 3) Insertion + purge des échecs récents de cette tablette (comme verify-pin).
+  // 3) Insertion + enregistrement de la tablette + purge de ses échecs récents.
   const { data: pt, error: eIns } = await sb.from('pointages')
     .insert({ salarie_id, restaurant_id, type, kiosk_id, source: 'kiosk' }).select('id,type,ts').single();
   if (eIns) return json({ ok: false, error: 'Erreur enregistrement : ' + eIns.message }, 500);
 
+  const { error: eReg } = await sb.from('kiosk_registry')
+    .upsert({ organization_id, kiosk_id, last_ok: new Date().toISOString() }, { onConflict: 'organization_id,kiosk_id' });
+  if (eReg) console.error('[create-pointage] upsert kiosk_registry:', eReg.message);
   await sb.from('pin_attempts').delete().eq('kiosk_id', kiosk_id).eq('ok', false);
 
   return json({ ok: true, pointage: pt });
