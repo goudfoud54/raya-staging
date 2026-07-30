@@ -1550,7 +1550,8 @@ function generatePDF(kind){
     faitsBlock();
     para(`Ces faits constituent un manquement à vos obligations professionnelles. Nous vous demandons de prendre les mesures nécessaires pour qu'une telle situation ne se reproduise plus.`);
     para(`À défaut, nous serions contraints d'envisager une sanction plus lourde pouvant aller jusqu'au licenciement.`);
-    paraRich([N(`Le présent `),B(label.toLowerCase()),N(` sera versé à votre dossier disciplinaire. Conformément à l'`),B(`article L. 1332-4`),N(` du Code du travail, vous disposez d'un délai de `),B(`deux mois`),N(` pour le contester.`)]);
+    paraRich([N(`Le présent `),B(label.toLowerCase()),N(` sera versé à votre dossier disciplinaire.`)]);
+    appendVoiesDeRecours(paraRich,B,N,'sanction');
     paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
   else if (kind==='sanction'){
@@ -1566,7 +1567,7 @@ function generatePDF(kind){
       paraRich([N(`La durée de cette mise à pied disciplinaire est conforme au maximum prévu par la `),B(`convention collective applicable`),N(` (à défaut de stipulation plus favorable, trois jours ouvrables).`)]);
     }
     appendAntecedents(paraRich,B,N,para);
-    paraRich([N(`Conformément à l'`),B(`article L. 1332-4`),N(` du Code du travail, vous disposez d'un délai de `),B(`deux mois`),N(` à compter de la notification pour contester cette sanction.`)]);
+    appendVoiesDeRecours(paraRich,B,N,'sanction');
     paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
   else if (kind==='licenciement'){
@@ -1584,7 +1585,8 @@ function generatePDF(kind){
     if (il) paraRich([N(`Indemnité de licenciement : `),B(`${parseFloat(il).toFixed(2)} €`)]);
     if (ip) paraRich([N(`Indemnité compensatrice de préavis : `),B(`${parseFloat(ip).toFixed(2)} €`)]);
     if (ic) paraRich([N(`Indemnité compensatrice de congés payés : `),B(`${parseFloat(ic).toFixed(2)} €`)]);
-    para(`Conformément aux articles L. 1234-19 et L. 1234-20 du Code du travail, votre solde de tout compte, votre certificat de travail et votre attestation France Travail vous seront remis à la date de votre départ effectif de l'entreprise.`);
+    para(`Votre certificat de travail (article L. 1234-19 du Code du travail), votre reçu pour solde de tout compte (article L. 1234-20) et votre attestation destinée à France Travail (article R. 1234-9) vous seront remis à la date de votre départ effectif de l'entreprise.`);
+    appendVoiesDeRecours(paraRich,B,N,'rupture');
     paraRich([N(`Nous vous prions d'agréer, ${civ} `),B(nomMaj),N(`, l'expression de nos salutations distinguées.`)]);
   }
   else if (kind==='rupture'){
@@ -1702,6 +1704,28 @@ async function openDocsMenu(id, ev){
 }
 async function viewDocFile(path){ const{data,error}=await sb.storage.from('disciplinary-docs').createSignedUrl(path,300); if(error){alert(error.message);return;} window.open(data.signedUrl,'_blank'); }
 async function dlDocFile(path,fn){ const{data,error}=await sb.storage.from('disciplinary-docs').createSignedUrl(path,300,{download:fn||true}); if(error){alert(error.message);return;} const a=document.createElement('a');a.href=data.signedUrl;a.download=fn||'';document.body.appendChild(a);a.click();a.remove(); }
+// ── Voies de recours : SOURCE UNIQUE du délai de contestation imprimé au salarié ──
+// Vérifié sur code.travail.gouv.fr (Ministère du Travail) le 30/07/2026 :
+//  • L.1332-4 = délai de DEUX MOIS de l'EMPLOYEUR pour engager les poursuites à compter de la
+//    connaissance des faits. Ce n'est PAS le délai du salarié pour contester. Jusqu'à la v6.31,
+//    les avertissements et les notifications de sanction imprimaient l'inverse : « conformément à
+//    l'article L. 1332-4, vous disposez d'un délai de deux mois pour le contester ». Faux, et
+//    remis en main propre au salarié — d'où une fonction unique plutôt qu'un texte recopié.
+//  • L.1471-1 = prescription des actions du SALARIÉ : deux ans pour une action portant sur
+//    l'exécution du contrat (donc une sanction), douze mois pour une action portant sur la
+//    rupture (donc un licenciement).
+//  • L.1333-1 / L.1333-2 = office du conseil de prud'hommes (apprécier, annuler).
+// Les régimes spéciaux (salaires L.3245-1, discrimination L.1134-5, harcèlement) ont des délais
+// distincts : on les SIGNALE sans les chiffrer, plutôt que d'imprimer un nombre faux au salarié.
+function appendVoiesDeRecours(paraRich,B,N,regime){
+  if (regime==='rupture'){
+    paraRich([N(`Vous pouvez contester ce licenciement devant le `),B(`conseil de prud'hommes`),N(`. Une action portant sur la rupture du contrat de travail se prescrit par `),B(`douze mois`),N(` à compter de la notification de la rupture (`),B(`article L. 1471-1`),N(` du Code du travail).`)]);
+  } else {
+    paraRich([N(`Vous pouvez contester cette sanction devant le `),B(`conseil de prud'hommes`),N(`, qui apprécie la régularité de la procédure suivie et si les faits reprochés sont de nature à justifier une sanction (`),B(`articles L. 1333-1 et L. 1333-2`),N(` du Code du travail).`)]);
+    paraRich([N(`Une action portant sur l'exécution du contrat de travail se prescrit par `),B(`deux ans`),N(` à compter du jour où vous avez connu ou auriez dû connaître les faits vous permettant de l'exercer (`),B(`article L. 1471-1`),N(` du Code du travail).`)]);
+  }
+  paraRich([N(`Des délais différents s'appliquent à certaines demandes, notamment en matière de salaires, de discrimination et de harcèlement.`)]);
+}
 // Paragraphe automatique des antécédents (lettres de sanction/licenciement)
 function appendAntecedents(paraRich,B,N,para){
   const ants=selectedAntecedents();
