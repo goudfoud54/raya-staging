@@ -11,8 +11,49 @@ async function sha256Hex(s: string): Promise<string> { const buf = await crypto.
 async function hmac(data: string): Promise<string> { const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(HMAC_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data)); return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join(""); }
 function b64u(s: string): string { return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
 function b64uDecode(s: string): string { return atob(s.replace(/-/g,"+").replace(/_/g,"/")); }
-async function signPayload(p: any): Promise<string> { const d = b64u(JSON.stringify(p)); return d + "." + (await hmac(d)); }
-async function verifyPayload(token: string): Promise<any | null> { const [d, s] = (token||"").split("."); if (!d||!s) return null; if ((await hmac(d)) !== s) return null; try { return JSON.parse(b64uDecode(d)); } catch { return null; } }
+function b64uBytes(b: Uint8Array): string { let s = ""; for (const x of b) s += String.fromCharCode(x); return b64u(s); }
+function bytesFromB64u(s: string): Uint8Array { const raw = b64uDecode(s); const out = new Uint8Array(raw.length); for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i); return out; }
+
+// ── Code d'autorisation : CHIFFRÉ, plus seulement signé ──────────────────────────────────────
+// Jusqu'à la v0.3.0, le code était `base64url(JSON) + "." + HMAC`. La signature garantissait qu'on
+// ne pouvait pas le fabriquer, mais le contenu — dont `api_key` en clair — se lisait avec un simple
+// décodage base64. Ce code voyageait dans l'URL de retour : historique du navigateur, journaux de
+// serveur, en-tête Referer de la page suivante. On chiffre désormais la charge utile (AES-GCM,
+// clé dérivée du secret de service) : le code ne révèle plus rien, même à qui le récupère.
+async function codeKey(): Promise<CryptoKey> {
+  const brut = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(HMAC_SECRET + ":code_v2"));
+  return crypto.subtle.importKey("raw", brut, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function signPayload(p: any): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await codeKey(), new TextEncoder().encode(JSON.stringify(p))));
+  return "v2." + b64uBytes(iv) + "." + b64uBytes(ct);
+}
+async function verifyPayload(token: string): Promise<any | null> {
+  const parts = (token || "").split(".");
+  if (parts.length !== 3 || parts[0] !== "v2") return null;   // les anciens codes signés ne sont plus acceptés
+  try {
+    const clair = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytesFromB64u(parts[1]) }, await codeKey(), bytesFromB64u(parts[2]));
+    return JSON.parse(new TextDecoder().decode(clair));       // AES-GCM authentifie : un code trafiqué lève ici
+  } catch { return null; }
+}
+
+// ── Liste blanche des redirect_uri ───────────────────────────────────────────────────────────
+// C'était LA faille : `redirect_uri` n'était jamais validé. Un lien piégé hébergé sur le vrai
+// domaine (goudfoud54.github.io/raya-staging/oauth/authorize.html?redirect_uri=https://…) suffisait
+// à faire partir le code — et donc la clé API — vers n'importe où.
+// Configurable par la variable d'environnement MCP_REDIRECT_URIS (préfixes séparés par des virgules)
+// pour ne pas figer dans le code l'adresse de retour d'un client donné. Toute valeur refusée est
+// journalisée : si le vrai client utilise une autre adresse, une seule autorisation échoue et le
+// journal dit exactement laquelle ajouter.
+const REDIRECTS_AUTORISES = (Deno.env.get("MCP_REDIRECT_URIS") || "https://claude.ai/,https://claude.com/,http://localhost:,http://127.0.0.1:")
+  .split(",").map(s => s.trim()).filter(Boolean);
+function redirectAutorise(uri: string): boolean {
+  let u: URL;
+  try { u = new URL(uri); } catch { return false; }
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1"))) return false;
+  return REDIRECTS_AUTORISES.some(p => uri.startsWith(p));
+}
 
 function corsHeaders(): Headers { const h = new Headers(); h.set("Access-Control-Allow-Origin", "*"); h.set("Access-Control-Allow-Headers", "authorization, x-client-info, apikey, content-type, mcp-session-id, mcp-protocol-version"); h.set("Access-Control-Allow-Methods", "POST, GET, OPTIONS"); h.set("Access-Control-Expose-Headers", "mcp-session-id, www-authenticate"); return h; }
 function json(body: any, status = 200, extra: Record<string,string> = {}): Response { const h = corsHeaders(); h.set("Content-Type", "application/json"); for (const [k,v] of Object.entries(extra)) h.set(k, v); return new Response(JSON.stringify(body), { status, headers: h }); }
@@ -62,7 +103,7 @@ async function runTool(orgId: string, name: string, args: any): Promise<any> {
 
 async function lookupKey(rawKey: string) { const hash = await sha256Hex(rawKey); const { data } = await SB.from("api_keys").select("id, organization_id, revoked_at, scopes").eq("key_hash", hash).maybeSingle(); return (data && !data.revoked_at) ? data : null; }
 
-function authMetadata() { return { issuer: PUBLIC_BASE, authorization_endpoint: AUTHORIZE_PAGE, token_endpoint: `${PUBLIC_BASE}/token`, registration_endpoint: `${PUBLIC_BASE}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code"], code_challenge_methods_supported: ["S256","plain"], token_endpoint_auth_methods_supported: ["none"], scopes_supported: ["read","write"], subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"] }; }
+function authMetadata() { return { issuer: PUBLIC_BASE, authorization_endpoint: AUTHORIZE_PAGE, token_endpoint: `${PUBLIC_BASE}/token`, registration_endpoint: `${PUBLIC_BASE}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"], scopes_supported: ["read","write"], subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"] }; }
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders() });
@@ -97,11 +138,28 @@ Deno.serve(async (req: Request) => {
       const h = corsHeaders(); h.set("Location", t.toString());
       return new Response(null, { status: 302, headers: h });
     }
+    // Le redirect_uri est validé AVANT toute vérification de la clé : c'est la destination du code,
+    // et un refus ne doit surtout pas rediriger vers l'adresse non validée (sinon on y renverrait
+    // au moins la valeur du champ, et on servirait de tremplin de redirection ouverte).
+    if (!redirectUri) return new Response("Missing redirect_uri", { status: 400 });
+    if (!redirectAutorise(redirectUri)) {
+      console.warn("[mcp] redirect_uri refusé:", JSON.stringify({ redirectUri, autorises: REDIRECTS_AUTORISES }));
+      return new Response(
+        "redirect_uri non autorisé.\n\nSi tu es le propriétaire de cette instance et que ton client MCP utilise " +
+        "légitimement cette adresse, ajoute-la à la variable d'environnement MCP_REDIRECT_URIS de la fonction mcp.\n" +
+        "L'adresse refusée est inscrite dans les journaux de la fonction.",
+        { status: 400, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    }
+    // PKCE obligatoire, et uniquement S256. Sans lui, quiconque intercepte le code peut l'échanger ;
+    // avec lui, il faut aussi le vérificateur, que seul le client légitime détient. C'est ce qui
+    // tient lieu d'usage unique tant que les codes ne sont pas stockés côté serveur (cf. rapport).
+    if (!codeChallenge) return redirectToPage("PKCE requis : ce serveur n'accepte plus d'autorisation sans code_challenge");
+    if (codeChallengeMethod !== "S256") return redirectToPage("PKCE : seule la méthode S256 est acceptée");
+
     if (!apiKey.startsWith("eat_")) return redirectToPage("Clé invalide (doit commencer par eat_)");
     const ak = await lookupKey(apiKey);
     if (!ak) return redirectToPage("Clé inconnue ou révoquée");
-    if (!redirectUri) return new Response("Missing redirect_uri", { status: 400 });
-    const code = await signPayload({ api_key: apiKey, cc: codeChallenge || null, ccm: codeChallengeMethod || null, exp: Math.floor(Date.now()/1000) + 300 });
+    const code = await signPayload({ api_key: apiKey, cc: codeChallenge, ccm: codeChallengeMethod, ru: redirectUri, exp: Math.floor(Date.now()/1000) + 120 });
     const redirect = new URL(redirectUri); redirect.searchParams.set("code", code); if (state) redirect.searchParams.set("state", state);
     const h = corsHeaders(); h.set("Location", redirect.toString());
     return new Response(null, { status: 302, headers: h });
@@ -116,12 +174,19 @@ Deno.serve(async (req: Request) => {
     if (grant !== "authorization_code" || !code) return json({ error: "unsupported_grant_type" }, 400);
     const payload = await verifyPayload(code);
     if (!payload || (payload.exp && payload.exp < Math.floor(Date.now()/1000))) return json({ error: "invalid_grant", error_description: "Code invalide ou expiré" }, 400);
-    if (payload.cc) {
-      if (!codeVerifier) return json({ error: "invalid_request", error_description: "code_verifier required" }, 400);
-      let computed = codeVerifier;
-      if (payload.ccm === "S256") { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier)); computed = b64u(String.fromCharCode(...new Uint8Array(buf))); }
-      if (computed !== payload.cc) return json({ error: "invalid_grant", error_description: "PKCE failed" }, 400);
-    }
+
+    // PKCE non négociable, et S256 uniquement. « plain » revient à n'avoir aucun PKCE : le
+    // vérificateur passe en clair dans la requête d'autorisation. Retiré aussi des métadonnées
+    // publiées, sinon un client conforme le choisirait et se ferait refuser ici.
+    if (!payload.cc || payload.ccm !== "S256") return json({ error: "invalid_grant", error_description: "PKCE S256 requis" }, 400);
+    if (!codeVerifier) return json({ error: "invalid_request", error_description: "code_verifier required" }, 400);
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
+    if (b64uBytes(new Uint8Array(buf)) !== payload.cc) return json({ error: "invalid_grant", error_description: "PKCE failed" }, 400);
+
+    // Le code est lié à l'adresse de retour pour laquelle il a été émis (RFC 6749 §4.1.3).
+    // Contrôlé si le client la fournit — tous ne le font pas.
+    const ruDemande = params.get("redirect_uri");
+    if (ruDemande && payload.ru && ruDemande !== payload.ru) return json({ error: "invalid_grant", error_description: "redirect_uri ne correspond pas à celui de l'autorisation" }, 400);
     const ak = await lookupKey(payload.api_key);
     if (!ak) return json({ error: "invalid_grant", error_description: "Clé révoquée" }, 400);
     return json({ access_token: payload.api_key, token_type: "Bearer", expires_in: 31536000, scope: (ak.scopes||[]).join(" ") });
