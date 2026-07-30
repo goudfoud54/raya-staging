@@ -183,5 +183,55 @@ t('en-tête vide → null (pas la chaîne vide)', ipCliente('', '') === null);
     decidePin({ kioskConnu: true, echecsKiosk: [null, 'x', undefined, NaN], echecsSalarie: [], echecsOrg: [], echecsIp: [], ipFiable: true, maintenant: now }).autorise === true);
 }
 
+// ══ 8. Câblage des deux edge functions : aucune lecture muette ═══════════════════════════════
+// Le module ci-dessus est pur ; ce qui l'entoure ne l'est pas. Une lecture qui échoue sans être
+// vérifiée retomberait sur des valeurs par défaut, et la protection deviendrait décorative sans
+// que rien ne le signale — le défaut le plus fréquent de ce projet, ici en code neuf.
+{
+  const fs = require('fs');
+  for (const fn of ['verify-pin', 'create-pointage']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', fn, 'index.ts'), 'utf8');
+
+    t(fn + ' : importe le module partagé (pas de recopie qui dériverait)',
+      /from '\.\.\/_shared\/pin-ratelimit\.mjs'/.test(src));
+
+    // La lecture du registre : son erreur DOIT être capturée, et le défaut doit être « connue ».
+    // Défaut inverse = les vraies tablettes perdent leur exemption sur une simple lecture ratée,
+    // et les plafonds organisation/IP s'appliquent d'un coup aux restaurants en service.
+    t(fn + ' : l\'erreur de lecture du registre est capturée',
+      /const \{ data: connu, error: eReg0 \} = await sb\.from\('kiosk_registry'\)/.test(src));
+    t(fn + ' : registre illisible → tablette réputée CONNUE (défaut sûr, pas de blocage)',
+      /const kioskConnu = eReg0 \? true : !!connu;/.test(src));
+    t(fn + ' : registre illisible → journalisé en clair', /registre des tablettes illisible/.test(src));
+
+    // La lecture des échecs : idem, avec un message qui nomme la migration manquante.
+    t(fn + ' : l\'erreur de lecture de pin_attempts est capturée', /if \(eLect\) console\.error/.test(src));
+    t(fn + ' : pin_attempts illisible → journalisé comme « LIMITATION INACTIVE »',
+      /LIMITATION INACTIVE/.test(src) && /v6\.32_pin_ratelimit\.sql/.test(src));
+
+    // Les écritures aussi : un enregistrement de tentative perdu, c'est un compteur faussé.
+    t(fn + ' : l\'erreur d\'insertion dans pin_attempts est capturée', /error: eIns \} = await sb\.from\('pin_attempts'\)/.test(src));
+    t(fn + ' : l\'erreur d\'upsert du registre est capturée', /error: eReg \} = await sb\.from\('kiosk_registry'\)/.test(src));
+
+    // Le motif de blocage ne doit pas fuiter vers l'appelant : il lui dirait quelle dimension le
+    // gêne. On inspecte la SEULE ligne de réponse, pas tout le bloc — le console.warn juste
+    // au-dessus contient légitimement d.motif, et le tester en bloc rendait l'assertion inopérante.
+    const i429 = src.indexOf('if (!d.autorise)');
+    const bloc429 = src.slice(i429, src.indexOf('\n  }', i429));
+    const reponse429 = (bloc429.match(/return json\([^\n]*\n?/) || [''])[0];
+    t(fn + ' : la réponse 429 annonce bien un dépassement',
+      /Trop de tentatives/.test(reponse429) && /retry_after_s/.test(reponse429));
+    t(fn + ' : la réponse 429 ne révèle PAS le motif du blocage',
+      reponse429.length > 0 && !/motif/.test(reponse429));
+
+    // La limitation ne compte QUE les échecs : c'est ce qui fait passer la rafale de service.
+    // Assertion portée sur la CHAÎNE DE LECTURE elle-même : un simple test de présence de
+    // `.eq('ok', false)` dans le fichier passait encore alors que le filtre avait été retiré de
+    // la lecture, parce que la purge après succès en contient une autre occurrence.
+    t(fn + ' : la lecture des tentatives ne compte que les échecs',
+      /\.eq\('ok', false\)\.gte\('ts', depuis\)/.test(src));
+  }
+}
+
 console.log(ok ? '\nALL PASS' : '\nSOME FAILED'); process.exit(ok ? 0 : 1);
 })();

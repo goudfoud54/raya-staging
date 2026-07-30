@@ -50,9 +50,17 @@ Deno.serve(async (req) => {
 
   // La tablette est-elle enregistrée ? C'est ce qui l'exempte des plafonds organisation / IP,
   // pour qu'une attaque extérieure ne puisse pas empêcher un vrai kiosque de pointer.
-  const { data: connu } = await sb.from('kiosk_registry')
+  // Défaut sûr = TRUE. Si cette lecture échoue, considérer la tablette comme INCONNUE lui
+  // retirerait son exemption, et les plafonds organisation/IP s'appliqueraient d'un coup aux
+  // vrais restaurants — soit exactement le déni de service contre lequel le registre existe,
+  // déclenchable par une simple lecture ratée. Bloquer trois restaurants est pire que ne pas
+  // limiter : on penche du même côté ici que partout ailleurs, et on le dit dans les journaux.
+  const { data: connu, error: eReg0 } = await sb.from('kiosk_registry')
     .select('kiosk_id').eq('organization_id', organization_id).eq('kiosk_id', kiosk_id).maybeSingle();
-  const kioskConnu = !!connu;
+  if (eReg0) console.error(
+    '[verify-pin] ⛔ registre des tablettes illisible : ' + eReg0.message +
+    ' · La migration v6.32_pin_ratelimit.sql est-elle appliquée ? Plafonds organisation/IP neutralisés par sécurité.');
+  const kioskConnu = eReg0 ? true : !!connu;
 
   // Une seule lecture, sur la fenêtre la plus large ; le filtrage par dimension est fait par
   // decidePin (fonction pure, testée par tests/pin_ratelimit_test.js).

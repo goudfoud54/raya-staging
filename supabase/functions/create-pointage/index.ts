@@ -67,9 +67,14 @@ Deno.serve(async (req) => {
   // Housekeeping (partagé avec verify-pin sur la même table pin_attempts).
   await sb.from('pin_attempts').delete().lt('ts', new Date(Date.now() - LIMITES.RETENTION_H * 3600_000).toISOString());
 
-  const { data: connu } = await sb.from('kiosk_registry')
+  // Défaut sûr = TRUE (même raisonnement que dans verify-pin) : une lecture ratée ne doit pas
+  // retirer aux vraies tablettes l'exemption qui les protège des plafonds organisation/IP.
+  const { data: connu, error: eReg0 } = await sb.from('kiosk_registry')
     .select('kiosk_id').eq('organization_id', organization_id).eq('kiosk_id', kiosk_id).maybeSingle();
-  const kioskConnu = !!connu;
+  if (eReg0) console.error(
+    '[create-pointage] ⛔ registre des tablettes illisible : ' + eReg0.message +
+    ' · La migration v6.32_pin_ratelimit.sql est-elle appliquée ? Plafonds organisation/IP neutralisés par sécurité.');
+  const kioskConnu = eReg0 ? true : !!connu;
 
   const depuis = new Date(Date.now() - LIMITES.INCONNU_FENETRE_S * 1000).toISOString();
   const { data: echecs, error: eLect } = await sb.from('pin_attempts')
