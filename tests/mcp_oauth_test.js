@@ -28,7 +28,9 @@ const detyper = (s) => s
 
 const bloc = detyper([
   extraire('function b64u(', 'async function codeKey('),
-  extraire('async function codeKey(', '// ── Liste blanche'),
+  // Bornes ancrées sur du CODE, jamais sur un commentaire : une reformulation de commentaire
+  // ne doit pas faire tomber le harnais (c'est arrivé au premier réalignement dépôt/production).
+  extraire('async function codeKey(', 'const REDIRECTS_AUTORISES'),
   extraire('const REDIRECTS_AUTORISES', 'function corsHeaders('),
 ].join('\n'));
 
@@ -107,10 +109,12 @@ t('durée de vie du code ramenée à 120 s', /\+ 120 \}\)/.test(src));
 
 // ══ 5. Le refus ne doit pas servir de tremplin de redirection ouverte ════════════════════════
 {
-  const i = src.indexOf('if (!redirectAutorise(redirectUri))');
-  const bloc = src.slice(i, i + 700);
+  // Bloc borné à sa VRAIE accolade fermante, pas à un nombre de caractères arbitraire :
+  // une fenêtre fixe débordait sur les contrôles PKCE suivants, qui utilisent redirectToPage.
+  const i = src.indexOf('if (!redirectAutorise(redirectUri)) {');
+  const bloc = src.slice(i, src.indexOf('\n    }', i) + 6);
   t('un redirect_uri refusé renvoie une page d\'erreur, PAS une redirection',
-    /status: 400/.test(bloc) && !/redirectToPage/.test(bloc));
+    /status: 400/.test(bloc) && !/redirectToPage/.test(bloc) && /Content-Type.*text\/plain/.test(bloc));
 }
 {
   const iVal = src.indexOf('if (!redirectAutorise(redirectUri))');

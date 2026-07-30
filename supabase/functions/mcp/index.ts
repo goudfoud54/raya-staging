@@ -1,4 +1,4 @@
-// Eatime360 MCP Server — v0.3.0 (external authorize page)
+// Eatime360 MCP Server — v0.3.1 (redirect_uri allow-list, code chiffré, PKCE S256)
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -8,18 +8,14 @@ const PUBLIC_BASE = `${Deno.env.get("SUPABASE_URL")}/functions/v1/mcp`;
 const AUTHORIZE_PAGE = "https://goudfoud54.github.io/raya-staging/oauth/authorize.html";
 
 async function sha256Hex(s: string): Promise<string> { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join(""); }
-async function hmac(data: string): Promise<string> { const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(HMAC_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data)); return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join(""); }
 function b64u(s: string): string { return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
 function b64uDecode(s: string): string { return atob(s.replace(/-/g,"+").replace(/_/g,"/")); }
 function b64uBytes(b: Uint8Array): string { let s = ""; for (const x of b) s += String.fromCharCode(x); return b64u(s); }
 function bytesFromB64u(s: string): Uint8Array { const raw = b64uDecode(s); const out = new Uint8Array(raw.length); for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i); return out; }
 
-// ── Code d'autorisation : CHIFFRÉ, plus seulement signé ──────────────────────────────────────
-// Jusqu'à la v0.3.0, le code était `base64url(JSON) + "." + HMAC`. La signature garantissait qu'on
-// ne pouvait pas le fabriquer, mais le contenu — dont `api_key` en clair — se lisait avec un simple
-// décodage base64. Ce code voyageait dans l'URL de retour : historique du navigateur, journaux de
-// serveur, en-tête Referer de la page suivante. On chiffre désormais la charge utile (AES-GCM,
-// clé dérivée du secret de service) : le code ne révèle plus rien, même à qui le récupère.
+// Code d'autorisation : CHIFFRÉ, plus seulement signé. Auparavant `base64url(JSON) + "." + HMAC` :
+// la signature empêchait de le fabriquer, mais son contenu — dont api_key — se lisait avec un
+// simple décodage base64, et il voyageait dans l'URL de retour (historique, journaux, Referer).
 async function codeKey(): Promise<CryptoKey> {
   const brut = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(HMAC_SECRET + ":code_v2"));
   return crypto.subtle.importKey("raw", brut, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
@@ -31,21 +27,15 @@ async function signPayload(p: any): Promise<string> {
 }
 async function verifyPayload(token: string): Promise<any | null> {
   const parts = (token || "").split(".");
-  if (parts.length !== 3 || parts[0] !== "v2") return null;   // les anciens codes signés ne sont plus acceptés
+  if (parts.length !== 3 || parts[0] !== "v2") return null;
   try {
     const clair = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytesFromB64u(parts[1]) }, await codeKey(), bytesFromB64u(parts[2]));
-    return JSON.parse(new TextDecoder().decode(clair));       // AES-GCM authentifie : un code trafiqué lève ici
+    return JSON.parse(new TextDecoder().decode(clair));
   } catch { return null; }
 }
 
-// ── Liste blanche des redirect_uri ───────────────────────────────────────────────────────────
-// C'était LA faille : `redirect_uri` n'était jamais validé. Un lien piégé hébergé sur le vrai
-// domaine (goudfoud54.github.io/raya-staging/oauth/authorize.html?redirect_uri=https://…) suffisait
-// à faire partir le code — et donc la clé API — vers n'importe où.
-// Configurable par la variable d'environnement MCP_REDIRECT_URIS (préfixes séparés par des virgules)
-// pour ne pas figer dans le code l'adresse de retour d'un client donné. Toute valeur refusée est
-// journalisée : si le vrai client utilise une autre adresse, une seule autorisation échoue et le
-// journal dit exactement laquelle ajouter.
+// Liste blanche des redirect_uri. C'était LA faille : redirect_uri n'était jamais validé, donc un
+// lien piégé hébergé sur le vrai domaine suffisait à faire partir le code vers n'importe où.
 const REDIRECTS_AUTORISES = (Deno.env.get("MCP_REDIRECT_URIS") || "https://claude.ai/,https://claude.com/,http://localhost:,http://127.0.0.1:")
   .split(",").map(s => s.trim()).filter(Boolean);
 function redirectAutorise(uri: string): boolean {
@@ -116,14 +106,12 @@ Deno.serve(async (req: Request) => {
   if (p === "/.well-known/oauth-authorization-server" || p === "/.well-known/oauth-authorization-server/" || p === "/.well-known/openid-configuration" || p === "/.well-known/openid-configuration/") return json(authMetadata());
   if (p === "/register" && req.method === "POST") { const body = await req.json().catch(() => ({})); return json({ client_id: "client_" + crypto.randomUUID(), client_id_issued_at: Math.floor(Date.now()/1000), grant_types: ["authorization_code"], response_types: ["code"], redirect_uris: body.redirect_uris || [], token_endpoint_auth_method: "none", client_name: body.client_name || "Eatime360 MCP Client" }); }
 
-  // GET /authorize → redirect 302 vers la page statique (au cas où quelqu'un appelle directement)
   if (p === "/authorize" && req.method === "GET") {
     const target = new URL(AUTHORIZE_PAGE);
     for (const [k,v] of url.searchParams.entries()) target.searchParams.set(k, v);
     const h = corsHeaders(); h.set("Location", target.toString());
     return new Response(null, { status: 302, headers: h });
   }
-  // POST /authorize ← venant de la page HTML hors-domaine (avec api_key)
   if (p === "/authorize" && req.method === "POST") {
     const form = await req.formData();
     const apiKey = String(form.get("api_key")||"").trim();
@@ -138,21 +126,16 @@ Deno.serve(async (req: Request) => {
       const h = corsHeaders(); h.set("Location", t.toString());
       return new Response(null, { status: 302, headers: h });
     }
-    // Le redirect_uri est validé AVANT toute vérification de la clé : c'est la destination du code,
-    // et un refus ne doit surtout pas rediriger vers l'adresse non validée (sinon on y renverrait
-    // au moins la valeur du champ, et on servirait de tremplin de redirection ouverte).
+    // Validé AVANT toute vérification de clé, et un refus ne redirige PAS vers l'adresse non
+    // validée : sinon on servirait de tremplin de redirection ouverte.
     if (!redirectUri) return new Response("Missing redirect_uri", { status: 400 });
     if (!redirectAutorise(redirectUri)) {
       console.warn("[mcp] redirect_uri refusé:", JSON.stringify({ redirectUri, autorises: REDIRECTS_AUTORISES }));
       return new Response(
-        "redirect_uri non autorisé.\n\nSi tu es le propriétaire de cette instance et que ton client MCP utilise " +
-        "légitimement cette adresse, ajoute-la à la variable d'environnement MCP_REDIRECT_URIS de la fonction mcp.\n" +
-        "L'adresse refusée est inscrite dans les journaux de la fonction.",
+        "redirect_uri non autorisé.\n\nSi ton client MCP utilise légitimement cette adresse, ajoute-la à la " +
+        "variable d'environnement MCP_REDIRECT_URIS de la fonction mcp.\nL'adresse refusée est inscrite dans les journaux.",
         { status: 400, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
-    // PKCE obligatoire, et uniquement S256. Sans lui, quiconque intercepte le code peut l'échanger ;
-    // avec lui, il faut aussi le vérificateur, que seul le client légitime détient. C'est ce qui
-    // tient lieu d'usage unique tant que les codes ne sont pas stockés côté serveur (cf. rapport).
     if (!codeChallenge) return redirectToPage("PKCE requis : ce serveur n'accepte plus d'autorisation sans code_challenge");
     if (codeChallengeMethod !== "S256") return redirectToPage("PKCE : seule la méthode S256 est acceptée");
 
@@ -175,16 +158,11 @@ Deno.serve(async (req: Request) => {
     const payload = await verifyPayload(code);
     if (!payload || (payload.exp && payload.exp < Math.floor(Date.now()/1000))) return json({ error: "invalid_grant", error_description: "Code invalide ou expiré" }, 400);
 
-    // PKCE non négociable, et S256 uniquement. « plain » revient à n'avoir aucun PKCE : le
-    // vérificateur passe en clair dans la requête d'autorisation. Retiré aussi des métadonnées
-    // publiées, sinon un client conforme le choisirait et se ferait refuser ici.
     if (!payload.cc || payload.ccm !== "S256") return json({ error: "invalid_grant", error_description: "PKCE S256 requis" }, 400);
     if (!codeVerifier) return json({ error: "invalid_request", error_description: "code_verifier required" }, 400);
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
     if (b64uBytes(new Uint8Array(buf)) !== payload.cc) return json({ error: "invalid_grant", error_description: "PKCE failed" }, 400);
 
-    // Le code est lié à l'adresse de retour pour laquelle il a été émis (RFC 6749 §4.1.3).
-    // Contrôlé si le client la fournit — tous ne le font pas.
     const ruDemande = params.get("redirect_uri");
     if (ruDemande && payload.ru && ruDemande !== payload.ru) return json({ error: "invalid_grant", error_description: "redirect_uri ne correspond pas à celui de l'autorisation" }, 400);
     const ak = await lookupKey(payload.api_key);
@@ -192,7 +170,7 @@ Deno.serve(async (req: Request) => {
     return json({ access_token: payload.api_key, token_type: "Bearer", expires_in: 31536000, scope: (ak.scopes||[]).join(" ") });
   }
 
-  if (p === "/" && req.method === "GET") return json({ name: "eatime360-mcp", version: "0.3.0", transport: "http", auth: "OAuth 2.1", tools_count: TOOLS.length });
+  if (p === "/" && req.method === "GET") return json({ name: "eatime360-mcp", version: "0.3.1", transport: "http", auth: "OAuth 2.1", tools_count: TOOLS.length });
   if (p === "/" && req.method === "POST") {
     const auth = req.headers.get("authorization") || "";
     const key = auth.replace(/^Bearer\s+/i, "").trim();
@@ -204,7 +182,7 @@ Deno.serve(async (req: Request) => {
     const { jsonrpc, method, params, id } = body || {};
     if (jsonrpc !== "2.0" || typeof method !== "string") return jrErr(id ?? null, -32600, "Invalid Request");
     try {
-      if (method === "initialize") return jr(id, { protocolVersion: "2024-11-05", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "eatime360", version: "0.3.0" } });
+      if (method === "initialize") return jr(id, { protocolVersion: "2024-11-05", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "eatime360", version: "0.3.1" } });
       if (method === "notifications/initialized" || method === "notifications/cancelled") return new Response(null, { status: 202, headers: corsHeaders() });
       if (method === "tools/list") return jr(id, { tools: TOOLS });
       if (method === "tools/call") {
