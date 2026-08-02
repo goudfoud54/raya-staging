@@ -3227,8 +3227,13 @@ function _flash(els){
   els.forEach(el=>{ el.classList.add('rep-flash'); setTimeout(()=>el.classList.remove('rep-flash'), 2200); });
   if(els[0]) els[0].scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
 }
+// Seule la grille « par salarié » porte des cellules data-k / rowHours[data-sid]. Si le patron est en
+// vue « par poste » quand il clique une ligne du rapport, on bascule d'abord — sinon la navigation
+// échouerait sans qu'il comprenne pourquoi. setView() re-rend de façon synchrone.
+function _ensureGridView(){ if(VIEW_MODE!=='sal') setView('sal'); }
 function goToPoste(date, svc, roleCle){
   document.getElementById('pdfModal').innerHTML='';
+  _ensureGridView();
   // Toutes les cellules de ce jour+service ; si un rôle est donné, on privilégie ses salariés.
   let tds=[...document.querySelectorAll(`table.plan td[data-k$="|${date}|${svc}"]`)];
   if(roleCle){ const ids=new Set(S.salaries.filter(s=>rolesOf(s.id).includes(roleCle)).map(s=>s.id));
@@ -3238,9 +3243,11 @@ function goToPoste(date, svc, roleCle){
 }
 function goToSalarie(sid){
   document.getElementById('pdfModal').innerHTML='';
+  _ensureGridView();
   const td=document.querySelector(`table.plan td.rowHours[data-sid="${sid}"]`);
   const row=td?td.closest('tr'):null;
-  if(!row){ setSS('','Salarié introuvable dans la vue actuelle'); return; }
+  // Cas normal en rapport MULTI-snack : le salarié n'appartient pas au snack actuellement affiché.
+  if(!row){ setSS('','Salarié introuvable dans la vue actuelle — change de restaurant en haut à gauche'); return; }
   _flash([row]);
 }
 // Bloc rapport phase 3 partagé (mono showSolveReport + multi showMultiSolveReport) : l'AVERTISSEMENT
