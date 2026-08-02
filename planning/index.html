@@ -118,6 +118,11 @@ table.plan td.oth-full{background-image:linear-gradient(rgba(200,160,53,.07),rgb
 table.plan td.oth-corner.oth-full{background-image:linear-gradient(225deg,rgba(200,160,53,.8) 0 7px,transparent 7px),linear-gradient(rgba(200,160,53,.07),rgba(200,160,53,.07))}
 table.plan td.oth-corner.oth-part{background-image:linear-gradient(225deg,rgba(200,160,53,.42) 0 6px,transparent 6px)}
 table.plan td.oth-busy{background-repeat:no-repeat}
+/* Rapport → grille : la ligne cliquée surligne brièvement sa cible (cellule ou ligne salarié). */
+.rep-row:hover{background:rgba(255,255,255,.05)}
+@keyframes repFlash{0%,100%{box-shadow:inset 0 0 0 0 rgba(200,160,53,0)}20%,80%{box-shadow:inset 0 0 0 2px var(--gold)}}
+.rep-flash{animation:repFlash 2.2s ease}
+table.plan tr.rep-flash td{background:rgba(200,160,53,.16)!important}
 table.plan td input:hover{border-color:var(--line-2)}
 table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
 .role-c{color:#e8a06a;font-size:9px;margin-left:5px;font-weight:700}
@@ -230,6 +235,7 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       <button class="ic" id="btnRedo" onclick="redo()" data-tip="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled>↷</button>
       <button class="ic" onclick="openDemandes()" data-tip="Demandes d'indisponibilités à valider" aria-label="Demandes d'indisponibilités">🔔<span id="demandesBadge" class="ic-badge" style="display:none"></span></button>
       <button class="ic accent" onclick="openAutoFillPicker()" data-tip="Auto-fill : remplir la semaine (1 ou plusieurs snacks) selon les dispos & règles" aria-label="Auto-fill">🎲</button>
+      <button class="ic" onclick="openAnalyse()" data-tip="Analyser la semaine affichée : postes non comblés, salariés sous leur minimum ou au-dessus de leur plafond, dérogations, coût. Recalculé sur la grille réelle, même après une saisie à la main." aria-label="Analyser la semaine">🔍</button>
       <button class="ic" onclick="openPurgePicker()" data-tip="Purger la semaine : supprimer tous les créneaux (1 ou plusieurs snacks, annulable)" aria-label="Purger la semaine">🧹</button>
       <button class="ic" onclick="openReglages()" data-tip="Réglages (effectifs, postes, règles)" aria-label="Réglages">⚙️</button>
       <button class="ic" onclick="openReport()" data-tip="Rapport réel vs prévu (pointages badgeuse × planning)" aria-label="Rapport réel vs prévu">📊</button>
@@ -292,7 +298,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.57 · règles inter-snack (fin tardive, amplitude, repos hebdo) · chaque refus dit POURQUOI · badges expliqués · cases « déjà pris ailleurs »';
+const VERSION='v0.58 · bouton 🔍 Analyser la semaine (à tout moment, recalculé sur la grille réelle) · règles inter-snack · chaque refus dit POURQUOI';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -600,7 +606,7 @@ async function init(){
 async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
   const toIncl=fmtDate(new Date(MONDAY.getTime()+7*86400000)); // lundi suivant (pour la règle « veille » du dimanche)
-  const[s,ro,d,cr,crAll,eff,reg,orr,alt,disc,ct]=await Promise.all([
+  const[s,ro,d,cr,crAll,eff,reg,orr,alt,disc,ct,der]=await Promise.all([
     sb.from('salaries').select('*').order('nom'),
     sb.from('salarie_roles').select('*'),
     sb.from('salarie_dispos').select('*'),
@@ -616,9 +622,13 @@ async function loadWeek(){
     sb.from('disciplinary_actions').select('salarie_id,mise_a_pied_debut,mise_a_pied_fin').not('mise_a_pied_debut','is',null).lte('mise_a_pied_debut',fmtDate(new Date(MONDAY.getTime()+6*86400000))).gte('mise_a_pied_fin',from),
     // Contraintes individuelles (pas_apres, pas_avant, pas_de_coupure, max_soirs_semaine, indispo_jour,
     // jours_off_consecutifs, autre) : appliquées dans checkPlacement (auto-fill + saisie manuelle).
-    sb.from('salarie_contraintes').select('*')
+    sb.from('salarie_contraintes').select('*'),
+    // Dérogations de la semaine (créneaux forcés outre une règle) → section dédiée du rapport d'analyse.
+    // salarie_id non nul : les lignes à salarie_id null sont les journalisations de « réglage sous seuil
+    // légal » (logLegalOverride), pas des créneaux. select tolérant : RLS refusée → [] sans casser la page.
+    sb.from('planning_derogations').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to).not('salarie_id','is',null)
   ]);
-  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];
+  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];S.derogations=der.data||[];
   S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
   render();
 }
@@ -879,15 +889,11 @@ function renderTable(){
     const coefOrg=Number(ORG.coef_charges)||1.420;
     const tauxOf=sid=>{const ss=S.salaries.find(x=>x.id===sid);return Number(ss?.taux_horaire_brut)||0;};
     const coefOf=sid=>{const ss=S.salaries.find(x=>x.id===sid);const cp=Number(ss?.coef_charges_perso);return isFinite(cp)&&cp>0?cp:coefOrg;};
-    // somme brut + chargé par salarié sur la semaine
-    let totalBrutSem=0, totalChgSem=0;
-    list.forEach(s=>{
-      const tx=tauxOf(s.id),cf=coefOf(s.id);
-      const minSal=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_dur3(c.heure_debut,c.heure_fin),0);
-      const hSal=minSal/60;
-      totalBrutSem += hSal*tx;
-      totalChgSem  += hSal*tx*cf;
-    });
+    // Somme brut + chargé de la semaine : SOURCE UNIQUE (costOfCreneaux), partagée avec le rapport
+    // d'analyse et la comparaison à la semaine précédente. Restreinte aux salariés affichés, comme avant.
+    const _shown=new Set(list.map(s=>s.id));
+    const _tot=costOfCreneaux(S.creneaux.filter(c=>_shown.has(c.salarie_id)));
+    const totalBrutSem=_tot.brut, totalChgSem=_tot.charge;
     let footHTML='<tr style="background:rgba(63,184,127,.05);border-top:2px solid rgba(63,184,127,.3)"><td class="salname" style="font-weight:700;color:var(--ok)">💰 Coût brut / jour</td>';
     JOURS_SH.forEach((_,i)=>{
       const date=fmtDate(dateOfDay(i));
@@ -2576,12 +2582,8 @@ function showMultiSolveReport(results, underMin){
   const postesRows=allReport.map(r=>`<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:96px;color:var(--gold);font-weight:600">${escP(r.snack)}</span><span style="min-width:150px;font-weight:600">${escP(r.jour)} ${r.svc} · ${escP(r.role)}${r.exp?' ★':''}</span><span style="color:var(--muted);font-family:monospace">${escP(r.horaire||'')}</span><span style="color:var(--bad)">⚠ ${escP(r.detail||'')}</span></div>${whyLineHtml(r)}</div>`).join('');
   const postesSection = allReport.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⚠ Postes non comblés (${allReport.length})</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">Aucun candidat conforme (aucune règle enfreinte). À compléter à la main ou ajuster règles/effectifs/dispos.</div>${postesRows}</div>` : '';
   const _allSugg=results.flatMap(r=>(r.phase3&&r.phase3.suggestList)||[]);   // suggestions de tous les snacks, fusionnées par sid dans suggestFor
-  const umRows=underMin.map(u=>{
-    const ref=(u.blocked>0)?u.proratedMin:u.min;
-    const absTag=(u.blocked>0)?` <span style="color:var(--muted);font-weight:400">· ${u.blocked} j d'absence → attendu ~${fmtH1(u.proratedMin)} h</span>`:'';
-    const sgHtml=suggestLineHtml(suggestFor(u.sid,_allSugg));
-    return `<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>${sgHtml}</div>`;
-  }).join('');
+  // Même gabarit de ligne que le rapport mono et que l'analyse à la demande (source unique).
+  const umRows=underMin.map(u=>underMinRowHtml(u,_allSugg)).join('');
   const minSection = underMin.length ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)"><h3 style="margin:0 0 6px">⏳ Salariés sous leur minimum (${underMin.length})${_allSugg.length?' — à compléter manuellement':''}</h3><div style="color:var(--muted);font-size:12px;margin-bottom:8px">${_allSugg.length?'Sureffectif auto désactivé : l\'app <b>suggère</b>, tu décides. ':''}Total tous snacks confondus. Augmente les effectifs cibles, élargis les dispos, ou pose les suggestions ci-dessous.</div>${umRows}</div>` : '';
   // Phase 3 AGRÉGÉE sur tous les snacks (transfert + rallonge + sureffectif + € rallonge/sureffectif + détails).
   const _sum=k=>results.reduce((a,r)=>a+((r.phase3&&r.phase3[k])||0),0);
@@ -3103,9 +3105,30 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   return null; // ✅ aucune règle active violée
 }
 // Rapport des postes non comblés (modale)
+// ── Lignes de rapport : UN SEUL rendu, utilisé par le rapport d'auto-fill (mono et multi) ET par
+// l'analyse à la demande. Le patron ne doit pas avoir deux présentations à apprendre — et deux gabarits
+// finiraient par diverger, comme renderTable/recomputeAggregates avant eux.
+// Cliquables : une ligne amène AU créneau ou AU salarié concerné dans la grille (goToCell / goToSalarie).
+const _clic='cursor:pointer;border-radius:6px;padding-left:4px;padding-right:4px';
+function posteRowHtml(r){
+  const nav=r.date&&r.svc ? ` onclick="goToPoste('${escJS(r.date)}','${escJS(r.svc)}','${escJS(r.roleCle||'')}')" style="${_clic}" data-tip="Aller à ce service dans la grille"` : '';
+  return `<div class="rep-row"${nav}><div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:160px;font-weight:600">${escP(r.jour)} ${r.svc} · ${escP(r.role)}${r.exp?' ★':''}</span><span style="color:var(--muted);font-family:monospace;min-width:96px">${escP(r.horaire)}</span><span style="color:var(--bad)">⚠ ${escP(r.detail)}</span></div>${whyLineHtml(r)}</div></div>`;
+}
+function underMinRowHtml(u, sugg){
+  // Manque calculé sur le minimum PRORATISÉ (jours réellement dispo) si le salarié a des absences,
+  // sinon sur son minimum contractuel. On indique le nb de jours d'absence pour lever l'ambiguïté.
+  const ref=(u.blocked>0)?u.proratedMin:u.min;
+  const absTag=(u.blocked>0)?` <span style="color:var(--muted);font-weight:400">· ${u.blocked} j d'absence → attendu ~${(Math.round(u.proratedMin*10)/10).toString().replace('.',',')} h</span>`:'';
+  const sgHtml=suggestLineHtml(suggestFor(u.sid,sugg||[]));
+  return `<div class="rep-row" onclick="goToSalarie('${escJS(u.sid)}')" style="${_clic}" data-tip="Aller à la ligne de ${escP(u.name)}"><div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>${sgHtml}</div></div>`;
+}
+// Ligne « salarié » générique (plafond dépassé/proche, aucun créneau) — même gabarit, couleur variable.
+function salRowHtml(sid, name, multi, droite, couleur){
+  return `<div class="rep-row" onclick="goToSalarie('${escJS(sid)}')" style="${_clic}" data-tip="Aller à la ligne de ${escP(name)}"><div style="display:flex;gap:8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><span style="min-width:200px;font-weight:600">${escP(name)}${multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}</span><span style="color:${couleur}">${droite}</span></div></div>`;
+}
 function showSolveReport(report, underMin, phase3){
   report=report||[]; underMin=underMin||[];
-  const rows=report.map(r=>`<div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:160px;font-weight:600">${escP(r.jour)} ${r.svc} · ${escP(r.role)}${r.exp?' ★':''}</span><span style="color:var(--muted);font-family:monospace;min-width:96px">${escP(r.horaire)}</span><span style="color:var(--bad)">⚠ ${escP(r.detail)}</span></div>${whyLineHtml(r)}</div>`).join('');
+  const rows=report.map(r=>posteRowHtml(r)).join('');
   // Section « postes non comblés » (échecs de placement : candidat introuvable) — distincte des
   // salariés sous leur minimum. Ces postes existent bien dans les objectifs (les trous non générés
   // faute d'effectif configuré n'apparaissent PAS ici, ce ne sont pas de vrais échecs de placement).
@@ -3114,14 +3137,7 @@ function showSolveReport(report, underMin, phase3){
     <div style="color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5">L'auto-fill n'a placé personne sur ces postes <b>sans enfreindre une règle active</b> (candidat introuvable). Complète-les à la main, ou ajuste les règles / effectifs / disponibilités. <b style="color:var(--text)">Aucun planning non conforme n'a été généré.</b></div>
     ${rows}` : '';
   const _sugg=(phase3||{}).suggestList||[];
-  const umRows=underMin.map(u=>{
-    // Manque calculé sur le minimum PRORATISÉ (jours réellement dispo) si le salarié a des absences,
-    // sinon sur son minimum contractuel. On indique le nb de jours d'absence pour lever l'ambiguïté.
-    const ref=(u.blocked>0)?u.proratedMin:u.min;
-    const absTag=(u.blocked>0)?` <span style="color:var(--muted);font-weight:400">· ${u.blocked} j d'absence → attendu ~${(Math.round(u.proratedMin*10)/10).toString().replace('.',',')} h</span>`:'';
-    const sgHtml=suggestLineHtml(suggestFor(u.sid,_sugg));
-    return `<div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(u.name)}${u.multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}${absTag}</span><span style="color:var(--warn)">${u.have.toFixed(1)} h / ${u.min} h min <b>· manque ${Math.max(0,ref-u.have).toFixed(1)} h</b></span></div>${sgHtml}</div>`;
-  }).join('');
+  const umRows=underMin.map(u=>underMinRowHtml(u,_sugg)).join('');
   const minSection = underMin.length ? `
     <div style="margin-top:${report.length?'18px':'0'};padding-top:${report.length?'14px':'0'};${report.length?'border-top:1px solid var(--line-2)':''}">
       <h3 style="margin:0 0 8px">⏳ Salariés sous leur minimum d'heures (${underMin.length})${_sugg.length?' — à compléter manuellement':''}</h3>
@@ -3133,6 +3149,93 @@ function showSolveReport(report, underMin, phase3){
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
     ${buildLegalWarn()}${interWarn}${sureffWarn}${overflowWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
+}
+// ═══ BOUTON « ANALYSER LA SEMAINE » ══════════════════════════════════════════════════════════════
+// Disponible en permanence, contrairement au rapport d'auto-fill qui n'apparaissait qu'à la fin d'un
+// remplissage. Recalcule TOUT depuis la grille réelle (analyseWeek) : le patron s'en sert justement
+// APRÈS avoir modifié quelque chose à la main, un rapport rejoué de mémoire lui mentirait.
+async function openAnalyse(){
+  setSS('busy','Analyse en cours…');
+  // Coût de la semaine PRÉCÉDENTE (même restaurant) pour l'écart. Best-effort : en cas d'échec on
+  // affiche le coût sans comparaison plutôt que de bloquer l'analyse.
+  let prevCost=null;
+  try{
+    const pFrom=fmtDate(new Date(MONDAY.getTime()-7*86400000)), pTo=fmtDate(MONDAY);
+    const {data}=await sb.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin')
+      .eq('restaurant_id',SNACK.id).gte('date',pFrom).lt('date',pTo);
+    if(data) prevCost=costOfCreneaux(data).brut;
+  }catch(e){ console.warn('[planning] coût semaine précédente indisponible', e); }
+  const ana=analyseWeek({prevCost});
+  setSS('', '');
+  showAnalyseReport(ana);
+}
+// Rapport d'analyse — MÊME fenêtre et MÊME présentation que le rapport d'auto-fill (rien de nouveau à
+// apprendre), enrichi des sections que la grille seule ne montre pas.
+function showAnalyseReport(ana){
+  const eur=x=>Math.round(x).toLocaleString('fr-FR')+' €';
+  const sec=(titre, aide, contenu, marge)=> contenu ? `<div style="margin-top:${marge?'18px':'0'};padding-top:${marge?'14px':'0'};${marge?'border-top:1px solid var(--line-2)':''}">
+      <h3 style="margin:0 0 6px">${titre}</h3>${aide?`<div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">${aide}</div>`:''}${contenu}</div>` : '';
+  let n=0; const m=()=>(n++>0);
+  // 1. Conclusion — la première chose lue.
+  const bandeau=`<div style="background:${ana.rien?'rgba(63,184,127,.12)':'rgba(224,169,58,.12)'};border:1px solid ${ana.rien?'var(--ok)':'var(--warn)'};border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:${ana.rien?'var(--ok)':'var(--warn)'};font-weight:700;font-size:13.5px">${ana.rien?'✅ Rien à signaler':'📋 Bilan'} — ${escP(ana.conclusion)}</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">Semaine du ${escP(fmtDate(dateOfDay(0)))} · ${escP(SNACK&&SNACK.nom||'')} · calculé à l'instant sur la grille affichée${ana.rien?'. Le planning est complet, tout le monde est dans ses bornes et aucune règle n\'a été forcée.':'. Clique une ligne pour aller au créneau ou au salarié concerné.'}</div></div>`;
+  // 2. Coût de la semaine + écart.
+  const ec=ana.cout.ecart;
+  const ecTxt = ec==null ? '<span style="color:var(--muted)">semaine précédente indisponible</span>'
+    : (Math.abs(ec)<1 ? '<span style="color:var(--muted)">identique à la semaine précédente</span>'
+    : `<span style="color:${ec>0?'var(--warn)':'var(--ok)'};font-weight:700">${ec>0?'▲ +':'▼ '}${eur(Math.abs(ec))}</span> <span style="color:var(--muted)">vs semaine précédente (${eur(ana.cout.prevBrut)})</span>`);
+  const coutSection=`<div style="display:flex;gap:16px;align-items:baseline;padding:10px 12px;background:rgba(63,184,127,.06);border:1px solid var(--line-2);border-radius:9px;margin-bottom:14px;font-size:12.5px;flex-wrap:wrap">
+    <span style="font-weight:700;color:var(--ok);font-size:14px">${eur(ana.cout.brut)} brut</span>
+    <span style="color:var(--muted)">${eur(ana.cout.charge)} chargé</span>
+    <span>${ecTxt}</span></div>`;
+  // 3. Sections de constat.
+  const sPostes=sec(`⚠ Postes non comblés (${ana.compteurs.postes})`,
+    'Ces postes existent dans les effectifs cibles mais personne ne peut les tenir <b>sans enfreindre une règle active</b>. Le motif et le fait déclencheur sont donnés pour chacun.',
+    ana.postes.map(posteRowHtml).join(''), m());
+  const sMin=sec(`⏳ Salariés sous leur minimum d'heures (${ana.compteurs.sousMin})`,
+    'Total <b>tous restaurants confondus</b> pour les multi-snack. L\'app ne dépense jamais d\'heures non demandées pour combler : à toi de décider.',
+    ana.sousMin.map(u=>underMinRowHtml(u,[])).join(''), m());
+  const sPlaf=sec(`🚨 Salariés au-dessus de leur plafond (${ana.compteurs.surPlafond})`,
+    'Dépassement du plafond hebdomadaire, tous restaurants confondus. À corriger avant publication.',
+    ana.surPlafond.map(u=>salRowHtml(u.sid,u.name,u.multi,`${fmtH1(u.have)} h / ${fmtH1(u.max)} h max <b>· dépasse de ${fmtH1(u.ecart)} h</b>`,'var(--bad)')).join(''), m());
+  const sProche=sec(`⚡ Salariés proches de leur plafond (${ana.compteurs.prochePlafond})`,
+    `À ${Math.round(PLAFOND_PROCHE_PCT*100)} % ou plus de leur plafond : il reste peu de marge pour un remplacement de dernière minute.`,
+    ana.prochePlafond.map(u=>salRowHtml(u.sid,u.name,u.multi,`${fmtH1(u.have)} h / ${fmtH1(u.max)} h max · reste ${fmtH1(u.reste)} h`,'var(--warn)')).join(''), m());
+  const sVide=sec(`👤 Salariés sans aucun créneau (${ana.compteurs.sansCreneau})`,
+    'Aucune heure cette semaine, sur aucun restaurant, alors qu\'ils ne sont pas absents toute la semaine.',
+    ana.sansCreneau.map(u=>salRowHtml(u.sid,u.name,u.multi,u.blocked?`aucune heure · ${u.blocked} j d'absence`:'aucune heure',
+      'var(--muted)')).join(''), m());
+  const derogRows=ana.derogs.map(d=>`<div class="rep-row" onclick="goToPoste('${escJS(d.date)}','${escJS(d.service||'midi')}','')" style="${_clic}" data-tip="Aller à ce créneau dans la grille"><div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(d.name)}</span><span style="color:var(--muted);min-width:120px">${escP(d.jour)} ${escP(d.service||'')}</span><span style="color:var(--bad)">⛔ ${escP(d.regle_label||d.regle_cle||'règle forcée')}</span></div>${d.motif?`<div style="font-size:11.5px;color:var(--info,#4a7fbd);margin-top:3px">motif : ${escP(d.motif)}</div>`:''}</div></div>`).join('');
+  const sDerog=sec(`🔓 Créneaux forcés en dérogation (${ana.compteurs.derogs})`,
+    'Ces créneaux ont été enregistrés <b>malgré une règle enfreinte</b>, avec un motif. C\'est ce qu\'il faut relire avant de publier le planning.',
+    derogRows, m());
+  document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:700px;width:92vw;max-height:85vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">🔍 Analyse de la semaine</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
+    ${bandeau}${coutSection}${buildLegalWarn()}${sPostes}${sMin}${sPlaf}${sProche}${sVide}${sDerog}</div></div>`;
+}
+// ── Navigation depuis le rapport vers la grille ──────────────────────────────────────────────────
+// Un rapport qu'il faut reporter à la main sur le tableau ne fait gagner qu'à moitié. On ferme la
+// modale, on fait défiler jusqu'à la cible et on la surligne brièvement.
+function _flash(els){
+  els.forEach(el=>{ el.classList.add('rep-flash'); setTimeout(()=>el.classList.remove('rep-flash'), 2200); });
+  if(els[0]) els[0].scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
+}
+function goToPoste(date, svc, roleCle){
+  document.getElementById('pdfModal').innerHTML='';
+  // Toutes les cellules de ce jour+service ; si un rôle est donné, on privilégie ses salariés.
+  let tds=[...document.querySelectorAll(`table.plan td[data-k$="|${date}|${svc}"]`)];
+  if(roleCle){ const ids=new Set(S.salaries.filter(s=>rolesOf(s.id).includes(roleCle)).map(s=>s.id));
+    const f=tds.filter(td=>ids.has((td.dataset.k||'').split('|')[0])); if(f.length) tds=f; }
+  if(!tds.length){ setSS('','Créneau introuvable dans la vue actuelle'); return; }
+  _flash(tds);
+}
+function goToSalarie(sid){
+  document.getElementById('pdfModal').innerHTML='';
+  const td=document.querySelector(`table.plan td.rowHours[data-sid="${sid}"]`);
+  const row=td?td.closest('tr'):null;
+  if(!row){ setSS('','Salarié introuvable dans la vue actuelle'); return; }
+  _flash([row]);
 }
 // Bloc rapport phase 3 partagé (mono showSolveReport + multi showMultiSolveReport) : l'AVERTISSEMENT
 // sureffectif (masse salariale ajoutée) est un encart WARNING en HAUT du rapport, avec estimation € ;
@@ -3192,6 +3295,117 @@ function buildPhase3Report(p3, hasPrev){
     ${tRows}${rRows}${sRows}</div>` : '';
   return {sureffWarn, overflowWarn, interWarn, phase3Section};
 }
+// ═══ ANALYSE DE LA SEMAINE — SOURCE UNIQUE, PARTAGÉE AVEC L'AUTO-FILL ════════════════════════════
+// Ces deux fonctions étaient enfermées dans autoFillCore : le rapport n'existait donc qu'à la fin d'un
+// remplissage automatique. Elles en sont sorties telles quelles pour que le bouton « Analyser » produise
+// EXACTEMENT le même constat sur l'état réel de la grille — y compris sur une semaine saisie à la main.
+// Deux calculs séparés du même constat finiraient par diverger (cf. renderTable vs recomputeAggregates).
+//
+// Trous = vagues non couvertes (cascade jour→service→rôle→vagues ; les créneaux hors-vague consomment un
+// poste). Lit S.creneaux — le snack COURANT — et c'est correct : un poste à combler et son effectif cible
+// appartiennent à un restaurant. Ce sont les compteurs par PERSONNE (heures, plafond) qui doivent être
+// inter-snack, pas celui-ci.
+function computeHoles(dayIndices){
+  const holes=[];
+  for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
+    for(const svc of ['midi','soir']) for(const _r of S.orgRoles){ const role=_r.cle;
+      const shifts=getShifts(jt,svc,role); if(!shifts.length)continue;
+      const cur=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut&&onRoster(salById(c.salarie_id)));
+      if(cur.length>=shifts.length)continue;
+      const filled=new Set();
+      cur.forEach(c=>{for(let i=0;i<shifts.length;i++){if(!filled.has(i)&&(c.heure_debut||'').slice(0,5)===shifts[i].deb){filled.add(i);break;}}});
+      let extra=cur.length-filled.size;
+      for(let i=0;i<shifts.length;i++){ if(filled.has(i))continue; if(extra>0){extra--;continue;} holes.push({di,date,jt,svc,role,shift:{...shifts[i],role}}); }
+    }
+  }
+  return holes;
+}
+// Diagnostic de la règle dominante qui bloque un poste (pour le rapport).
+function diagHole(h, rg){
+  const tally={}; let capable=false; const eligIds=[];
+  for(const s of S.salaries){ if(!onRoster(s)||!worksAt(s,SNACK.id)||!rolesOf(s.id).includes(h.role))continue; if(h.shift.exp&&!isExp(s.id,h.role))continue; capable=true;
+    // On garde UN exemple de refus par règle : le rapport doit pouvoir montrer le fait déclencheur
+    // concret (« Yasmine finit à 00:30 à Lobau »), pas seulement « 4 candidats bloqués ».
+    const v=checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg}); if(v){tally[v.cle]=tally[v.cle]||{n:0,label:v.label,ex:null,exNom:''};tally[v.cle].n++; if(!tally[v.cle].ex){tally[v.cle].ex=v;tally[v.cle].exNom=[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';}} else eligIds.push(s.id); }
+  const meta={jour:JOURS[h.di],date:h.date,svc:h.svc,role:roleNom(h.role),roleCle:h.role,horaire:`${h.shift.deb}→${h.shift.fin}`,exp:!!h.shift.exp};
+  // Des candidats passent checkPlacement mais sont TOUS écartés par la réserve de capacité → motif dédié
+  // (message best-effort : recalculé sur l'état post-phase-2). Sinon : règle dure dominante du tally.
+  if(eligIds.length){ const g=snackPriorityGate(eligIds); if(g.kept.length===0 && g.gated.length){ return {...meta,cle:'reserve_principal',detail:`${PLACE_RULES.reserve_principal} — ${g.gated.length} multi gardé(s) pour leur snack prioritaire`}; } }
+  const order=Object.keys(PLACE_RULES); let cle,detail,why='',reglage='';
+  if(!capable){ cle='role'; detail=h.shift.exp?'aucun salarié expérimenté pour ce rôle':'aucun salarié avec ce rôle'; reglage=RULE_SOURCE_OF.role||''; }
+  else { const top=Object.entries(tally).sort((a,b)=>order.indexOf(a[0])-order.indexOf(b[0]))[0]; cle=top?top[0]:'inconnu'; detail=top?`${top[1].label} (bloque ${top[1].n} candidat·s)`:'conflit combinatoire';
+    if(top&&top[1].ex){ const e=explainViolation(top[1].ex,{shift:h.shift,date:h.date,svc:h.svc}); if(e){ why=e.why?`ex. ${top[1].exNom} : ${e.why}`:''; reglage=e.reglage||''; } } }
+  return {...meta,cle,detail,why,reglage};
+}
+// Coût d'un ensemble de créneaux (brut + chargé, coef perso sinon coef org) — SOURCE UNIQUE du pied de
+// tableau, du rapport d'analyse et de la comparaison avec la semaine précédente.
+function costOfCreneaux(rows){
+  const coefOrg=Number(ORG.coef_charges)||1.420;
+  let brut=0, charge=0;
+  (rows||[]).forEach(c=>{
+    const s=salById(c.salarie_id); if(!s) return;
+    const h=_pdur(c.heure_debut,c.heure_fin)/60, taux=Number(s.taux_horaire_brut)||0;
+    const cp=Number(s.coef_charges_perso); const coef=(isFinite(cp)&&cp>0)?cp:coefOrg;
+    brut+=h*taux; charge+=h*taux*coef;
+  });
+  return {brut, charge};
+}
+// Un salarié est-il « proche » de son plafond ? Seuil volontairement nommé : s'il devait varier d'un
+// établissement à l'autre, il deviendrait un réglage — pour l'instant une valeur par défaut unique suffit.
+const PLAFOND_PROCHE_PCT=0.95;
+// ── L'ANALYSE ────────────────────────────────────────────────────────────────────────────────────
+// Recalcule TOUT depuis l'état courant de S (grille réelle), jamais depuis un souvenir d'auto-fill :
+// c'est toute la valeur du bouton, puisqu'il sert APRÈS une modification manuelle.
+// PURE : aucune requête, aucun DOM. Les données externes (dérogations, coût de la semaine précédente)
+// entrent par `opt` — ce qui la rend testable sur un S fabriqué à la main, sans stub de base.
+// Tous les compteurs par PERSONNE passent par weekHoursOf/plafondOf → inter-snack pour un multi-snack.
+function analyseWeek(opt){
+  opt=opt||{};
+  const rg=_ruleCtx();
+  const days=[0,1,2,3,4,5,6];
+  const dates=days.map(i=>fmtDate(dateOfDay(i)));
+  const postes=computeHoles(days).map(h=>diagHole(h,rg));
+  const roster=_rosterList();
+  const sousMin=[], surPlafond=[], prochePlafond=[], sansCreneau=[];
+  roster.forEach(s=>{
+    const have=weekHoursOf(s.id);                    // inter-snack pour un multi (même source que la colonne Heures)
+    const mn=Number(s.heures_min)||0, mx=plafondOf(s,rg);
+    const blocked=dates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
+    const proratedMin=mn*(7-blocked)/7;
+    if(mn>0 && have<proratedMin-0.01) sousMin.push({sid:s.id,name:fullName(s),have,min:mn,multi:isMultiSnack(s),blocked,proratedMin});
+    if(mx>0 && have>mx+0.01)                      surPlafond.push({sid:s.id,name:fullName(s),have,max:mx,multi:isMultiSnack(s),ecart:have-mx});
+    else if(mx>0 && have>=mx*PLAFOND_PROCHE_PCT) prochePlafond.push({sid:s.id,name:fullName(s),have,max:mx,multi:isMultiSnack(s),reste:mx-have});
+    // « Sans aucun créneau » se juge sur le total GLOBAL : un multi-snack à 0 h ici mais 20 h ailleurs
+    // n'est pas sans planning. Un salarié absent toute la semaine n'est pas une anomalie non plus.
+    if(have<=0.01 && blocked<7) sansCreneau.push({sid:s.id,name:fullName(s),multi:isMultiSnack(s),blocked});
+  });
+  sousMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
+  surPlafond.sort((a,b)=>b.ecart-a.ecart);
+  // Dérogations = créneaux forcés outre une règle. On écarte les lignes salarie_id null : ce sont les
+  // journalisations de « réglage sous seuil légal » (logLegalOverride), pas des créneaux forcés.
+  const derogs=(opt.derogations||S.derogations||[])
+    .filter(d=>d && d.salarie_id && dates.includes(d.date))
+    .map(d=>{ const s=salById(d.salarie_id);
+      return {...d, name:s?fullName(s):'salarié supprimé', jour:JOURS[(new Date(d.date).getDay()+6)%7]||''}; })
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  // Coût : propre au snack affiché (la paie se fait par restaurant).
+  const cout=costOfCreneaux(S.creneaux);
+  cout.prevBrut = (opt.prevCost!=null) ? opt.prevCost : null;
+  cout.ecart    = (opt.prevCost!=null) ? (cout.brut-opt.prevCost) : null;
+  const compteurs={postes:postes.length, sousMin:sousMin.length, surPlafond:surPlafond.length,
+                   prochePlafond:prochePlafond.length, sansCreneau:sansCreneau.length, derogs:derogs.length};
+  const rien = !compteurs.postes && !compteurs.sousMin && !compteurs.surPlafond && !compteurs.sansCreneau && !compteurs.derogs;
+  // Ligne de conclusion en français — la première chose que le patron lit.
+  const bits=[];
+  bits.push(compteurs.postes ? `${compteurs.postes} poste(s) non comblé(s)` : 'planning complet');
+  if(compteurs.sousMin)       bits.push(`${compteurs.sousMin} salarié(s) sous leur minimum`);
+  if(compteurs.surPlafond)    bits.push(`${compteurs.surPlafond} au-dessus de leur plafond`);
+  if(compteurs.prochePlafond) bits.push(`${compteurs.prochePlafond} proche(s) du plafond`);
+  if(compteurs.sansCreneau)   bits.push(`${compteurs.sansCreneau} sans aucun créneau`);
+  if(compteurs.derogs)        bits.push(`${compteurs.derogs} dérogation(s)`);
+  return {postes, sousMin, surPlafond, prochePlafond, sansCreneau, derogs, cout, compteurs, rien,
+          conclusion: bits.join(', ')};
+}
 async function autoFillCore(dayIndices, opt={}){
   if(_autofillRunning)return;            // anti double-clic
   _autofillRunning=true;
@@ -3243,38 +3457,11 @@ async function autoFillCore(dayIndices, opt={}){
   // secondaire qu'en renfort) → tri. La réserve empêche qu'un snack généré tôt aspire les multi des autres.
   const candFor=h=>sortCandidates(snackPriorityGate(S.salaries.filter(s=>checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg})===null).map(s=>s.id)).kept, h);
   if(!opt.phase3only){        // ── PHASES 1&2 (holes + glouton + réparation) — sautées en mode phase 3 seule ──
-  // ── Trous = vagues non couvertes (même cascade jour→service→rôle→vagues, créneaux hors-vague consomment un poste) ──
-  const holes=[];
-  for(const di of dayIndices){ const date=fmtDate(dateOfDay(di)), jt=dayJourType(di);
-    for(const svc of ['midi','soir']) for(const _r of S.orgRoles){ const role=_r.cle;
-      const shifts=getShifts(jt,svc,role); if(!shifts.length)continue;
-      const cur=S.creneaux.filter(c=>c.date===date&&c.service===svc&&c.role===role&&c.heure_debut&&onRoster(salById(c.salarie_id)));
-      if(cur.length>=shifts.length)continue;
-      const filled=new Set();
-      cur.forEach(c=>{for(let i=0;i<shifts.length;i++){if(!filled.has(i)&&(c.heure_debut||'').slice(0,5)===shifts[i].deb){filled.add(i);break;}}});
-      let extra=cur.length-filled.size;
-      for(let i=0;i<shifts.length;i++){ if(filled.has(i))continue; if(extra>0){extra--;continue;} holes.push({di,date,jt,svc,role,shift:{...shifts[i],role}}); }
-    }
-  }
+  const holes=computeHoles(dayIndices);
   // Ordre MRV : postes "expérimenté requis" puis les plus contraints (moins de candidats) d'abord
   holes.forEach(h=>h._n=candFor(h).length);
   holes.sort((a,b)=>{const ae=a.shift.exp?0:1,be=b.shift.exp?0:1;if(ae!==be)return ae-be;return a._n-b._n;});
-  // Diagnostic de la règle dominante qui bloque un poste (pour le rapport)
-  const diag=(h)=>{ const tally={}; let capable=false; const eligIds=[];
-    for(const s of S.salaries){ if(!onRoster(s)||!worksAt(s,SNACK.id)||!rolesOf(s.id).includes(h.role))continue; if(h.shift.exp&&!isExp(s.id,h.role))continue; capable=true;
-      // On garde UN exemple de refus par règle : le rapport doit pouvoir montrer le fait déclencheur
-      // concret (« Yasmine finit à 00:30 à Lobau »), pas seulement « 4 candidats bloqués ».
-      const v=checkPlacement(s.id,h.shift,h.date,h.svc,h.di,{rg}); if(v){tally[v.cle]=tally[v.cle]||{n:0,label:v.label,ex:null,exNom:''};tally[v.cle].n++; if(!tally[v.cle].ex){tally[v.cle].ex=v;tally[v.cle].exNom=[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';}} else eligIds.push(s.id); }
-    const meta={jour:JOURS[h.di],date:h.date,svc:h.svc,role:roleNom(h.role),horaire:`${h.shift.deb}→${h.shift.fin}`,exp:!!h.shift.exp};
-    // Des candidats passent checkPlacement mais sont TOUS écartés par la réserve de capacité → motif dédié
-    // (message best-effort : recalculé sur l'état post-phase-2). Sinon : règle dure dominante du tally.
-    if(eligIds.length){ const g=snackPriorityGate(eligIds); if(g.kept.length===0 && g.gated.length){ return {...meta,cle:'reserve_principal',detail:`${PLACE_RULES.reserve_principal} — ${g.gated.length} multi gardé(s) pour leur snack prioritaire`}; } }
-    const order=Object.keys(PLACE_RULES); let cle,detail,why='',reglage='';
-    if(!capable){ cle='role'; detail=h.shift.exp?'aucun salarié expérimenté pour ce rôle':'aucun salarié avec ce rôle'; reglage=RULE_SOURCE_OF.role||''; }
-    else { const top=Object.entries(tally).sort((a,b)=>order.indexOf(a[0])-order.indexOf(b[0]))[0]; cle=top?top[0]:'inconnu'; detail=top?`${top[1].label} (bloque ${top[1].n} candidat·s)`:'conflit combinatoire';
-      if(top&&top[1].ex){ const e=explainViolation(top[1].ex,{shift:h.shift,date:h.date,svc:h.svc}); if(e){ why=e.why?`ex. ${top[1].exNom} : ${e.why}`:''; reglage=e.reglage||''; } } }
-    return {...meta,cle,detail,why,reglage};
-  };
+  const diag=h=>diagHole(h,rg);
   // ── PHASE 1 : glouton conforme — chaque pose est gardée par checkPlacement (via candFor) ──
   const placed=[]; const open=[]; let seen=0;
   for(const h of holes){
