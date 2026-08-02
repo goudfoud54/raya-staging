@@ -23,7 +23,7 @@ for(const fn of ['_toMin','overlaps','_overlap','targetFor','_indispoBlocking','
                  'weekMinutesOf','weekHoursOf','snackPrioriteOf','hoursOnMorePrioritaryRestos','snackPriorityGate',
                  'sureffBlockedByPriority','sortCandidates','plafondOf','getShifts','getCreneau','_creCoversMin',
                  'hasIndispo','isSuspended','hasPonctuelleAbsence','checkPlacement','dayJourType','removeCreneau',
-                 'autoFillCore','_rosterList','analyseWeek','buildPhase3Report','suggestFor']){
+                 'autoFillCore','_rosterList','_withSnack','_revalPhrase','_dateFr','revalidateWeek','analyseWeek','buildPhase3Report','suggestFor']){
   try{ eval("global."+fn+"="+grab(fn)+";"); }catch(e){ console.log('MISS',fn,(''+e).split('\n')[0]); }
 }
 { const i=h.indexOf("const PLACE_RULES="); let d=0,j=h.indexOf("{",i),st=j;

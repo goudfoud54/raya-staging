@@ -17,7 +17,8 @@ const { extractFn } = require('./extract.js');
 
 // Fonctions appelées par d'autres fonctions extraites (checkPlacement, rowHoursCell, autoFillCore…).
 const FNS = [
-  '_finAbsM', '_restoNom', '_svcWindow', '_joinFr',            // règles temporelles de checkPlacement
+  '_finAbsM', '_restoNom', '_svcWindow', '_joinFr',
+  '_dateFr', '_revalPhrase', '_withSnack',   // revalidation du planning existant            // règles temporelles de checkPlacement
   '_hoursCellTip',                    // appelée par rowHoursCell
   '_jourDe', '_creTxt', '_absTxt',    // mise en forme des motifs de refus
   'explainViolation',                 // appelée par diagHole (motif « pourquoi » du rapport)
@@ -38,6 +39,8 @@ const CONST_LINES = [
   { first: '_hhmm', names: ['_hhmm'] },
   { first: 'F2H_SEUIL_DEF', names: ['F2H_SEUIL_DEF', 'F2H_MATIN_MIN'] },
   { first: 'PLAFOND_PROCHE_PCT', names: ['PLAFOND_PROCHE_PCT'] },
+  { first: 'REVAL_SEMAINE', names: ['REVAL_SEMAINE'] },
+  { first: '_creKey', names: ['_creKey'] },
 ];
 
 // Extrait `const <name>={…}` en équilibrant les accolades. Les COMMENTAIRES sont sautés AVANT les

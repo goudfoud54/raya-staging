@@ -246,6 +246,10 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
       <button class="ic" onclick="logout()" data-tip="Déconnexion" aria-label="Déconnexion">↩</button>
     </div>
   </div>
+  <!-- Bandeau de non-conformité : rempli par renderConformite() à CHAQUE rendu. Le patron ne cliquera
+       pas sur « Analyser » s'il n'a aucune raison de soupçonner un problème — c'est exactement ce qui
+       s'est passé avec les 7 jours de Youcef. Discret mais présent, avec le compte et un lien. -->
+  <div id="conformiteBar" style="display:none"></div>
 
   <div class="eff-wrap"><div class="eff-grid" id="effGrid"></div></div>
 
@@ -298,7 +302,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.60 · règles cloisonnées par organisation (faille anon corrigée, migration v6.33) · exception possible par restaurant · seuil réglable de la fermeture tardive';
+const VERSION='v0.61 · REVALIDATION : le planning déjà posé est rejugé contre toutes les règles, sur les 3 restaurants — bandeau à l\'ouverture + avertissement avant export PDF';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1541,7 +1545,30 @@ function render(){
   renderChecks();updateUndoBtns();updateViewButtons();updateDemandesBadge();
   recomputeAggregates();   // point de passage unique : coûts/heures toujours à jour après TOUT rendu (auto-fill, undo/redo, bascule de vue, import…)
   renderMobile();          // vue mobile (< 820px) — même données, mêmes helpers que la grille (jamais de divergence)
+  renderConformite();      // bandeau « planning non conforme » — au MÊME point de passage, donc toujours à jour
   setSS('','');
+}
+// Bandeau de non-conformité (discret, permanent). Texte produit par une fonction PURE (conformiteBanner)
+// pour être testable ; renderConformite ne fait que le poser dans le DOM.
+function conformiteBanner(reval){
+  const n=(reval&&reval.infractions&&reval.infractions.length)||0;
+  if(!n) return null;
+  const noms=[...new Set(reval.infractions.map(x=>x.name))];
+  const qui = noms.length<=3 ? noms.join(', ') : `${noms.slice(0,3).join(', ')} et ${noms.length-3} autre(s)`;
+  return {n, texte:`${n} créneau(x) de cette semaine ${n>1?'enfreignent':'enfreint'} une règle active — ${qui}.`};
+}
+function renderConformite(){
+  const el=document.getElementById('conformiteBar'); if(!el) return;
+  let b=null;
+  try{ b=conformiteBanner(revalidateWeek()); }
+  catch(e){ console.warn('[planning] revalidation impossible', e); el.style.display='none'; return; }
+  if(!b){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='';
+  el.innerHTML=`<div style="margin:0 12px 8px;padding:9px 13px;border-radius:9px;background:rgba(196,90,90,.12);border:1px solid var(--bad);display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px">
+    <span style="color:var(--bad);font-weight:700">⛔ Planning non conforme</span>
+    <span style="color:var(--text)">${escP(b.texte)}</span>
+    <button class="btn ghost sm" style="margin-left:auto;border-color:var(--bad);color:var(--bad)" onclick="openAnalyse()">Voir le détail</button>
+  </div>`;
 }
 
 // ════════ VUE MOBILE (< 820px) ════════════════════════════════════════════════════════════════════
@@ -1789,7 +1816,12 @@ const RULE_META={
 // inventer de numéros d'article : une mauvaise citation dans un produit de revente est un risque juridique.
 const LEGAL_LIMITS={
   repos_quotidien_h:{dir:'min', seuil:11, unit:'h', label:'repos quotidien de 11 h consécutives', ref:'art. L3131-1 du Code du travail'},
-  jour_off_min:{dir:'min', seuil:1,  unit:'j', label:'repos hebdomadaire (au moins 1 jour de repos par semaine)', ref:'seuil légal français'}, // seuil à confirmer
+  // Références fournies et vérifiées par le patron (2026-08-02), remplaçant le « seuil à confirmer » :
+  // L.3132-1 = interdiction de faire travailler plus de six jours par semaine · L.3132-2 = repos
+  // hebdomadaire de 24 h consécutives AUXQUELLES S'AJOUTENT les 11 h de repos quotidien (L.3131-1),
+  // soit 35 h d'affilée. ⚠ jour_off_min ne contrôle QUE le nombre de jours travaillés : les 35 h
+  // consécutives ne sont vérifiées par AUCUNE règle à ce jour (signalé au patron, non implémenté).
+  jour_off_min:{dir:'min', seuil:1,  unit:'j', label:'repos hebdomadaire (au moins 1 jour de repos par semaine)', ref:'art. L.3132-1 et L.3132-2 du Code du travail'},
   plafond_hebdo:{dir:'max', seuil:48, unit:'h', label:'durée hebdomadaire maximale absolue de 48 h', ref:'seuil légal français'},              // seuil à confirmer
   amplitude_max:{dir:'max', seuil:13, unit:'h', label:'amplitude journalière maximale de 13 h', ref:'convention collective (ex. HCR)'},        // seuil à confirmer
 };
@@ -3292,9 +3324,13 @@ function showAnalyseReport(ana){
       <h3 style="margin:0 0 6px">${titre}</h3>${aide?`<div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">${aide}</div>`:''}${contenu}</div>`;
   };
   // 1. Conclusion — la première chose lue.
-  const bandeau=`<div style="background:${ana.rien?'rgba(63,184,127,.12)':'rgba(224,169,58,.12)'};border:1px solid ${ana.rien?'var(--ok)':'var(--warn)'};border-radius:10px;padding:12px 14px;margin-bottom:14px">
-    <div style="color:${ana.rien?'var(--ok)':'var(--warn)'};font-weight:700;font-size:13.5px">${ana.rien?'✅ Rien à signaler':'📋 Bilan'} — ${escP(ana.conclusion)}</div>
-    <div style="color:var(--muted);font-size:12px;margin-top:4px">Semaine du ${escP(fmtDate(dateOfDay(0)))} · ${escP(SNACK&&SNACK.nom||'')} · calculé à l'instant sur la grille affichée${ana.rien?'. Le planning est complet, tout le monde est dans ses bornes et aucune règle n\'a été forcée.':'. Clique une ligne pour aller au créneau ou au salarié concerné.'}</div></div>`;
+  // Rouge dès qu'un créneau est non conforme : ce n'est pas du même ordre qu'un poste non comblé.
+  const gr=ana.compteurs.infractions>0 ? {bg:'rgba(196,90,90,.14)',bd:'var(--bad)',fg:'var(--bad)',ic:'⛔ Planning NON CONFORME'}
+        : ana.rien ? {bg:'rgba(63,184,127,.12)',bd:'var(--ok)',fg:'var(--ok)',ic:'✅ Rien à signaler'}
+        : {bg:'rgba(224,169,58,.12)',bd:'var(--warn)',fg:'var(--warn)',ic:'📋 Bilan'};
+  const bandeau=`<div style="background:${gr.bg};border:1px solid ${gr.bd};border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:${gr.fg};font-weight:700;font-size:13.5px">${gr.ic} — ${escP(ana.conclusion)}</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">Semaine du ${escP(fmtDate(dateOfDay(0)))} · conformité rejugée sur les <b>${(S.restos||[]).length} restaurants</b> · le reste sur ${escP(SNACK&&SNACK.nom||'')}${ana.rien?'. Le planning est conforme et complet, tout le monde est dans ses bornes et aucune règle n\'a été forcée.':'. Clique une ligne pour aller au créneau ou au salarié concerné.'}</div></div>`;
   // 2. Coût de la semaine + écart.
   const ec=ana.cout.ecart;
   const ecTxt = ec==null ? '<span style="color:var(--muted)">semaine précédente indisponible</span>'
@@ -3304,7 +3340,22 @@ function showAnalyseReport(ana){
     <span style="font-weight:700;color:var(--ok);font-size:14px">${eur(ana.cout.brut)} brut</span>
     <span style="color:var(--muted)">${eur(ana.cout.charge)} chargé</span>
     <span>${ecTxt}</span></div>`;
-  // 3. Sections de constat.
+  // 3. Sections de constat — la CONFORMITÉ d'abord.
+  const infraRow=(x,assumee)=>`<div class="rep-row" onclick="goToPoste('${escJS(x.date)}','${escJS(x.svc||'midi')}','')" style="${_clic}" data-tip="Aller à ce créneau dans la grille"><div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+        <span style="min-width:190px;font-weight:600">${escP(x.name)}</span>
+        <span style="color:var(--muted);font-family:monospace;min-width:150px">${escP(x.jour)} ${escP(x.horaire)} · ${escP(x.restaurant)}</span>
+        <span style="color:${assumee?'var(--warn)':'var(--bad)'};font-weight:600">${assumee?'⚠':'⛔'} ${escP(x.label)}</span></div>
+      <div style="font-size:11.5px;color:var(--text);line-height:1.5;margin-top:3px">${escP(x.why)}</div>
+      ${assumee&&x.derog?`<div style="font-size:11.5px;color:var(--muted);margin-top:2px">dérogation assumée${x.derog.regle?` pour « ${escP(x.derog.regle)} »`:''}${x.derog.motif?` · motif : ${escP(x.derog.motif)}`:''}</div>`:''}
+      ${!assumee&&x.reglage?`<div style="font-size:11.5px;color:var(--muted);margin-top:2px">📍 ${escP(x.reglage)}</div>`:''}
+    </div></div>`;
+  const sInfra=sec(`⛔ Créneaux NON CONFORMES aux règles (${ana.compteurs.infractions})`,
+    'Créneaux <b>déjà posés</b> qui enfreignent une règle active — rejugés à l\'instant sur les <b>trois restaurants</b>. Une règle corrigée, un réglage modifié ou un créneau ajouté ailleurs peuvent rendre non conforme un planning validé hier. <b style="color:var(--bad)">Rien n\'est corrigé automatiquement : c\'est votre arbitrage.</b>',
+    ana.infractions.map(x=>infraRow(x,false)).join(''));
+  const sAssum=sec(`⚠ Écarts assumés en dérogation (${ana.compteurs.derogees})`,
+    'Ces créneaux enfreignent aussi une règle, mais une dérogation a été posée sur eux <b>en connaissance de cause</b>, avec un motif. Listés à part pour ne pas noyer les infractions non vues.',
+    ana.derogees.map(x=>infraRow(x,true)).join(''));
   const sPostes=sec(`⚠ Postes non comblés (${ana.compteurs.postes})`,
     'Ces postes existent dans les effectifs cibles mais personne ne peut les tenir <b>sans enfreindre une règle active</b>. Le motif et le fait déclencheur sont donnés pour chacun.',
     ana.postes.map(posteRowHtml).join(''));
@@ -3327,7 +3378,7 @@ function showAnalyseReport(ana){
     derogRows);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:700px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">🔍 Analyse de la semaine</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${bandeau}${coutSection}${buildLegalWarn()}${sPostes}${sMin}${sPlaf}${sProche}${sVide}${sDerog}</div></div>`;
+    ${bandeau}${coutSection}${buildLegalWarn()}${sInfra}${sAssum}${sPostes}${sMin}${sPlaf}${sProche}${sVide}${sDerog}</div></div>`;
 }
 // ── Navigation depuis le rapport vers la grille ──────────────────────────────────────────────────
 // Un rapport qu'il faut reporter à la main sur le tableau ne fait gagner qu'à moitié. On ferme la
@@ -3481,6 +3532,104 @@ const PLAFOND_PROCHE_PCT=0.95;
 // PURE : aucune requête, aucun DOM. Les données externes (dérogations, coût de la semaine précédente)
 // entrent par `opt` — ce qui la rend testable sur un S fabriqué à la main, sans stub de base.
 // Tous les compteurs par PERSONNE passent par weekHoursOf/plafondOf → inter-snack pour un multi-snack.
+// ═══ REVALIDATION DU PLANNING EXISTANT ═══════════════════════════════════════════════════════════
+// Les règles n'étaient évaluées QU'À LA POSE d'un créneau (checkPlacement). Rien ne rejugeait jamais un
+// planning déjà construit — d'où le cas Youcef ARBOUZE : 7 jours sur 7, sur trois restaurants, sans le
+// moindre signal. Trois causes produisent ce silence :
+//   1. une règle corrigée après coup (jour_off_min est devenue inter-snack en v0.57) ;
+//   2. un réglage modifié (baisser un plafond ne remet pas en cause l'existant) ;
+//   3. un créneau ajouté AILLEURS qui rend non conforme un planning validé la veille ici.
+//
+// On rejoue donc checkPlacement — LE MÊME moteur, pas une seconde implémentation — sur chaque créneau
+// existant, en se plaçant dans le contexte de SON restaurant.
+//
+// ⚠ checkPlacement lit SNACK.id et S.creneaux (le snack AFFICHÉ). Pour juger un créneau de Carnot depuis
+// l'écran de Lobau, il faut donc basculer le contexte le temps de l'appel. try/finally OBLIGATOIRE : une
+// exception au milieu de la boucle laisserait la grille affichée pointée sur le mauvais restaurant, et
+// la prochaine saisie écrirait au mauvais endroit.
+function _withSnack(rid, fn){
+  const prevSnack=SNACK, prevCre=S.creneaux;
+  try{
+    const resto=(S.restos||[]).find(r=>r.id===rid);
+    if(resto) SNACK=resto;
+    S.creneaux=(S.allCreneauxWeek||[]).filter(c=>c.restaurant_id===rid);
+    return fn();
+  } finally { SNACK=prevSnack; S.creneaux=prevCre; }
+}
+// Règles dont la violation porte sur la SEMAINE d'un salarié, pas sur un créneau : elles se déclencheraient
+// depuis chacun de ses créneaux (Youcef en produirait neuf). On n'en garde qu'une par salarié.
+const REVAL_SEMAINE=new Set(['jour_off_min','plafond','c_max_soirs']);
+// Identité stable d'un créneau, même sans id (harnais, ligne pas encore enregistrée).
+const _creKey=c=>(c&&c.id)||`${c&&c.date}|${c&&c.service}|${c&&c.restaurant_id}`;
+// Phrase de l'infraction. Pour les règles de SEMAINE, explainViolation parle d'un placement qu'on tente
+// (« ce créneau ferait le 7e ») : à la revalidation il faut un constat, pas une projection.
+function _revalPhrase(v, ctx){
+  const {name, dates, restos, R}=ctx;
+  const p1=dates[0], p7=dates[dates.length-1];
+  if(v.cle==='jour_off_min' && v._off){
+    const n=v._off.worked+1, max=7-v._off.offMin;
+    return `${name} travaille ${n} jours du ${_dateFr(p1)} au ${_dateFr(p7)} (${restos}). Le maximum est de ${max}.`;
+  }
+  if(v.cle==='plafond' && v._plaf){
+    const tot=v._plaf.deja+v._plaf.ajout;
+    return `${name} totalise ${_fh(tot)} h du ${_dateFr(p1)} au ${_dateFr(p7)} (${restos}), au-delà du plafond de ${_fh(v._plaf.max)} h.`;
+  }
+  if(v.cle==='c_max_soirs' && v._contr) return `${name} : ${v._contr.fait} (maximum ${v._contr.valeur}).`;
+  return (R&&R.why)||v.label||'';
+}
+function _dateFr(d){ try{ const x=new Date(d+'T00:00:00'); return `${JOURS[(x.getDay()+6)%7].toLowerCase()} ${x.getDate()}`; }catch(e){ return d; } }
+// Rejoue TOUTES les règles sur TOUS les créneaux de la semaine, TOUS restaurants confondus.
+// PURE (aucune requête, aucun DOM). → {infractions, derogees, total}
+function revalidateWeek(){
+  const dates=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
+  const dset=new Set(dates);
+  const rows=(S.allCreneauxWeek||[]).filter(c=>c.heure_debut && c.heure_fin && dset.has(c.date));
+  const derogs=(S.derogations||[]).filter(d=>d && d.salarie_id);
+  const seen=new Set(), infractions=[], derogees=[];
+  for(const c of rows){
+    const sal=salById(c.salarie_id); if(!sal) continue;
+    const di=(new Date(c.date+'T00:00:00').getDay()+6)%7;
+    const shift={deb:(c.heure_debut||'').slice(0,5), fin:(c.heure_fin||'').slice(0,5), role:c.role, exp:false};
+    // manual:true → on saute « rôle exact » et « expérimenté requis », comme à la saisie manuelle : on
+    // revalide ce que l'application refuserait aujourd'hui, pas davantage.
+    // excludeSelf:true → le créneau testé ne se compte pas lui-même.
+    const res=_withSnack(c.restaurant_id, ()=>{
+      const v=checkPlacement(c.salarie_id, shift, c.date, c.service, di, {manual:true, excludeSelf:true});
+      return v ? {v, expl:explainViolation(v,{shift, date:c.date, svc:c.service})} : null;
+    });
+    if(!res) continue;
+    const v=res.v;
+    // Dédoublonnage : une règle « de paire » (coupure, repos, chevauchement) se déclenche des DEUX côtés.
+    const autre=(v._repos&&v._repos.cre)||(v._coup&&v._coup.cre)||(v._inter&&v._inter.cre)
+             || (v._amp&&v._amp.other)||(v._f2h&&v._f2h.cre)||(v._dbl&&v._dbl.cre)||null;
+    const paire=autre ? [_creKey(c),_creKey(autre)].sort().join('~') : c.date;
+    const cle=REVAL_SEMAINE.has(v.cle) ? `${c.salarie_id}|${v.cle}` : `${c.salarie_id}|${v.cle}|${paire}`;
+    if(seen.has(cle)) continue; seen.add(cle);
+    const mesDates=[...new Set(rows.filter(x=>x.salarie_id===c.salarie_id).map(x=>x.date))].sort();
+    const mesRestos=[...new Set(rows.filter(x=>x.salarie_id===c.salarie_id).map(x=>_restoNom(x.restaurant_id)))].join(', ');
+    const phrase=_revalPhrase(v, {name:fullName(sal), dates:mesDates.length?mesDates:dates, restos:mesRestos, R:res.expl});
+    // Dérogation ASSUMÉE : décidée en connaissance de cause, avec un motif. On apparie sur le CRÉNEAU
+    // (salarié, date, service, restaurant) et non sur la règle : depuis v0.57 la règle qui se déclenche
+    // peut avoir changé, et exiger l'égalité des règles ferait ressurgir des créneaux pourtant assumés.
+    // ⚠ Une règle de PAIRE (coupure, repos, chevauchement) se signale depuis l'un OU l'autre des deux
+    // créneaux, et la dérogation n'a été posée que sur celui que le manager forçait. Chercher seulement
+    // du côté du créneau testé ferait ressurgir comme « non vue » une infraction pourtant assumée.
+    const derFor=x=> x ? derogs.find(d=>d.salarie_id===x.salarie_id && d.date===x.date
+                          && (d.service||null)===(x.service||null) && d.restaurant_id===x.restaurant_id) : null;
+    const der=derFor(c)||derFor(autre);
+    const entry={sid:c.salarie_id, name:fullName(sal), date:c.date, jour:JOURS[di], svc:c.service,
+                 restaurant:_restoNom(c.restaurant_id), restaurantId:c.restaurant_id,
+                 horaire:`${shift.deb}→${shift.fin}`, cle:v.cle, label:v.label,
+                 why:phrase, reglage:(res.expl&&res.expl.reglage)||'',
+                 semaine:REVAL_SEMAINE.has(v.cle),
+                 derog: der ? {motif:der.motif||'', regle:der.regle_label||der.regle_cle||''} : null};
+    (der?derogees:infractions).push(entry);
+  }
+  const ordre=Object.keys(PLACE_RULES);
+  const tri=(a,b)=>(ordre.indexOf(a.cle)-ordre.indexOf(b.cle))||String(a.date).localeCompare(String(b.date))||a.name.localeCompare(b.name);
+  infractions.sort(tri); derogees.sort(tri);
+  return {infractions, derogees, total:infractions.length};
+}
 function analyseWeek(opt){
   opt=opt||{};
   const rg=_ruleCtx();
@@ -3514,18 +3663,24 @@ function analyseWeek(opt){
   const cout=costOfCreneaux(S.creneaux);
   cout.prevBrut = (opt.prevCost!=null) ? opt.prevCost : null;
   cout.ecart    = (opt.prevCost!=null) ? (cout.brut-opt.prevCost) : null;
-  const compteurs={postes:postes.length, sousMin:sousMin.length, surPlafond:surPlafond.length,
+  // Conformité du planning DÉJÀ POSÉ — en premier : un créneau illégal prime sur un poste non comblé.
+  const reval=revalidateWeek();
+  const compteurs={infractions:reval.infractions.length, derogees:reval.derogees.length,
+                   postes:postes.length, sousMin:sousMin.length, surPlafond:surPlafond.length,
                    prochePlafond:prochePlafond.length, sansCreneau:sansCreneau.length, derogs:derogs.length};
-  const rien = !compteurs.postes && !compteurs.sousMin && !compteurs.surPlafond && !compteurs.sansCreneau && !compteurs.derogs;
+  const rien = !compteurs.infractions && !compteurs.postes && !compteurs.sousMin && !compteurs.surPlafond && !compteurs.sansCreneau && !compteurs.derogs;
   // Ligne de conclusion en français — la première chose que le patron lit.
   const bits=[];
+  // L'infraction passe devant : c'est ce qui engage la responsabilité de l'employeur.
+  if(compteurs.infractions)   bits.push(`⛔ ${compteurs.infractions} créneau(x) NON CONFORME(S)`);
   bits.push(compteurs.postes ? `${compteurs.postes} poste(s) non comblé(s)` : 'planning complet');
   if(compteurs.sousMin)       bits.push(`${compteurs.sousMin} salarié(s) sous leur minimum`);
   if(compteurs.surPlafond)    bits.push(`${compteurs.surPlafond} au-dessus de leur plafond`);
   if(compteurs.prochePlafond) bits.push(`${compteurs.prochePlafond} proche(s) du plafond`);
   if(compteurs.sansCreneau)   bits.push(`${compteurs.sansCreneau} sans aucun créneau`);
   if(compteurs.derogs)        bits.push(`${compteurs.derogs} dérogation(s)`);
-  return {postes, sousMin, surPlafond, prochePlafond, sansCreneau, derogs, cout, compteurs, rien,
+  return {infractions:reval.infractions, derogees:reval.derogees,
+          postes, sousMin, surPlafond, prochePlafond, sansCreneau, derogs, cout, compteurs, rien,
           conclusion: bits.join(', ')};
 }
 async function autoFillCore(dayIndices, opt={}){
@@ -4111,8 +4266,29 @@ function openPdfModal(){
 }
 function closePdfModal(){document.getElementById('pdfModal').innerHTML='';}
 
+// Texte de l'avertissement avant export — fonction PURE (testée). null = rien à signaler.
+// `ids` = restaurants cochés à l'export. On n'alerte que sur EUX (c'est ce qui part à l'équipe), mais
+// la revalidation, elle, lit les trois restaurants : une infraction peut être CAUSÉE par un créneau
+// d'un site non coché, et il faut quand même la voir.
+function pdfConformiteWarn(reval, ids){
+  const sel=new Set(ids||[]);
+  const conc=((reval&&reval.infractions)||[]).filter(x=>!sel.size || sel.has(x.restaurantId));
+  if(!conc.length) return null;
+  const lignes=conc.slice(0,6).map(x=>`• ${x.name} — ${x.jour} ${x.horaire} (${x.restaurant}) : ${x.label}`);
+  const reste=conc.length-lignes.length;
+  return `⚠️ Ce planning contient ${conc.length} créneau(x) NON CONFORME(S).\n\n`
+    + lignes.join('\n') + (reste>0?`\n… et ${reste} autre(s)`:'')
+    + `\n\nUn planning distribué à l'équipe engage votre responsabilité d'employeur.\n\nExporter quand même ?`;
+}
 async function runPdf(){
   const ids=[...document.querySelectorAll('.pdfck:checked')].map(c=>c.value);
+  // Dernier point avant que le planning ne parte à l'équipe : c'est le pire moment pour se taire.
+  // On AVERTIT sans bloquer — il peut légitimement vouloir imprimer une semaine non conforme pour
+  // en discuter — mais l'avertissement nomme les créneaux, il ne dit pas juste « attention ».
+  try{
+    const w=pdfConformiteWarn(revalidateWeek(), ids);
+    if(w && !confirm(w)) return;
+  }catch(e){ console.warn('[planning] contrôle de conformité avant export impossible', e); }
   if(!ids.length){alert('Sélectionne au moins un snack');return;}
   closePdfModal();setSS('busy','Génération PDF…');
 
