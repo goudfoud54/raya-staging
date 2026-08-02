@@ -3173,9 +3173,15 @@ async function openAnalyse(){
 // apprendre), enrichi des sections que la grille seule ne montre pas.
 function showAnalyseReport(ana){
   const eur=x=>Math.round(x).toLocaleString('fr-FR')+' €';
-  const sec=(titre, aide, contenu, marge)=> contenu ? `<div style="margin-top:${marge?'18px':'0'};padding-top:${marge?'14px':'0'};${marge?'border-top:1px solid var(--line-2)':''}">
-      <h3 style="margin:0 0 6px">${titre}</h3>${aide?`<div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">${aide}</div>`:''}${contenu}</div>` : '';
-  let n=0; const m=()=>(n++>0);
+  // Le séparateur ne s'ajoute qu'à partir de la 2e section RÉELLEMENT rendue : un compteur incrémenté
+  // aussi sur les sections vides collerait un trait au-dessus de la première section visible.
+  let rendus=0;
+  const sec=(titre, aide, contenu)=>{
+    if(!contenu) return '';
+    const marge=(rendus++>0);
+    return `<div style="margin-top:${marge?'18px':'0'};padding-top:${marge?'14px':'0'};${marge?'border-top:1px solid var(--line-2)':''}">
+      <h3 style="margin:0 0 6px">${titre}</h3>${aide?`<div style="color:var(--muted);font-size:12px;margin-bottom:6px;line-height:1.5">${aide}</div>`:''}${contenu}</div>`;
+  };
   // 1. Conclusion — la première chose lue.
   const bandeau=`<div style="background:${ana.rien?'rgba(63,184,127,.12)':'rgba(224,169,58,.12)'};border:1px solid ${ana.rien?'var(--ok)':'var(--warn)'};border-radius:10px;padding:12px 14px;margin-bottom:14px">
     <div style="color:${ana.rien?'var(--ok)':'var(--warn)'};font-weight:700;font-size:13.5px">${ana.rien?'✅ Rien à signaler':'📋 Bilan'} — ${escP(ana.conclusion)}</div>
@@ -3192,24 +3198,24 @@ function showAnalyseReport(ana){
   // 3. Sections de constat.
   const sPostes=sec(`⚠ Postes non comblés (${ana.compteurs.postes})`,
     'Ces postes existent dans les effectifs cibles mais personne ne peut les tenir <b>sans enfreindre une règle active</b>. Le motif et le fait déclencheur sont donnés pour chacun.',
-    ana.postes.map(posteRowHtml).join(''), m());
+    ana.postes.map(posteRowHtml).join(''));
   const sMin=sec(`⏳ Salariés sous leur minimum d'heures (${ana.compteurs.sousMin})`,
     'Total <b>tous restaurants confondus</b> pour les multi-snack. L\'app ne dépense jamais d\'heures non demandées pour combler : à toi de décider.',
-    ana.sousMin.map(u=>underMinRowHtml(u,[])).join(''), m());
+    ana.sousMin.map(u=>underMinRowHtml(u,[])).join(''));
   const sPlaf=sec(`🚨 Salariés au-dessus de leur plafond (${ana.compteurs.surPlafond})`,
     'Dépassement du plafond hebdomadaire, tous restaurants confondus. À corriger avant publication.',
-    ana.surPlafond.map(u=>salRowHtml(u.sid,u.name,u.multi,`${fmtH1(u.have)} h / ${fmtH1(u.max)} h max <b>· dépasse de ${fmtH1(u.ecart)} h</b>`,'var(--bad)')).join(''), m());
+    ana.surPlafond.map(u=>salRowHtml(u.sid,u.name,u.multi,`${fmtH1(u.have)} h / ${fmtH1(u.max)} h max <b>· dépasse de ${fmtH1(u.ecart)} h</b>`,'var(--bad)')).join(''));
   const sProche=sec(`⚡ Salariés proches de leur plafond (${ana.compteurs.prochePlafond})`,
     `À ${Math.round(PLAFOND_PROCHE_PCT*100)} % ou plus de leur plafond : il reste peu de marge pour un remplacement de dernière minute.`,
-    ana.prochePlafond.map(u=>salRowHtml(u.sid,u.name,u.multi,`${fmtH1(u.have)} h / ${fmtH1(u.max)} h max · reste ${fmtH1(u.reste)} h`,'var(--warn)')).join(''), m());
+    ana.prochePlafond.map(u=>salRowHtml(u.sid,u.name,u.multi,`${fmtH1(u.have)} h / ${fmtH1(u.max)} h max · reste ${fmtH1(u.reste)} h`,'var(--warn)')).join(''));
   const sVide=sec(`👤 Salariés sans aucun créneau (${ana.compteurs.sansCreneau})`,
     'Aucune heure cette semaine, sur aucun restaurant, alors qu\'ils ne sont pas absents toute la semaine.',
     ana.sansCreneau.map(u=>salRowHtml(u.sid,u.name,u.multi,u.blocked?`aucune heure · ${u.blocked} j d'absence`:'aucune heure',
-      'var(--muted)')).join(''), m());
+      'var(--muted)')).join(''));
   const derogRows=ana.derogs.map(d=>`<div class="rep-row" onclick="goToPoste('${escJS(d.date)}','${escJS(d.service||'midi')}','')" style="${_clic}" data-tip="Aller à ce créneau dans la grille"><div style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><div style="display:flex;gap:8px;align-items:baseline"><span style="min-width:200px;font-weight:600">${escP(d.name)}</span><span style="color:var(--muted);min-width:120px">${escP(d.jour)} ${escP(d.service||'')}</span><span style="color:var(--bad)">⛔ ${escP(d.regle_label||d.regle_cle||'règle forcée')}</span></div>${d.motif?`<div style="font-size:11.5px;color:var(--info,#4a7fbd);margin-top:3px">motif : ${escP(d.motif)}</div>`:''}</div></div>`).join('');
   const sDerog=sec(`🔓 Créneaux forcés en dérogation (${ana.compteurs.derogs})`,
     'Ces créneaux ont été enregistrés <b>malgré une règle enfreinte</b>, avec un motif. C\'est ce qu\'il faut relire avant de publier le planning.',
-    derogRows, m());
+    derogRows);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:700px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">🔍 Analyse de la semaine</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
     ${bandeau}${coutSection}${buildLegalWarn()}${sPostes}${sMin}${sPlaf}${sProche}${sVide}${sDerog}</div></div>`;
