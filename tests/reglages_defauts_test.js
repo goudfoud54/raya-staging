@@ -15,6 +15,8 @@ for(const fn of ['_ruleCtx']){ try{ eval("global."+fn+"="+extractFn(h,fn)+";"); 
 
 let ok=true;
 const t=(l,c,extra)=>{console.log((c?'PASS':'FAIL')+' · '+l+(c?'':'   ↳ '+(extra==null?'':extra)));ok=c&&ok;};
+const LOBAU='resto-lobau', GC='resto-gc';
+global.SNACK={id:LOBAU,nom:'Raya Lobau'};   // restaurant AFFICHÉ : décide quelle exception s'applique
 global.S={regles:[]};
 
 console.log('── le défaut AFFICHÉ est le défaut APPLIQUÉ ────────────────────────────────────────────');
@@ -62,6 +64,30 @@ t('ligne en base — le seuil réglé l\'emporte (02:00)', _ruleCtx().raw('fin_m
 t('ligne en base — sureffectif activé par le patron l\'emporte', _ruleCtx().on('sureffectif_minimum',false)===true);
 t('ligne en base — _regleOf renvoie la ligne réelle (avec son id)', _regleOf('fin_matin_seuil').id==='r1');
 t('ligne en base — les autres clés restent virtuelles', _regleOf('transfert_inter_snack')._virtuel===true);
+
+console.log('\n── précédence : exception du restaurant > valeur par défaut de l\'organisation ──────────');
+// Modèle v6.33 : restaurant_id NULL = défaut de l'organisation · renseigné = exception d'un restaurant.
+// Sans arbitrage explicite, c'est l'ordre de retour de la base qui trancherait — et un client tenant une
+// brasserie et un fast-food ne pourrait pas leur donner des règles différentes.
+global.S={regles:[
+  {id:'org', cle:'coupure_min', valeur:'3', active:true, restaurant_id:null},   // défaut organisation
+  {id:'lob', cle:'coupure_min', valeur:'1', active:true, restaurant_id:LOBAU},  // exception Lobau
+  {id:'gc',  cle:'coupure_min', valeur:'9', active:true, restaurant_id:GC},     // exception Grand Cœur
+]};
+t('sur Lobau, l\'exception de Lobau l\'emporte (1 h, pas 3 ni 9)', _ruleCtx().num('coupure_min',3)===1, _ruleCtx().num('coupure_min',3));
+global.SNACK={id:GC,nom:'Raya Grand Cœur'};
+t('sur Grand Cœur, c\'est SON exception qui s\'applique (9 h)', _ruleCtx().num('coupure_min',3)===9, _ruleCtx().num('coupure_min',3));
+global.SNACK={id:'resto-sans-exception'};
+t('sur un restaurant sans exception, retour au défaut de l\'organisation (3 h)', _ruleCtx().num('coupure_min',3)===3, _ruleCtx().num('coupure_min',3));
+t('… et _regleOf renvoie bien la ligne « défaut organisation »', _regleOf('coupure_min').id==='org');
+// Une exception peut aussi DÉSACTIVER une règle sur un seul site.
+global.SNACK={id:LOBAU};
+global.S={regles:[{id:'org',cle:'fin_2h_pas_matin',active:true,valeur:'true',restaurant_id:null},
+                  {id:'lob',cle:'fin_2h_pas_matin',active:false,valeur:'true',restaurant_id:LOBAU}]};
+t('une exception peut désactiver la règle sur un seul restaurant', _ruleCtx().on('fin_2h_pas_matin',true)===false);
+global.SNACK={id:GC};
+t('… sans affecter les autres', _ruleCtx().on('fin_2h_pas_matin',true)===true);
+global.SNACK={id:LOBAU,nom:'Raya Lobau'};
 
 console.log('\n── ce que l\'écran Réglages doit lister ────────────────────────────────────────────────');
 // L'écran construit sa liste depuis Object.keys(RULE_META) ∪ les clés en base. On vérifie ici que les

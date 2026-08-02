@@ -298,7 +298,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.59 · seuil réglable de la fermeture tardive (00:30 par défaut : minuit pile ne bloque plus) · « pris ailleurs » dit la plage LIBRE · bouton 🔍 Analyser';
+const VERSION='v0.60 · règles cloisonnées par organisation (faille anon corrigée, migration v6.33) · exception possible par restaurant · seuil réglable de la fermeture tardive';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -567,7 +567,7 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('pwerr').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
-  const{data:org}=await sb.from('organizations').select('couleur_primaire,coef_charges,permissions,logo_url,nom').eq('id',profile.organization_id).maybeSingle();
+  const{data:org}=await sb.from('organizations').select('id,couleur_primaire,coef_charges,permissions,logo_url,nom').eq('id',profile.organization_id).maybeSingle();
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if(!EatimeAccess.canAccessModule('planning', profile, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Planning');return;}
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
@@ -613,7 +613,10 @@ async function loadWeek(){
     sb.from('planning_creneaux').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to),
     sb.from('planning_creneaux').select('*').gte('date',from).lt('date',to),
     sb.from('planning_effectifs').select('*'),
-    sb.from('planning_regles').select('*'),
+    // Réglages : valeur par DÉFAUT de l'organisation (restaurant_id NULL) + EXCEPTIONS du restaurant
+    // affiché. Le cloisonnement par organisation est assuré par la RLS (v6.33) ; ce filtre-ci évite
+    // simplement de rapatrier les exceptions des AUTRES restaurants, qui ne s'appliquent pas ici.
+    sb.from('planning_regles').select('*').or(`restaurant_id.is.null,restaurant_id.eq.${SNACK.id}`),
     sb.from('org_roles').select('*').eq('actif',true).order('ordre'),
     sb.from('alternance_jours').select('salarie_id,date,type').gte('date',from).lte('date',toIncl),
     // Mises à pied (disciplinary_actions) chevauchant la semaine → jours où le salarié est suspendu,
@@ -2049,13 +2052,13 @@ async function saveEffectif(inp){
 // défaut = max de créneaux sureffectif/salarié). restaurant_id=SNACK.id (comme les autres règles ;
 // _ruleCtx indexe par cle, donc l'effet est de fait au niveau org, cohérent avec le reste).
 async function toggleSureffRule(on){
-  const existing=S.regles.find(r=>r.cle==='sureffectif_minimum');
+  const existing=_regleResolue('sureffectif_minimum');
   if(existing){
     const{error}=await sb.from('planning_regles').update({active:on}).eq('id',existing.id);
     if(error){setSS('err','Erreur: '+error.message);return;}
     existing.active=on;
   } else {
-    const{data,error}=await sb.from('planning_regles').insert({restaurant_id:SNACK.id,cle:'sureffectif_minimum',libelle:'Sureffectif auto (min. d\'heures)',active:on,valeur:'2',type_regle:'souple'}).select().single();
+    const{data,error}=await sb.from('planning_regles').insert({organization_id:_orgId(),restaurant_id:SNACK.id,cle:'sureffectif_minimum',libelle:'Sureffectif auto (min. d\'heures)',active:on,valeur:'2',type_regle:'souple'}).select().single();
     if(error){setSS('err','Erreur: '+error.message);return;}
     if(data)S.regles.push(data);
   }
@@ -2065,13 +2068,13 @@ async function toggleSureffRule(on){
 // pour les organisations existantes sans écriture. restaurant_id=SNACK.id (lu depuis le snack de destination :
 // c'est le site qui « aspire » un salarié qui décide de l'autoriser), cohérent avec le reste des règles.
 async function toggleInterSnackRule(on){
-  const existing=S.regles.find(r=>r.cle==='transfert_inter_snack');
+  const existing=_regleResolue('transfert_inter_snack');
   if(existing){
     const{error}=await sb.from('planning_regles').update({active:on}).eq('id',existing.id);
     if(error){setSS('err','Erreur: '+error.message);return;}
     existing.active=on;
   } else {
-    const{data,error}=await sb.from('planning_regles').insert({restaurant_id:SNACK.id,cle:'transfert_inter_snack',libelle:'Transfert inter-snack (min. d\'heures)',active:on,valeur:'1',type_regle:'souple'}).select().single();
+    const{data,error}=await sb.from('planning_regles').insert({organization_id:_orgId(),restaurant_id:SNACK.id,cle:'transfert_inter_snack',libelle:'Transfert inter-snack (min. d\'heures)',active:on,valeur:'1',type_regle:'souple'}).select().single();
     if(error){setSS('err','Erreur: '+error.message);return;}
     if(data)S.regles.push(data);
   }
@@ -2084,14 +2087,20 @@ async function toggleInterSnackRule(on){
 // restaurant_id null = portée organisation, comme les lignes existantes (cf. remarque du rapport sur
 // l'isolation de cette table).
 async function saveRegle(cle,field,val){
-  const r=(S.regles||[]).find(x=>x.cle===cle);
+  // On modifie la ligne qui S'APPLIQUE réellement ici (exception du restaurant si elle existe, sinon la
+  // valeur par défaut de l'organisation) — pas la première venue.
+  const r=_regleResolue(cle);
   if(r&&r.id){
     const{error}=await sb.from('planning_regles').update({[field]:val}).eq('id',r.id);
     if(error){alert('Erreur: '+error.message);return;}
     r[field]=val;
   } else {
+    // Création : on pose la valeur par DÉFAUT DE L'ORGANISATION (restaurant_id NULL), pas une exception
+    // — c'est le comportement attendu quand on règle depuis l'écran Réglages, et il vaut pour les trois
+    // snacks. Une exception par restaurant demanderait une commande dédiée, qui n'existe pas encore.
+    // organization_id est OBLIGATOIRE depuis v6.33 (cloisonnement) : sans lui, la policy rejette.
     const base=_virtualRegle(cle)||{active:true,valeur:''};
-    const payload={cle, restaurant_id:null, libelle:(RULE_META[cle]||{}).lbl||cle,
+    const payload={cle, organization_id:_orgId(), restaurant_id:null, libelle:(RULE_META[cle]||{}).lbl||cle,
                    active:base.active, valeur:base.valeur, [field]:val};
     const{data,error}=await sb.from('planning_regles').insert(payload).select().single();
     if(error){alert('Erreur: '+error.message);return;}
@@ -2699,14 +2708,27 @@ function _virtualRegle(cle){
           active:(meta.defActive!==undefined?meta.defActive:true),
           valeur:(meta.defVal!==undefined?meta.defVal:'')};
 }
-// Réglage effectif d'une clé : la ligne en base si elle existe, sinon la ligne virtuelle.
-function _regleOf(cle){ return (S.regles||[]).find(x=>x.cle===cle) || _virtualRegle(cle); }
+// Ligne en base qui s'applique VRAIMENT pour une clé, sur le restaurant affiché.
+// PRÉCÉDENCE (modèle v6.33) : l'EXCEPTION du restaurant courant l'emporte sur la valeur par DÉFAUT de
+// l'organisation (restaurant_id NULL). Sans arbitrage explicite, c'est l'ordre de retour de la base qui
+// trancherait — et un client tenant une brasserie et un fast-food ne pourrait pas leur donner des
+// règles différentes, ce qui est précisément l'intérêt de garder restaurant_id.
+function _regleResolue(cle){
+  const rows=(S.regles||[]).filter(x=>x.cle===cle); if(!rows.length) return null;
+  return rows.find(x=>SNACK && x.restaurant_id===SNACK.id)   // exception du restaurant affiché
+      || rows.find(x=>x.restaurant_id==null)                 // valeur par défaut de l'organisation
+      || rows[0];
+}
+// Réglage effectif d'une clé : la ligne résolue si elle existe, sinon la ligne virtuelle.
+function _regleOf(cle){ return _regleResolue(cle) || _virtualRegle(cle); }
+// Organisation courante — SOURCE UNIQUE pour l'écriture des réglages. Doit valoir auth_org() côté base,
+// sinon le WITH CHECK de la policy rejette l'écriture (c'est voulu : mieux vaut un refus visible).
+function _orgId(){ return (ME&&ME.organization_id)||ORG.id||null; }
 function _ruleCtx(){
-  const RG={}; (S.regles||[]).forEach(r=>RG[r.cle]=r);
   // Réglage absent de la base → on retombe sur la MÊME ligne virtuelle que celle affichée dans l'écran
   // Réglages. Sinon l'écran montrerait une valeur et le moteur en appliquerait une autre : exactement
   // l'écart « interface configurable jamais lue à l'exécution » déjà rencontré deux fois sur ce module.
-  const row=c=>RG[c]||_virtualRegle(c);
+  const row=c=>_regleOf(c);
   return {
     num:(c,d)=>{const r=row(c);const v=r!=null?parseFloat(r.valeur):NaN;return isFinite(v)&&v>0?v:d;},
     on :(c,d)=>{const r=row(c);return r?(r.active!==false):d;},

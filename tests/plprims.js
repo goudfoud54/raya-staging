@@ -23,7 +23,7 @@ const FNS = [
   'explainViolation',                 // appelée par diagHole (motif « pourquoi » du rapport)
   'computeHoles', 'diagHole',         // sorties d'autoFillCore, partagées avec analyseWeek
   'costOfCreneaux',                   // coût, partagé par le pied de tableau et l'analyse
-  '_virtualRegle', '_regleOf',        // défauts des réglages absents de la base — appelés par _ruleCtx
+  '_virtualRegle', '_regleResolue', '_regleOf',  // résolution des réglages (exception resto > défaut org) — appelés par _ruleCtx
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];
