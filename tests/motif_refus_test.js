@@ -77,12 +77,13 @@ function explainOf(cre, cand, date, svc, di, contraintes, dispos){
 console.log('── le refus nomme le FAIT déclencheur et le RESTAURANT concerné ───────────────────────');
 // 1. Le cas du patron : fermeture après minuit dans un AUTRE snack → le message doit citer l'heure ET Lobau…
 //    (ici l'autre snack est Grand Cœur, le snack affiché étant Lobau).
-{ const r=explainOf([at(GC,MON,'soir','18:00','00:30')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1);
+{ const r=explainOf([at(GC,MON,'soir','18:00','01:00')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1);
   t('fin_2h_pas_matin : la règle est bien celle-là', r.cle==='fin_2h_pas_matin', r.cle);
-  t('… le message cite l\'heure de fin (00:30)', /00:30/.test(r.why), r.why);
+  t('… le message cite l\'heure de fin (01:00)', /01:00/.test(r.why), r.why);
+  t('… le message cite le SEUIL réglé qui a déclenché (00:30 par défaut)', /après 00:30/.test(r.why), r.why);
   t('… le message cite le restaurant concerné (Grand Cœur)', /Grand Cœur/.test(r.why), r.why);
   t('… le message cite le jour de la donnée déclenchante (Lundi)', /Lundi/.test(r.why), r.why);
-  t('… il pointe le réglage correspondant', /Réglages du planning/.test(r.reglage||'') && /fermeture APRÈS MINUIT/i.test(r.reglage||''), r.reglage);
+  t('… il pointe le réglage correspondant', /Réglages du planning/.test(r.reglage||'') && /fermeture tardive/i.test(r.reglage||''), r.reglage);
   t('… et NE renvoie PAS au repos quotidien (la confusion à éviter)', !/repos quotidien/i.test(r.reglage||''), r.reglage); }
 
 // 2. Repos quotidien : le message doit donner les heures RÉELLES et le seuil réglé — c'est ce qui manquait
@@ -174,19 +175,33 @@ console.log('\n── info-bulles des badges de couleur (point 3) ────�
   t('cellule ROUGE : dit quoi faire', /Décale|retire/i.test(tip), tip); }
 
 console.log('\n── marque « déjà pris ailleurs » sur les cases vides (point 4) ─────────────────────────');
-// Service midi ici = 11:00→14:30 (DEF_TIME).
+// Le libellé doit se lire SANS effort et donner la plage LIBRE — pas une durée à recalculer de tête.
+// Service midi ici = 11:00→14:30, soir = 18:30→23:30 (DEF_TIME, aucune vague configurée dans ce décor).
 { setState([at(GC,MON,'midi','11:00','15:00')]);
   const b=otherSnackBusy('ahmad',MON,'midi');
   t('recouvrement TOTAL du service → état « full »', b.state==='full', b.state);
-  t('… l\'info-bulle nomme le restaurant et les horaires', /Grand Cœur/.test(b.tip)&&/11:00→15:00/.test(b.tip), b.tip);
-  t('… elle dit qu\'il ne reste aucune plage libre', /Aucune plage libre/.test(b.tip), b.tip);
-  t('… et rappelle que ce n\'est PAS un blocage', /pas un blocage/.test(b.tip), b.tip); }
+  t('… « À Grand Cœur, de 11:00 à 15:00. » (et non un horaire rogné)', /À Grand Cœur, de 11:00 à 15:00\./.test(b.tip), b.tip);
+  t('… la plage locale est présentée comme LE SERVICE, pas comme son créneau',
+    /Ici le service du midi va de 11:00 à 14:30/.test(b.tip), b.tip);
+  t('… « il est occupé du début à la fin »', /il est occupé du début à la fin/.test(b.tip), b.tip);
+  t('… et rappelle que ce n\'est PAS un blocage', /pas un blocage/.test(b.tip), b.tip);
+  t('… aucune plage libre renvoyée', b.libre.length===0, JSON.stringify(b.libre)); }
 { // Le cas explicitement demandé : pris ailleurs 18:00→20:00 alors que le soir ici va de 18:30 à 23:30.
   setState([at(GC,MON,'soir','18:00','20:00')]);
   const b=otherSnackBusy('ahmad',MON,'soir');
   t('recouvrement PARTIEL → état « part » (et non « full »)', b.state==='part', b.state);
-  t('… l\'info-bulle chiffre la part prise (1,5 h sur 5 h)', /1,5 h prise/.test(b.tip)&&/sur 5 h/.test(b.tip), b.tip);
-  t('… elle dit qu\'il reste de la place', /reste de la place/.test(b.tip), b.tip); }
+  t('… « À Carnot, de 18:00 à 20:00. » — ici Grand Cœur', /À Grand Cœur, de 18:00 à 20:00\./.test(b.tip), b.tip);
+  t('… elle donne la plage RÉELLEMENT LIBRE : « il reste libre de 20:00 à 23:30 »',
+    /Ici le service du soir va de 18:30 à 23:30 : il reste libre de 20:00 à 23:30\./.test(b.tip), b.tip);
+  t('… et invite à placer sur cette plage', /Tu peux le placer sur cette plage\./.test(b.tip), b.tip);
+  t('… plus aucune durée « X h prise sur Y h » à recalculer', !/prise\(s\)? sur/.test(b.tip), b.tip); }
+{ // Occupation au MILIEU du service → DEUX plages libres, énumérées en français.
+  setState([at(GC,MON,'soir','20:00','21:00')]);
+  const b=otherSnackBusy('ahmad',MON,'soir');
+  t('occupation au milieu → deux plages libres', b.libre.length===2, JSON.stringify(b.libre));
+  t('… énumérées : « de 18:30 à 20:00 et de 21:00 à 23:30 »',
+    /il reste libre de 18:30 à 20:00 et de 21:00 à 23:30\./.test(b.tip), b.tip);
+  t('… et le pluriel suit (« sur ces plages »)', /sur ces plages\./.test(b.tip), b.tip); }
 { setState([at(GC,MON,'midi','11:00','14:00')]);
   const b=otherSnackBusy('ahmad',MON,'soir');
   t('aucun recouvrement du service soir → état « none » (pas de marque)', b.state==='none', b.state);

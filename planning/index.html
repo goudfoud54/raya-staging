@@ -298,7 +298,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.58 · bouton 🔍 Analyser la semaine (à tout moment, recalculé sur la grille réelle) · règles inter-snack · chaque refus dit POURQUOI';
+const VERSION='v0.59 · seuil réglable de la fermeture tardive (00:30 par défaut : minuit pile ne bloque plus) · « pris ailleurs » dit la plage LIBRE · bouton 🔍 Analyser';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -674,25 +674,57 @@ const DEF_TIME=svc=>svc==='midi'?['11:00','14:30']:['18:30','23:30'];
 // parfaitement valide — d'où trois états, et non un simple booléen :
 //   'none' aucun recouvrement · 'part' une partie du service est prise · 'full' tout le service est pris.
 // Fonction PURE (aucun DOM) → testée par harnais.
+// Minutes (éventuellement > 1440) → « HH:MM ». Pas de mention « J+1 » : dans un snack, « de 20:00 à
+// 02:00 » se lit tout seul, et l'info-bulle doit rester une phrase, pas une notation.
+const _hhmm=m=>{ const x=((Math.round(m)%1440)+1440)%1440; return `${String(Math.floor(x/60)).padStart(2,'0')}:${String(x%60).padStart(2,'0')}`; };
+// Énumération française : « A », « A et B », « A, B et C ».
+function _joinFr(arr){ if(!arr||!arr.length) return ''; if(arr.length===1) return arr[0]; return arr.slice(0,-1).join(', ')+' et '+arr[arr.length-1]; }
+// Fenêtre RÉELLE du service ce jour-là = enveloppe des vagues configurées (tous rôles confondus), et à
+// défaut les horaires par défaut. L'info-bulle ANNONCE cette plage : elle doit donc être vraie. Un snack
+// dont le soir va de 18:00 à 02:00 ne doit pas lire « le service du soir va de 18:30 à 23:30 ».
+function _svcWindow(date, svc){
+  let lo=null, hi=null;
+  try{
+    const jt=dayJourType((new Date(date).getDay()+6)%7);
+    for(const r of (S.orgRoles||[])) for(const v of (getShifts(jt,svc,r.cle)||[])){
+      const a=_pmin(v.deb); let b=_pmin(v.fin);
+      if(a==null||b==null) continue; if(b<=a) b+=1440;
+      if(lo==null||a<lo) lo=a; if(hi==null||b>hi) hi=b;
+    }
+  }catch(e){ lo=null; }
+  if(lo==null){ const dt=DEF_TIME(svc); lo=_pmin(dt[0]); hi=_pmin(dt[1]); if(hi<=lo) hi+=1440; }
+  return {wS:lo, wE:hi};
+}
 function otherSnackBusy(sid, date, svc){
-  const dt=DEF_TIME(svc); const wS=_pmin(dt[0]); let wE=_pmin(dt[1]); if(wE<=wS) wE+=1440;
+  const {wS, wE}=_svcWindow(date, svc);
   const rows=(S.allCreneauxWeek||[]).filter(c=>c.salarie_id===sid && c.date===date && c.restaurant_id!==SNACK.id && c.heure_debut)
     .map(c=>{ let a=_pmin(c.heure_debut), b=c.heure_fin?_pmin(c.heure_fin):null;
               if(a==null) return null; if(b==null) b=a+30; else if(b<=a) b+=1440;
-              const s=Math.max(a,wS), e=Math.min(b,wE); return (e>s)?{c,s,e}:null; }).filter(Boolean);
-  if(!rows.length) return {state:'none', rows:[], covered:0, tip:''};
-  // Union des segments (deux snacks peuvent se suivre) → minutes RÉELLEMENT prises dans la fenêtre.
-  const segs=rows.map(r=>[r.s,r.e]).sort((x,y)=>x[0]-y[0]);
-  let cov=0, cs=segs[0][0], ce=segs[0][1];
-  for(let i=1;i<segs.length;i++){ if(segs[i][0]<=ce) ce=Math.max(ce,segs[i][1]); else { cov+=ce-cs; cs=segs[i][0]; ce=segs[i][1]; } }
-  cov+=ce-cs;
-  const full = cov >= (wE-wS)-1e-6;
-  const liste=rows.map(r=>`${_restoNom(r.c.restaurant_id)} ${(r.c.heure_debut||'').slice(0,5)}→${(r.c.heure_fin||'').slice(0,5)||'?'}`).join(' · ');
-  const tip=`🟡 Déjà pris ailleurs — ${full?'tout ce service':'une partie de ce service'}\n${liste}\n`
-    + `Service ici : ${dt[0]}→${dt[1]}${full?'' : ` · ${fmtH1(cov/60)} h prise(s) sur ${fmtH1((wE-wS)/60)} h`}.\n`
-    + (full ? 'Aucune plage libre sur ce service.' : 'Il reste de la place en dehors de ces horaires.')
-    + '\nCe n\'est pas un blocage : la case reste saisissable.';
-  return {state: full?'full':'part', rows, covered:cov, tip};
+              const s=Math.max(a,wS), e=Math.min(b,wE); return (e>s)?{c,s,e}:null; }).filter(Boolean)
+    .sort((x,y)=>x.s-y.s);
+  if(!rows.length) return {state:'none', rows:[], libre:[], tip:''};
+  // Fusion des segments occupés (deux snacks peuvent se suivre), puis COMPLÉMENT dans la fenêtre =
+  // les plages RÉELLEMENT LIBRES. C'est ça l'information qui sert : « il reste libre de 20:00 à 23:30 »
+  // se décide sans effort, là où « 1,5 h prise sur 5 h » oblige à refaire le calcul de tête.
+  const busy=[];
+  for(const r of rows){ const last=busy[busy.length-1];
+    if(last && r.s<=last[1]) last[1]=Math.max(last[1], r.e); else busy.push([r.s, r.e]); }
+  const libre=[]; let cur=wS;
+  for(const [a,b] of busy){ if(a>cur) libre.push([cur,a]); cur=Math.max(cur,b); }
+  if(cur<wE) libre.push([cur,wE]);
+  const full=(libre.length===0);
+  // Horaires affichés = ceux du créneau RÉEL (18:00→00:00), pas leur portion rognée à la fenêtre :
+  // c'est ce que le salarié fait vraiment ailleurs.
+  const ou=rows.map((r,i)=>`${i?'à':'À'} ${_restoNom(r.c.restaurant_id)}, de ${(r.c.heure_debut||'').slice(0,5)} à ${(r.c.heure_fin||'').slice(0,5)||'?'}`).join(' · ');
+  const svcLbl=(svc==='midi')?'du midi':'du soir';
+  const fin = full
+    ? 'il est occupé du début à la fin.\nTu peux quand même le placer — ce n\'est pas un blocage.'
+    : `il reste libre ${_joinFr(libre.map(g=>`de ${_hhmm(g[0])} à ${_hhmm(g[1])}`))}.\n`
+      + `Tu peux le placer sur ${libre.length>1?'ces plages':'cette plage'}.`;
+  const tip=`🟡 Déjà pris ailleurs — ${full?'tout le créneau':'une partie du créneau'}\n`
+    + `${ou}.\n`
+    + `Ici le service ${svcLbl} va de ${_hhmm(wS)} à ${_hhmm(wE)} : ${fin}`;
+  return {state: full?'full':'part', rows, libre, tip};
 }
 const fullName=s=>[s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?';
 
@@ -1721,22 +1753,29 @@ const RULE_META={
   // ⚠ Ces trois règles se ressemblent et ont déjà été confondues. Leurs libellés et leurs aides doivent
   // dire NOIR SUR BLANC qu'elles se cumulent : respecter le repos de 11 h ne dispense pas de l'interdit
   // de matin après une fermeture d'après-minuit, et inversement.
-  // L'ancien libellé disait « fin à 2 h » alors que le code a toujours bloqué jusqu'à 03:00 : libellé corrigé.
-  fin_2h_pas_matin:{lbl:'Interdire le service du matin après une fermeture APRÈS MINUIT',type:'bool',help:'Interdit ABSOLU, indépendant de la durée de repos : si le salarié finit entre 00:00 et 03:00 — ici ou dans un autre restaurant — il ne peut pas être placé le lendemain avant 15:00, MÊME si le repos quotidien de 11 h est respecté. Cette règle S\'AJOUTE au repos quotidien, elle ne le remplace pas. Décochez-la si vous acceptez un matin après une fermeture tardive dès lors que le repos légal est tenu.'},
+  // L'ancien libellé disait « fin à 2 h » alors que le code bloquait jusqu'à 03:00, et minuit pile
+  // déclenchait la règle. L'heure est désormais RÉGLABLE (fin_matin_seuil, juste en dessous).
+  fin_2h_pas_matin:{lbl:'Interdire le service du matin après une fermeture tardive',type:'bool',help:'Interdit ABSOLU, indépendant de la durée de repos : si le salarié finit après l\'heure réglée ci-dessous — ici ou dans un autre restaurant — il ne peut pas être placé le lendemain avant 15:00, MÊME si le repos quotidien de 11 h est respecté. Cette règle S\'AJOUTE au repos quotidien, elle ne le remplace pas. Décochez-la si vous acceptez un matin après une fermeture tardive dès lors que le repos légal est tenu.'},
+  // Libellé volontairement autonome : le tri de l'écran sépare les cases à cocher des valeurs, ce
+  // réglage n'est donc PAS affiché sous la règle qu'il paramètre (même situation que repos_quotidien_h).
+  fin_matin_seuil:{lbl:'Heure de fin au-delà de laquelle le matin du lendemain est interdit',type:'time',defVal:'00:30',help:'Une fin STRICTEMENT postérieure à cette heure (après minuit) interdit le matin du lendemain. Par défaut 00:30 : une fermeture à minuit pile — la plus courante — ne déclenche donc RIEN. Un établissement qui ferme à 2 h mettra 02:00 ou 02:30. Sans effet si la règle ci-dessus est décochée.'},
   repos_quotidien:{lbl:'Repos quotidien minimum (fin d\'un service → début du suivant)',type:'bool',help:'Toujours actif : c\'est une obligation légale. La DURÉE se règle juste en dessous, dans « Limites & valeurs ».'},
   repos_quotidien_h:{lbl:'Durée du repos quotidien',type:'number',unit:'h',min:0,max:24,help:'Nombre d\'heures minimum entre la fin d\'un service et le début du suivant, tous restaurants confondus. C\'est une DURÉE : décaler la reprise suffit à la respecter. À ne pas confondre avec « Interdire le service du matin après une fermeture APRÈS MINUIT », qui est un interdit absolu s\'appliquant EN PLUS de celle-ci — les deux peuvent bloquer un même créneau, pour des raisons différentes.'},
   fin_veille_ecole:{lbl:'Heure max de fin de shift la veille d\'un jour d\'école (alternants)',type:'time',help:'Au-delà, l\'auto-fill refuse et une alerte rouge apparaît. Défaut 22:00.'},
   fin_veille_examen:{lbl:'Heure max de fin de shift la veille d\'un examen (alternants)',type:'time',help:'Seuil plus strict pour les examens. Défaut 19:00.'},
   jour_off_min:{lbl:'Nombre minimum de jours de repos par semaine',type:'number',unit:'j',min:0,max:7,help:'Compté sur la PERSONNE, tous restaurants confondus : 4 jours dans un snack et 3 dans un autre font 7 jours travaillés, donc zéro repos.'},
   plafond_hebdo:{lbl:'Plafond d\'heures par semaine',type:'number',unit:'h',min:0,max:80},
-  temps_partiel_max:{lbl:'Heures complémentaires max (temps partiel)',type:'number',unit:'%',min:100,max:200},
+  temps_partiel_max:{lbl:'Heures complémentaires max (temps partiel)',type:'number',unit:'%',min:100,max:200,defActive:false},
   amplitude_max:{lbl:'Amplitude maximale consécutive',type:'number',unit:'h',min:0,max:24,help:'Durée maximale de travail d\'affilée sur une journée (deux créneaux séparés de moins de 30 min comptent comme un seul bloc). Mesurée sur la PERSONNE : un enchaînement entre deux restaurants compte comme un seul bloc.'},
   doublon_inter_snack:{lbl:'Zéro doublon entre snacks',type:'bool'},
-  couverture_continue:{lbl:'Couverture continue 1 cuisine + 1 réception',type:'bool'},
-  departs_echelonnes:{lbl:'Départs échelonnés (éviter les pics)',type:'bool'},
+  couverture_continue:{lbl:'Couverture continue 1 cuisine + 1 réception',type:'bool',defActive:false},
+  departs_echelonnes:{lbl:'Départs échelonnés (éviter les pics)',type:'bool',defActive:false},
   effectifs_exacts:{lbl:'Compteurs = objectif exact',type:'bool'},
-  sureffectif_minimum:{lbl:'Compléter automatiquement les minimums en sureffectif (coût supplémentaire)',type:'bool',help:'ACTIVÉ : l\'auto-fill pose lui-même des créneaux au-delà de la cible pour amener chaque salarié à son minimum (coût supplémentaire, créneaux en fond doré). DÉSACTIVÉ (défaut) : l\'app ne dépense rien — elle PROPOSE des créneaux plaçables dans le rapport et vous décidez lesquels poser.'},
-  transfert_inter_snack:{lbl:'Autoriser le déplacement d\'un salarié vers un autre restaurant pour compléter ses heures',type:'bool',help:'ACTIVÉ : en dernier recours (après rallonge et transferts internes), l\'auto-fill peut faire venir un salarié multi-restaurant sur un site où il n\'est PAS prioritaire pour atteindre son minimum. DÉSACTIVÉ (défaut) : aucun déplacement inter-établissement n\'est posé — le salarié apparaît sous son minimum avec le créneau distant en SUGGESTION, et vous décidez. Les ajustements d\'horaires DANS un même restaurant restent toujours automatiques.'}
+  sureffectif_minimum:{lbl:'Compléter automatiquement les minimums en sureffectif (coût supplémentaire)',type:'bool',defActive:false,help:'ACTIVÉ : l\'auto-fill pose lui-même des créneaux au-delà de la cible pour amener chaque salarié à son minimum (coût supplémentaire, créneaux en fond doré). DÉSACTIVÉ (défaut) : l\'app ne dépense rien — elle PROPOSE des créneaux plaçables dans le rapport et vous décidez lesquels poser.'},
+  // defActive:false — ce réglage n'a JAMAIS eu de ligne en base : il était donc introuvable dans l'écran
+  // Réglages alors que le rapport d'auto-fill invitait à le décocher. La ligne virtuelle le rend visible,
+  // et elle est créée en base au premier changement (cf. _virtualRegle / saveRegle).
+  transfert_inter_snack:{lbl:'Autoriser le déplacement d\'un salarié vers un autre restaurant pour compléter ses heures',type:'bool',defActive:false,help:'ACTIVÉ : en dernier recours (après rallonge et transferts internes), l\'auto-fill peut faire venir un salarié multi-restaurant sur un site où il n\'est PAS prioritaire pour atteindre son minimum. DÉSACTIVÉ (défaut) : aucun déplacement inter-établissement n\'est posé — le salarié apparaît sous son minimum avec le créneau distant en SUGGESTION, et vous décidez. Les ajustements d\'horaires DANS un même restaurant restent toujours automatiques.'}
 };
 
 // ── Seuils LÉGAUX (France) ──────────────────────────────────────────────────────────────────────
@@ -1755,18 +1794,19 @@ function legalBreach(cle, val){ const L=LEGAL_LIMITS[cle]; if(!L)return null; co
 function legalBreachList(){ return Object.keys(LEGAL_LIMITS).map(k=>{ const r=(S.regles||[]).find(x=>x.cle===k); if(!r||r.valeur==null)return null; const L=legalBreach(k,r.valeur); return L?{cle:k,val:r.valeur,L}:null; }).filter(Boolean); }
 // Saisie d'une valeur de règle soumise à un seuil légal : avertit + journalise UNIQUEMENT quand on FRANCHIT
 // le seuil (jamais quand on repasse au-dessus). Annulation → on restaure la valeur précédente (comme la saisie).
-async function onRegleValue(el, id){
-  const r=(S.regles||[]).find(x=>x.id===id); if(!r) return;
+async function onRegleValue(el, cle){
+  // Repérage par CLÉ : la ligne peut être VIRTUELLE (réglage jamais inséré en base), donc sans id.
+  const r=_regleOf(cle); if(!r) return;
   const old=r.valeur, val=el.value, L=legalBreach(r.cle, val);
   if(L && String(val)!==String(old)){
     const sens = L.dir==='min' ? 'descendez sous le' : 'dépassez le';
     if(!confirm(`⚠️ Vous ${sens} ${L.label}.\n\nUn planning ne respectant pas ce seuil vous expose à des sanctions (contentieux prud'homal, contrôle de l'inspection du travail). Certaines conventions collectives (dont HCR) prévoient des dérogations encadrées — vérifiez votre situation.\n\nRéférence : ${L.ref}.\n\nEnregistrer quand même cette valeur sous le seuil légal ?`)){
       el.value = old!=null?old:''; return;   // annulé → on restaure la valeur d'avant
     }
-    await saveRegle(id,'valeur',val);
+    await saveRegle(cle,'valeur',val);
     logLegalOverride(r,val,L);
   } else {
-    await saveRegle(id,'valeur',val);
+    await saveRegle(cle,'valeur',val);
   }
   openReglages();   // re-render : badge « sous le seuil légal » persistant, à jour dans les deux sens
 }
@@ -1846,11 +1886,17 @@ function openReglages(){
     <div style="font-size:14px;font-weight:600;margin-bottom:4px">Règles de vérification</div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:12px">Active ou désactive les contrôles qui s'appliquent au planning</div>
     <div style="background:var(--surface);border:1px solid var(--line-2);border-radius:10px;overflow:hidden">`;
-  if(!S.regles.length){
+  // Liste = TOUS les réglages connus du code (RULE_META) ∪ ceux présents en base. Un réglage sans ligne
+  // en base apparaît quand même, avec sa valeur par défaut, et la ligne est créée au premier changement.
+  // Avant, il était simplement absent de l'écran : c'est ce qui rendait « Autoriser le déplacement vers
+  // un autre restaurant » introuvable alors que le rapport d'auto-fill invitait à le décocher.
+  const _cles=[...new Set([...Object.keys(RULE_META), ...(S.regles||[]).map(r=>r.cle)])];
+  const _rows=_cles.map(_regleOf).filter(Boolean);
+  if(!_rows.length){
     html+='<div style="padding:18px;color:var(--muted);font-size:12px">Aucune règle configurée. Les vérifications utilisent les valeurs par défaut.</div>';
   } else {
     // Trier : règles booléennes (avec on/off) en premier, valeurs obligatoires ensuite
-    const sorted=S.regles.slice().sort((a,b)=>{
+    const sorted=_rows.slice().sort((a,b)=>{
       const ta=(RULE_META[a.cle]?.type||'z'),tb=(RULE_META[b.cle]?.type||'z');
       const aIsBool=ta==='bool'?0:1, bIsBool=tb==='bool'?0:1;
       if(aIsBool!==bIsBool) return aIsBool-bIsBool;
@@ -1872,15 +1918,15 @@ function openReglages(){
 
       let valueInput='';
       if(meta.type==='number'){
-        const _onb = LEGAL_LIMITS[r.cle] ? `onRegleValue(this,'${r.id}')` : `saveRegle('${r.id}','valeur',this.value)`;
+        const _onb = LEGAL_LIMITS[r.cle] ? `onRegleValue(this,'${escJS(r.cle)}')` : `saveRegle('${escJS(r.cle)}','valeur',this.value)`;
         const _brk = legalBreach(r.cle, r.valeur);
         valueInput=`<input type="number" ${meta.min!=null?`min="${meta.min}"`:''} ${meta.max!=null?`max="${meta.max}"`:''} value="${r.valeur||0}" onblur="${_onb}" style="width:80px;padding:7px 10px;border-radius:6px;border:1px solid ${_brk?'var(--bad)':'var(--line-2)'};background:var(--bg);color:var(--text);font-size:13px;text-align:center;font-weight:600">${meta.unit?`<span style="color:var(--muted);font-size:12px;margin-left:6px">${meta.unit}</span>`:''}`;
       } else if(meta.type==='time' && (r.cle==='fin_semaine'||r.cle==='fin_weekend')){
         valueInput=finRuleInput(r);
       } else if(meta.type==='time'){
-        valueInput=`<input type="time" value="${r.valeur||'00:00'}" onblur="saveRegle('${r.id}','valeur',this.value)" style="padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">`;
+        valueInput=`<input type="time" value="${r.valeur||'00:00'}" onblur="saveRegle('${escJS(r.cle)}','valeur',this.value)" style="padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">`;
       } else if(!isBool) {
-        valueInput=`<input type="text" value="${r.valeur||''}" onblur="saveRegle('${r.id}','valeur',this.value)" style="width:120px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px">`;
+        valueInput=`<input type="text" value="${r.valeur||''}" onblur="saveRegle('${escJS(r.cle)}','valeur',this.value)" style="width:120px;padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px">`;
       }
 
       // L'aide de RULE_META était renseignée mais n'était affichée NULLE PART : c'est elle qui lève
@@ -1899,7 +1945,7 @@ function openReglages(){
       } else if(isBool){
         html+=`<div style="padding:12px 16px;border-top:1px solid var(--line)">
           <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
-            <input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${r.id}','active',this.checked)" style="width:18px;height:18px;cursor:pointer">
+            <input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('${escJS(r.cle)}','active',this.checked)" style="width:18px;height:18px;cursor:pointer">
             <span style="font-size:13.5px">${meta.lbl}</span>
           </label>${helpHtml}
         </div>`;
@@ -2031,10 +2077,26 @@ async function toggleInterSnackRule(on){
   }
   setSS('ok', on?'Déplacement inter-restaurant autorisé (dernier recours)':'Déplacement inter-restaurant désactivé');
 }
-async function saveRegle(id,field,val){
-  const{error}=await sb.from('planning_regles').update({[field]:val}).eq('id',id);
-  if(error){alert('Erreur: '+error.message);return;}
-  const r=S.regles.find(x=>x.id===id);if(r)r[field]=val;
+// Enregistre un réglage, repéré par sa CLÉ et non par son id : un réglage jamais inséré en base n'a pas
+// d'id. Dans ce cas on CRÉE la ligne au premier changement, avec les défauts de RULE_META pour les autres
+// champs. Sans ça, un réglage ajouté au code restait injoignable tant qu'une migration ne l'avait pas
+// inséré — et une organisation nouvellement créée n'aurait eu aucun réglage du tout.
+// restaurant_id null = portée organisation, comme les lignes existantes (cf. remarque du rapport sur
+// l'isolation de cette table).
+async function saveRegle(cle,field,val){
+  const r=(S.regles||[]).find(x=>x.cle===cle);
+  if(r&&r.id){
+    const{error}=await sb.from('planning_regles').update({[field]:val}).eq('id',r.id);
+    if(error){alert('Erreur: '+error.message);return;}
+    r[field]=val;
+  } else {
+    const base=_virtualRegle(cle)||{active:true,valeur:''};
+    const payload={cle, restaurant_id:null, libelle:(RULE_META[cle]||{}).lbl||cle,
+                   active:base.active, valeur:base.valeur, [field]:val};
+    const{data,error}=await sb.from('planning_regles').insert(payload).select().single();
+    if(error){alert('Erreur: '+error.message);return;}
+    if(data){ S.regles=(S.regles||[]).filter(x=>x.cle!==cle); S.regles.push(data); }
+  }
   setSS('ok','Règle sauvegardée');
 }
 // Suggestion d'heure de fin (plafond) à partir de la fermeture du restaurant + marge (rangement/service).
@@ -2056,11 +2118,11 @@ function finRuleInput(r){
   const configured = r.valeur && r.valeur!=='00:00';
   const inpSt='padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600';
   if(configured){
-    return `<input type="time" value="${r.valeur}" onblur="saveRegle('${r.id}','valeur',this.value)" style="${inpSt}">`;
+    return `<input type="time" value="${r.valeur}" onblur="saveRegle('${escJS(r.cle)}','valeur',this.value)" style="${inpSt}">`;
   }
-  const inpId='finrule_'+r.id;
+  const inpId='finrule_'+r.cle;
   const s=suggestionFin(r.cle);
-  const saveBtn=`<button class="btn sm" onclick="saveFinRegle('${r.id}','${inpId}')" style="padding:6px 10px">Enregistrer</button>`;
+  const saveBtn=`<button class="btn sm" onclick="saveFinRegle('${escJS(r.cle)}','${inpId}')" style="padding:6px 10px">Enregistrer</button>`;
   if(s){
     return `<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
       <div style="display:flex;gap:6px;align-items:center"><input type="time" id="${inpId}" value="${s.sug}" style="${inpSt};border-color:var(--gold)">${saveBtn}</div>
@@ -2074,9 +2136,9 @@ function finRuleInput(r){
 }
 // Enregistre explicitement la valeur (éventuellement ajustée) d'une règle fin_semaine/fin_weekend,
 // puis re-rend Réglages pour refléter l'état « configuré ».
-async function saveFinRegle(id,inpId){
+async function saveFinRegle(cle,inpId){
   const el=document.getElementById(inpId); if(!el) return;
-  await saveRegle(id,'valeur', el.value||'00:00');
+  await saveRegle(cle,'valeur', el.value||'00:00');
   openReglages();
 }
 function setPopupAlerts(v){POPUP_ALERTS=v;localStorage.setItem('pl_popups',v?'1':'0');}
@@ -2627,12 +2689,28 @@ const _yield=()=>new Promise(r=>setTimeout(r,0));
 // Source de vérité UNIQUE des contraintes de placement (réutilisée par l'auto-fill).
 // Retourne null si OK, sinon {cle,label} de la 1re règle ACTIVE violée. Garantit, par construction,
 // qu'aucun créneau écrit ne viole une règle (un seul point d'écriture, toujours gardé par checkPlacement).
+// Ligne VIRTUELLE d'un réglage absent de la base : valeurs par défaut déclarées dans RULE_META.
+// Nécessaire parce qu'un réglage sans ligne en base est aujourd'hui INVISIBLE dans l'écran Réglages —
+// c'était déjà le cas de `transfert_inter_snack`, que le rapport d'auto-fill invitait pourtant à décocher.
+// Renvoie null si la clé n'est pas décrite dans RULE_META (l'appelant garde alors son propre défaut).
+function _virtualRegle(cle){
+  const meta=RULE_META[cle]; if(!meta) return null;
+  return {cle, id:null, _virtuel:true,
+          active:(meta.defActive!==undefined?meta.defActive:true),
+          valeur:(meta.defVal!==undefined?meta.defVal:'')};
+}
+// Réglage effectif d'une clé : la ligne en base si elle existe, sinon la ligne virtuelle.
+function _regleOf(cle){ return (S.regles||[]).find(x=>x.cle===cle) || _virtualRegle(cle); }
 function _ruleCtx(){
   const RG={}; (S.regles||[]).forEach(r=>RG[r.cle]=r);
+  // Réglage absent de la base → on retombe sur la MÊME ligne virtuelle que celle affichée dans l'écran
+  // Réglages. Sinon l'écran montrerait une valeur et le moteur en appliquerait une autre : exactement
+  // l'écart « interface configurable jamais lue à l'exécution » déjà rencontré deux fois sur ce module.
+  const row=c=>RG[c]||_virtualRegle(c);
   return {
-    num:(c,d)=>{const r=RG[c];const v=r!=null?parseFloat(r.valeur):NaN;return isFinite(v)&&v>0?v:d;},
-    on :(c,d)=>{const r=RG[c];return r?(r.active!==false):d;},
-    raw:(c)=>RG[c],
+    num:(c,d)=>{const r=row(c);const v=r!=null?parseFloat(r.valeur):NaN;return isFinite(v)&&v>0?v:d;},
+    on :(c,d)=>{const r=row(c);return r?(r.active!==false):d;},
+    raw:(c)=>row(c),
   };
 }
 const _pmin=t=>{if(!t)return null;const[h,mi]=t.slice(0,5).split(':').map(Number);return h*60+mi;};
@@ -2738,11 +2816,14 @@ function sortCandidates(ids, h){
     return 0;
   });
 }
-// Seuils de la règle « fin tardive → pas de matin », nommés parce que le libellé du réglage disait « 2 h »
-// alors que le code a toujours bloqué jusqu'à 03:00 — c'est le libellé qui était faux, pas le code.
-// F2H_MAX_MIN : minutes APRÈS MINUIT jusqu'où une fin est réputée « tardive » (180 = 03:00).
+// Seuils de la règle « fin tardive → pas de matin ».
+// F2H_SEUIL_DEF : valeur par DÉFAUT du réglage `fin_matin_seuil` — une fin STRICTEMENT postérieure à
+//   cette heure interdit le matin du lendemain. 00:30 : une fermeture à MINUIT PILE, la plus courante
+//   dans un snack, ne déclenche donc rien. Un établissement qui ferme à 2 h règle 02:00 ou 02:30.
+//   (Avant v0.59 le seuil était figé à 03:00 et minuit pile déclenchait la règle — c'est ce qui bloquait
+//   presque toutes les fermetures normales alors que le repos légal était respecté.)
 // F2H_MATIN_MIN : un shift commençant avant cette heure est un « matin » (900 = 15:00).
-const F2H_MAX_MIN=180, F2H_MATIN_MIN=15*60;
+const F2H_SEUIL_DEF='00:30', F2H_MATIN_MIN=15*60;
 const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
 // ── Contraintes individuelles (salarie_contraintes) ─────────────────────────────────────────────
 // Longtemps configurables sur la fiche salarié mais JAMAIS lues côté planning → purement décoratives.
@@ -2796,11 +2877,11 @@ function explainViolation(v, ctx){
   let why='';
   switch(v.cle){
     case 'fin_2h_pas_matin': {
-      const c=v._f2h&&v._f2h.cre;
+      const c=v._f2h&&v._f2h.cre, s=(v._f2h&&v._f2h.seuil)||F2H_SEUIL_DEF;
       if(v._f2h && v._f2h.role==='veille')
-        why=`La veille — ${_creTxt(c)} — il finit à ${(c.heure_fin||'').slice(0,5)}, donc après minuit. Aucun service du matin n'est autorisé le lendemain.`;
+        why=`La veille — ${_creTxt(c)} — il finit à ${(c.heure_fin||'').slice(0,5)}, soit après ${s}. Aucun service du matin n'est autorisé le lendemain.`;
       else if(c)
-        why=`Ce créneau finit à ${sh.fin||'?'}, donc après minuit, et il est déjà prévu le lendemain matin — ${_creTxt(c)}.`;
+        why=`Ce créneau finit à ${sh.fin||'?'}, soit après ${s}, et il est déjà prévu le lendemain matin — ${_creTxt(c)}.`;
       break;
     }
     case 'repos_quot': {
@@ -3073,23 +3154,29 @@ function checkPlacement(sid, shift, date, svc, di, opt){
     const ailleurs=[...new Set(mineAll.filter(c=>c.restaurant_id!==SNACK.id).map(c=>c.date))].length;
     return {cle:'jour_off_min',label:PLACE_RULES.jour_off_min,_off:{worked:worked.size,offMin,ailleurs}};
   }
-  // Fin tardive APRÈS MINUIT la veille → pas de service du matin (SYMÉTRIQUE : indépendant de l'ordre
-  // de placement). INTER-SNACK : la fermeture déclenchante peut être dans un AUTRE restaurant (une
-  // fermeture à 00:30 à Lobau doit interdire le midi du lendemain à Grand Cœur). On raisonne donc sur
-  // mineAll, en minutes ABSOLUES (_finAbsM) et SANS filtrer sur le libellé midi/soir — celui-ci ne mappe
-  // pas d'un snack à l'autre (le « soir » d'un site peut commencer à 16:00). Déclencheur inchangé :
-  // fin comprise entre 00:00 (inclus) et 03:00, c.-à-d. finAbs dans [1440 ; 1620].
+  // Fin tardive → pas de service du matin (SYMÉTRIQUE : indépendant de l'ordre de placement).
+  // INTER-SNACK : la fermeture déclenchante peut être dans un AUTRE restaurant (une fermeture à 01:00 à
+  // Lobau doit interdire le midi du lendemain à Grand Cœur). On raisonne donc sur mineAll, en minutes
+  // ABSOLUES (_finAbsM) et SANS filtrer sur le libellé midi/soir — celui-ci ne mappe pas d'un snack à
+  // l'autre (le « soir » d'un site peut commencer à 16:00).
+  //
+  // Déclencheur : fin STRICTEMENT postérieure au seuil réglé (fin_matin_seuil, défaut 00:30), le seuil
+  // s'entendant après minuit. Aucun plafond haut : régler 02:30 doit bloquer une fin à 03:30, pas la
+  // laisser passer — un plafond caché à 03:00 aurait fait un piège dès que le seuil bouge.
   if(R.on('fin_2h_pas_matin',true)){
-    const _tardif=fa=>fa!=null && fa>=1440 && fa<=1440+F2H_MAX_MIN;
+    const _sRow=R.raw('fin_matin_seuil');
+    let _sM=_pmin((_sRow&&_sRow.valeur)||F2H_SEUIL_DEF); if(_sM==null) _sM=_pmin(F2H_SEUIL_DEF);
+    const _lim=1440+(_sM%1440);
+    const _tardif=fa=>fa!=null && fa>_lim;
     if(_pmin(shift.deb)!=null && _pmin(shift.deb)<F2H_MATIN_MIN){ // ce shift est un matin : la veille s'est-elle terminée après minuit ?
       const prev=fmtDate(new Date(new Date(date).getTime()-86400000));
       const ps=mineAll.find(c=>c.date===prev && c.heure_fin && _tardif(_finAbsM(c.heure_debut,c.heure_fin)));
-      if(ps) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin,_f2h:{cre:ps,role:'veille'}};
+      if(ps) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin,_f2h:{cre:ps,role:'veille',seuil:_hhmm(_lim)}};
     }
     if(_tardif(_finAbsM(shift.deb,shift.fin))){ // ce shift finit après minuit : y a-t-il un matin le lendemain ?
       const next=fmtDate(new Date(new Date(date).getTime()+86400000));
       const nm=mineAll.find(c=>c.date===next && _pmin(c.heure_debut)!=null && _pmin(c.heure_debut)<F2H_MATIN_MIN);
-      if(nm) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin,_f2h:{cre:nm,role:'lendemain'}};
+      if(nm) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin,_f2h:{cre:nm,role:'lendemain',seuil:_hhmm(_lim)}};
     }
   }
   // plafond hebdo UNIFIÉ (heures_max → plafond_heures → règle plafond_hebdo → 48h) — plafond DUR

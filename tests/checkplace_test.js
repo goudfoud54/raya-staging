@@ -77,11 +77,16 @@ all &= run('Repos inter-snack: candidate Lobau Lun 18:00→00:00, GC Mar 08:00�
 all &= run('Repos OK cross-day 15h (candidate Lobau Lun 18:00→00:00, GC Mar 15:00→21:00)',
   [{salarie_id:'ahmad',restaurant_id:GC,date:TUE,service:'midi',heure_debut:'15:00',heure_fin:'21:00'}],
   {deb:'18:00',fin:'00:00',role:'cuisine'}, MON,'soir',0,{manual:true},'NULL');
-// 3c) MÊME cas mais reprise le lendemain MATIN (12:00 < 15:00) : le repos de 12h est pourtant respecté.
+// 3c) MÊME cas mais reprise le lendemain MATIN (12:00 < 15:00) : le repos de 11h est pourtant respecté.
 // fin_2h_pas_matin est un interdit ABSOLU qui s'ajoute au repos quotidien — et il doit voir l'autre snack.
-all &= run('Fin 00:00 à Lobau + matin 12:00 à GC le lendemain → fin_2h_pas_matin (repos 12h pourtant OK)',
+all &= run('Fin 01:00 à Lobau + matin 12:00 à GC le lendemain → fin_2h_pas_matin (repos 11h pourtant OK)',
   [{salarie_id:'ahmad',restaurant_id:GC,date:TUE,service:'midi',heure_debut:'12:00',heure_fin:'18:00'}],
-  {deb:'18:00',fin:'00:00',role:'cuisine'}, MON,'soir',0,{manual:true},'fin_2h_pas_matin');
+  {deb:'18:00',fin:'01:00',role:'cuisine'}, MON,'soir',0,{manual:true},'fin_2h_pas_matin');
+// 3d) Fermeture à MINUIT PILE : depuis v0.59 le seuil réglable vaut 00:30 par défaut et la règle ne se
+// déclenche qu'au-DELÀ. Minuit est la fermeture normale d'un snack — elle ne doit plus rien bloquer.
+all &= run('Fin 00:00 (fermeture normale) + matin 12:00 le lendemain → AUTORISÉ',
+  [{salarie_id:'ahmad',restaurant_id:GC,date:TUE,service:'midi',heure_debut:'12:00',heure_fin:'18:00'}],
+  {deb:'18:00',fin:'00:00',role:'cuisine'}, MON,'soir',0,{manual:true},'NULL');
 // 4) No other-snack créneaux at all → NULL (mono behaviour untouched)
 all &= run('Aucun autre snack → NULL',
   [],

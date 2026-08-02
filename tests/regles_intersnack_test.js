@@ -43,7 +43,10 @@ global.SAL={ahmad:{id:'ahmad',heures_max:48,est_multi:true,snacks_priorites:[{re
 // Réglages par défaut du test : coupure 3h · repos 11h · amplitude 12h · 1 jour de repos mini.
 let RULES={coupure_min:3,repos_quotidien_h:11,amplitude_max:12,jour_off_min:1};
 let RULES_ON={};
-global._ruleCtx=()=>({ num:(k,d)=>(RULES[k]!=null?RULES[k]:d), raw:()=>null, on:(k,d)=>(RULES_ON[k]!=null?RULES_ON[k]:d) });
+// RAW : lignes de réglage à valeur (fin_matin_seuil…). null = absent de la base → le code retombe sur
+// son défaut, ce qui est justement le cas à couvrir pour une organisation qui n'a jamais réglé la règle.
+let RAW={};
+global._ruleCtx=()=>({ num:(k,d)=>(RULES[k]!=null?RULES[k]:d), raw:(k)=>(RAW[k]||null), on:(k,d)=>(RULES_ON[k]!=null?RULES_ON[k]:d) });
 
 // Lundi 2026-08-03 → dimanche 2026-08-09
 const D=i=>fmtDate(new Date(new Date('2026-08-03T00:00:00').getTime()+i*86400000));
@@ -64,16 +67,16 @@ function run(label, cre, cand, date, svc, di, expect, contraintes){
 
 console.log('── fin_2h_pas_matin : la fermeture déclenchante est dans un AUTRE snack ───────────────');
 // ⚠ Tous les cas de cette section reprennent le lendemain à 12:00 (et non 11:00) : après une fermeture
-// à 00:30 cela laisse 11h30 de repos, donc AU-DESSUS du minimum légal de 11h. Sans cette précaution le
-// refus viendrait de repos_quot et le harnais ne prouverait rien sur fin_2h_pas_matin. C'est exactement
-// la confusion du patron : les deux règles se cumulent, mais ce sont bien deux règles distinctes.
-// A. Fermeture 00:30 à Grand Cœur lundi → le midi de mardi à Lobau doit être refusé.
+// à 01:00 cela laisse 11h de repos, donc AU NIVEAU du minimum légal. Sans cette précaution le refus
+// viendrait de repos_quot et le harnais ne prouverait rien sur fin_2h_pas_matin. C'est exactement la
+// confusion du patron : les deux règles se cumulent, mais ce sont bien deux règles distinctes.
+// A. Fermeture 01:00 à Grand Cœur lundi → le midi de mardi à Lobau doit être refusé.
 //    C'est le cas signalé par le patron : avant v0.57 la règle ne lisait que S.creneaux → passait.
-run('Ferme 00:30 à GC lundi → midi mardi à Lobau refusé (repos 11h30 pourtant OK)',
-  [at(GC,MON,'soir','18:00','00:30')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'fin_2h_pas_matin');
+run('Ferme 01:00 à GC lundi → midi mardi à Lobau refusé (repos 11h pourtant OK)',
+  [at(GC,MON,'soir','18:00','01:00')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'fin_2h_pas_matin');
 // B. Sens inverse (symétrie) : le matin du lendemain est déjà posé AILLEURS, on pose la fermeture ici.
-run('Midi mardi déjà posé à GC → fermeture 00:30 lundi à Lobau refusée',
-  [at(GC,TUE,'midi','12:00','15:00')], {deb:'18:00',fin:'00:30',role:'cuisine'}, MON,'soir',0,'fin_2h_pas_matin');
+run('Midi mardi déjà posé à GC → fermeture 01:00 lundi à Lobau refusée',
+  [at(GC,TUE,'midi','12:00','15:00')], {deb:'18:00',fin:'01:00',role:'cuisine'}, MON,'soir',0,'fin_2h_pas_matin');
 // C. Le LIBELLÉ midi/soir de l'autre snack ne doit pas compter : un site dont la vague « midi » va de
 //    16:00 à 01:00 ferme bien après minuit. Filtrer sur service==='soir' raterait ce cas.
 run('Vague étiquetée « midi » à GC mais 16:00→01:00 → midi mardi refusé (libellé ignoré)',
@@ -82,11 +85,41 @@ run('Vague étiquetée « midi » à GC mais 16:00→01:00 → midi mardi refus�
 run('Contrôle — ferme 23:30 à GC lundi → midi mardi autorisé',
   [at(GC,MON,'soir','18:00','23:30')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'NULL');
 // E. Contrôle négatif : la reprise à 15:00 n'est pas un « matin » (seuil F2H_MATIN_MIN).
-run('Contrôle — ferme 00:30 à GC lundi → reprise 15:00 mardi autorisée',
-  [at(GC,MON,'soir','18:00','00:30')], {deb:'15:00',fin:'20:00',role:'cuisine'}, TUE,'midi',1,'NULL');
+run('Contrôle — ferme 01:00 à GC lundi → reprise 15:00 mardi autorisée',
+  [at(GC,MON,'soir','18:00','01:00')], {deb:'15:00',fin:'20:00',role:'cuisine'}, TUE,'midi',1,'NULL');
 // F. Non-régression MONO-snack : le même refus quand tout est sur le snack courant.
-run('Mono — ferme 00:30 à Lobau lundi → midi mardi à Lobau refusé',
-  [at(LOBAU,MON,'soir','18:00','00:30')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'fin_2h_pas_matin');
+run('Mono — ferme 01:00 à Lobau lundi → midi mardi à Lobau refusé',
+  [at(LOBAU,MON,'soir','18:00','01:00')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'fin_2h_pas_matin');
+
+console.log('\n── seuil RÉGLABLE de la fermeture tardive (fin_matin_seuil, défaut 00:30) ─────────────');
+// Le patron ferme à minuit : en l'état d'avant, presque toutes ses fermetures interdisaient le lendemain
+// midi alors que le repos légal était largement tenu. Le seuil par défaut est désormais 00:30, et le
+// déclencheur est une fin STRICTEMENT postérieure.
+run('Fermeture à MINUIT PILE → autorisé (c\'est la fermeture normale d\'un snack)',
+  [at(GC,MON,'soir','18:00','00:00')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'NULL');
+run('Fermeture PILE au seuil (00:30) → autorisé (« postérieure à », pas « à partir de »)',
+  [at(GC,MON,'soir','18:00','00:30')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'NULL');
+run('Une minute après le seuil (00:31) → refusé',
+  [at(GC,MON,'soir','18:00','00:31')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'fin_2h_pas_matin');
+// Un établissement qui ferme à 2 h règle le seuil à sa main.
+RAW.fin_matin_seuil={cle:'fin_matin_seuil',valeur:'02:00',active:true};
+run('Seuil réglé à 02:00 — fermeture à 01:00 → autorisée',
+  [at(GC,MON,'soir','18:00','01:00')], {deb:'12:00',fin:'15:00',role:'cuisine'}, TUE,'midi',1,'NULL');
+// ⚠ Plus la fermeture est tardive, plus la reprise doit être tardive pour que les 11 h de repos soient
+// TENUES — sinon c'est repos_quot qui sort en premier et on ne teste plus la bonne règle. La reprise
+// reste sous 15:00, donc toujours un « matin » au sens de F2H_MATIN_MIN.
+run('Seuil réglé à 02:00 — fermeture à 02:30, reprise 14:00 (repos 11h30) → refusée',
+  [at(GC,MON,'soir','18:00','02:30')], {deb:'14:00',fin:'16:00',role:'cuisine'}, TUE,'midi',1,'fin_2h_pas_matin');
+// Aucun plafond haut caché : avant v0.59 la règle s'arrêtait à 03:00 en dur. Avec un seuil réglable,
+// ce plafond aurait fait un piège — régler 02:00 et voir une fin à 03:30 passer sans rien dire.
+run('Seuil réglé à 02:00 — fermeture à 03:30, reprise 14:30 (repos 11h) → refusée (pas de plafond caché à 03:00)',
+  [at(GC,MON,'soir','18:00','03:30')], {deb:'14:30',fin:'16:30',role:'cuisine'}, TUE,'midi',1,'fin_2h_pas_matin');
+RAW={};
+// La case à cocher continue de commander : décochée, plus aucun blocage quel que soit le seuil.
+RULES_ON.fin_2h_pas_matin=false;
+run('Règle décochée → même une fermeture à 02:00 n\'interdit plus le matin',
+  [at(GC,MON,'soir','18:00','02:00')], {deb:'14:00',fin:'16:00',role:'cuisine'}, TUE,'midi',1,'NULL');
+RULES_ON={};
 
 console.log('\n── amplitude_max : les deux blocs sont sur des snacks DIFFÉRENTS ──────────────────────');
 // G. GC 10:00→18:00 puis Lobau 18:00→23:00 = 13h consécutives > 12h.

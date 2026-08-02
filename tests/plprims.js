@@ -17,12 +17,13 @@ const { extractFn } = require('./extract.js');
 
 // Fonctions appelées par d'autres fonctions extraites (checkPlacement, rowHoursCell, autoFillCore…).
 const FNS = [
-  '_finAbsM', '_restoNom',            // règles temporelles de checkPlacement
+  '_finAbsM', '_restoNom', '_svcWindow', '_joinFr',            // règles temporelles de checkPlacement
   '_hoursCellTip',                    // appelée par rowHoursCell
   '_jourDe', '_creTxt', '_absTxt',    // mise en forme des motifs de refus
   'explainViolation',                 // appelée par diagHole (motif « pourquoi » du rapport)
   'computeHoles', 'diagHole',         // sorties d'autoFillCore, partagées avec analyseWeek
   'costOfCreneaux',                   // coût, partagé par le pied de tableau et l'analyse
+  '_virtualRegle', '_regleOf',        // défauts des réglages absents de la base — appelés par _ruleCtx
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];
@@ -34,7 +35,8 @@ const CONST_LINES = [
   { first: '_pmin', names: ['_pmin'] },
   { first: 'fmtH1', names: ['fmtH1'] },
   { first: '_fh', names: ['_fh'] },
-  { first: 'F2H_MAX_MIN', names: ['F2H_MAX_MIN', 'F2H_MATIN_MIN'] },
+  { first: '_hhmm', names: ['_hhmm'] },
+  { first: 'F2H_SEUIL_DEF', names: ['F2H_SEUIL_DEF', 'F2H_MATIN_MIN'] },
   { first: 'PLAFOND_PROCHE_PCT', names: ['PLAFOND_PROCHE_PCT'] },
 ];
 
