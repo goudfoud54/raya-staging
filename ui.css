@@ -12,8 +12,8 @@
 
 .ui-tip{
   position:fixed; left:0; top:0; z-index:99999;
-  max-width:240px;
-  padding:5px 9px;
+  max-width:340px;                    /* v2 : assez large pour une phrase d'explication, pas pour un pavé */
+  padding:6px 10px;
   background:#22222c;                 /* fond sombre, volontairement constant dans les deux thèmes */
   color:#f2f2f5;                      /* texte clair, lisible sur clair comme sur sombre */
   border:1px solid rgba(255,255,255,.14);
@@ -21,7 +21,11 @@
   box-shadow:0 4px 14px rgba(0,0,0,.28); /* ombre légère */
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
   font-size:12px; line-height:1.35; font-weight:500;
-  white-space:normal; text-align:center;
+  /* v2 : `pre-line` conserve les retours à la ligne du texte (les info-bulles du planning énoncent la
+     règle, le fait déclencheur et où le régler, sur trois lignes) tout en repliant les espaces multiples.
+     Alignement à gauche : sur une bulle d'une seule ligne le rendu est identique (la bulle épouse le
+     texte), sur une phrase repliée c'est nettement plus lisible que centré. */
+  white-space:pre-line; text-align:left;
   pointer-events:none;               /* n'intercepte jamais le curseur (sinon scintillement) */
   opacity:0;                         /* toujours dans le flux (donc mesurable) mais invisible */
 }

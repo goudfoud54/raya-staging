@@ -6,6 +6,7 @@
 // logique d'enveloppe. À terme, à fusionner dans les harnais réels plutôt qu'à maintenir en parallèle.
 const fs=require("fs");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
+require("./plprims.js").installPlanningPrims(h);   // constantes/helpers de fichier (F2H_*, _finAbsM, _restoNom)
 function grab(name){const re=new RegExp("(?:async\\s+)?function "+name+"\\s*\\(");const i=h.search(re);if(i<0)throw"no "+name;let d=0,s=h.indexOf("{",i),j=s;for(;j<h.length;j++){if(h[j]==="{")d++;else if(h[j]==="}"){d--;if(d===0){j++;break;}}}return h.slice(i,j);}
 function grabConst(name){const m=h.match(new RegExp("const "+name+"\\s*=[^\\n]*"));return m?m[0].replace(/^const/,'var'):null;}
 // primitives

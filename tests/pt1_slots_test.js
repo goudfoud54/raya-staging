@@ -1,5 +1,6 @@
 const fs=require("fs");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
+require("./plprims.js").installPlanningPrims(h);   // constantes/helpers de fichier (F2H_*, _finAbsM, _restoNom)
 function grab(name){const re=new RegExp("function "+name+"\\s*\\(");const i=h.search(re);let d=0,s=h.indexOf("{",i),j=s;for(;j<h.length;j++){if(h[j]==="{")d++;else if(h[j]==="}"){d--;if(d===0){j++;break;}}}return h.slice(i,j);}
 eval(h.match(/const _pmin\s*=[^\n]*/)[0].replace(/^const/,'var'));
 eval(h.match(/const _pdur\s*=[^\n]*/)[0].replace(/^const/,'var'));
@@ -32,7 +33,8 @@ let ok=true;const t=(l,c)=>{console.log((c?'PASS':'FAIL')+' · '+l);ok=c&&ok;};
 const r=rowHoursCell(SAL.sarah);
 console.log('  html:',r.html);
 t('Σ compact « Σ 31h » (sans « tous snacks »)', /Σ 31h</.test(r.html) && !r.html.includes('tous snacks'));
-t('title contient le détail par snack (Lobau + Grand Cœur)', /title="[^"]*Lobau : 9h[^"]*Grand Cœur : 22h/.test(r.html));
+// v0.57 : le planning est passé au socle d'info-bulles commun → `data-tip` remplace `title`.
+t('info-bulle contient le détail par snack (Lobau + Grand Cœur)', /data-tip="[^"]*Lobau : 9h[^"]*Grand Cœur : 22h/.test(r.html));
 t('title libellé « Total toutes plannings confondus (31h) »', r.html.includes('Total toutes plannings confondus (31h)'));
 // snackTargetSlots : lobau=5 > gc=4 → lobau plus contraint
 console.log('  slots lobau=',snackTargetSlots('lobau'),' gc=',snackTargetSlots('gc'));

@@ -1,6 +1,7 @@
 // S1 (sureffectif → suggestions par défaut, classé par cible) + S2 (alerte sur-couverture = simultané).
 const fs=require("fs");const {extractFn}=require("./extract.js");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
+require("./plprims.js").installPlanningPrims(h);   // constantes/helpers de fichier (F2H_*, _finAbsM, _restoNom)
 { const _s=h.indexOf("function _needAt"),_e=h.indexOf("// ===== UNDO"); eval(h.slice(_s,_e)+";global._needAt=_needAt;global._coverAt=_coverAt;global._wouldOvercover=_wouldOvercover;"); }
 const grab=n=>extractFn(h,n);
 global._contrainteBlocking=()=>null; global.contrOf=()=>[];

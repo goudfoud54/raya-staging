@@ -2,6 +2,7 @@
 // Teste _contrainteBlocking en direct (chaque clé dure + inactive ignorée + autre) ET l'intégration checkPlacement (cas ADAM HOJR).
 const fs=require("fs");const {extractFn}=require("./extract.js");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
+require("./plprims.js").installPlanningPrims(h);   // constantes/helpers de fichier (F2H_*, _finAbsM, _restoNom)
 { const _s=h.indexOf("function _needAt"),_e=h.indexOf("// ===== UNDO"); if(_s>=0&&_e>_s){ eval(h.slice(_s,_e)+";global._needAt=_needAt;global._coverAt=_coverAt;global._wouldOvercover=_wouldOvercover;"); } }
 const grab=n=>extractFn(h,n);
 global._pmin=t=>{if(!t)return null;const[hh,mi]=t.slice(0,5).split(':').map(Number);return hh*60+mi;};

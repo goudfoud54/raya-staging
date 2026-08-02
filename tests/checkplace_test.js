@@ -1,5 +1,6 @@
 const fs=require("fs");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
+require("./plprims.js").installPlanningPrims(h);   // constantes/helpers de fichier (F2H_*, _finAbsM, _restoNom)
 { const _s=h.indexOf("function _needAt"),_e=h.indexOf("// ===== UNDO"); if(_s>=0&&_e>_s){ eval(h.slice(_s,_e)+";global._needAt=_needAt;global._coverAt=_coverAt;global._wouldOvercover=_wouldOvercover;"); } }
 global._contrainteBlocking=()=>null; global.contrOf=()=>[];
 function grab(name){const re=new RegExp("(?:async\\s+)?function "+name+"\\s*\\(");const i=h.search(re);if(i<0)throw"no "+name;let d=0,s=h.indexOf("{",i),j=s;for(;j<h.length;j++){if(h[j]==="{")d++;else if(h[j]==="}"){d--;if(d===0){j++;break;}}}return h.slice(i,j);}
@@ -69,10 +70,18 @@ all &= run('Accept gap 3h30 (Lobau 15:00→18:00, GC 21:30→23:30)',
 all &= run('Repos inter-snack: candidate Lobau Lun 18:00→00:00, GC Mar 08:00→14:00',
   [{salarie_id:'ahmad',restaurant_id:GC,date:TUE,service:'midi',heure_debut:'08:00',heure_fin:'14:00'}],
   {deb:'18:00',fin:'00:00',role:'cuisine'}, MON,'soir',0,{manual:true},'repos_quot');
-// 3b) Cross-day repos OK : GC Mardi 12:00→18:00 → gap from 00:00 to 12:00 = 12h ≥ 11h → NULL
-all &= run('Repos OK cross-day 12h (candidate Lobau Lun 18:00→00:00, GC Mar 12:00→18:00)',
-  [{salarie_id:'ahmad',restaurant_id:GC,date:TUE,service:'midi',heure_debut:'12:00',heure_fin:'18:00'}],
+// 3b) Cross-day repos OK : GC Mardi 15:00→21:00 → gap de Lun 00:00 à Mar 15:00 = 15h ≥ 11h → NULL.
+// La reprise est à 15:00 : ce n'est PAS un « matin » (seuil F2H_MATIN_MIN), donc fin_2h_pas_matin ne
+// s'en mêle pas et le cas teste bien le repos SEUL. Avant v0.57 la reprise était à 12:00 : ce cas passait
+// parce que fin_2h_pas_matin ne voyait pas l'autre snack — c'était le bug, cf. 3c.
+all &= run('Repos OK cross-day 15h (candidate Lobau Lun 18:00→00:00, GC Mar 15:00→21:00)',
+  [{salarie_id:'ahmad',restaurant_id:GC,date:TUE,service:'midi',heure_debut:'15:00',heure_fin:'21:00'}],
   {deb:'18:00',fin:'00:00',role:'cuisine'}, MON,'soir',0,{manual:true},'NULL');
+// 3c) MÊME cas mais reprise le lendemain MATIN (12:00 < 15:00) : le repos de 12h est pourtant respecté.
+// fin_2h_pas_matin est un interdit ABSOLU qui s'ajoute au repos quotidien — et il doit voir l'autre snack.
+all &= run('Fin 00:00 à Lobau + matin 12:00 à GC le lendemain → fin_2h_pas_matin (repos 12h pourtant OK)',
+  [{salarie_id:'ahmad',restaurant_id:GC,date:TUE,service:'midi',heure_debut:'12:00',heure_fin:'18:00'}],
+  {deb:'18:00',fin:'00:00',role:'cuisine'}, MON,'soir',0,{manual:true},'fin_2h_pas_matin');
 // 4) No other-snack créneaux at all → NULL (mono behaviour untouched)
 all &= run('Aucun autre snack → NULL',
   [],
