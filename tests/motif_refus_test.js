@@ -12,6 +12,8 @@
 const fs=require("fs");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
 require("./plprims.js").installPlanningPrims(h);   // constantes/helpers de fichier (F2H_*, _finAbsM, _restoNom)
+require("../access.js");            // définit EatimeAccess (canSeeAbsenceMotif)
+global.ME={role:'admin'};            // le lecteur de ces messages est un ENCADRANT : il voit les motifs
 const {extractFn}=require("./extract.js");
 const grab=n=>extractFn(h,n);
 

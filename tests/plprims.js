@@ -18,7 +18,8 @@ const { extractFn } = require('./extract.js');
 // Fonctions appelées par d'autres fonctions extraites (checkPlacement, rowHoursCell, autoFillCore…).
 const FNS = [
   '_finAbsM', '_restoNom', '_svcWindow', '_joinFr',
-  '_dateFr', '_revalPhrase', '_withSnack',   // revalidation du planning existant            // règles temporelles de checkPlacement
+  '_dateFr', '_revalPhrase', '_withSnack',   // revalidation du planning existant
+  'voirMotifAbsence',                 // droit de voir le motif d'une absence — appelée par explainViolation            // règles temporelles de checkPlacement
   '_hoursCellTip',                    // appelée par rowHoursCell
   '_jourDe', '_creTxt', '_absTxt',    // mise en forme des motifs de refus
   'explainViolation',                 // appelée par diagHole (motif « pourquoi » du rapport)

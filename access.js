@@ -132,5 +132,31 @@
       + '</div>';
   }
 
-  g.EatimeAccess = { DEFAULT_PERMS, canAccessModule, effectiveAccess, exceptionFor, describeAccess, rolesFor, renderAccessDenied };
+  // ── MOTIF D'UNE ABSENCE : donnée SENSIBLE, jamais visible par les collègues ────────────────────
+  // Le motif d'une indisponibilité mélange le TYPE d'absence et un commentaire libre. Un « arrêt
+  // maladie » est une donnée de santé (catégorie particulière au sens du RGPD) ; une « absence
+  // injustifiée » est une information disciplinaire, affichée avant même que le salarié ait été
+  // entendu. Ni l'une ni l'autre ne regarde l'équipe : savoir QUE quelqu'un est absent suffit à
+  // comprendre l'organisation, c'est le seul besoin légitime.
+  //
+  // Ce n'est délibérément PAS un réglage : aucun restaurateur n'a de raison légitime d'exposer
+  // l'état de santé d'un salarié à ses collègues, et lui laisser le choix reviendrait à lui offrir
+  // la possibilité de se mettre en faute. L'application tranche.
+  //
+  // ⚠ La règle ne se déduit PAS de l'accès au module : un salarié peut recevoir l'accès au planning
+  // par exception individuelle sans avoir à connaître les motifs de ses collègues. On tranche donc
+  // sur le RÔLE, plus le cas « sa propre absence ».
+  //   encadrement (super_admin / admin / manager) → motif visible
+  //   salarié sur SA propre absence               → motif visible
+  //   tout le reste                               → libellé neutre
+  // Le PDF, lui, est expurgé SANS CONDITION : il est imprimé et affiché en salle (voir planning).
+  const ROLES_ENCADREMENT = ['super_admin', 'admin', 'manager'];
+  function canSeeAbsenceMotif(profile, salarieId) {
+    if (!profile) return false;
+    if (ROLES_ENCADREMENT.indexOf(profile.role) >= 0) return true;
+    // Sa propre absence : on exige les deux identifiants non vides, sinon deux null se « valent ».
+    return !!(salarieId && profile.salarie_id && profile.salarie_id === salarieId);
+  }
+
+  g.EatimeAccess = { DEFAULT_PERMS, canAccessModule, effectiveAccess, exceptionFor, describeAccess, rolesFor, renderAccessDenied, canSeeAbsenceMotif, ROLES_ENCADREMENT };
 })(typeof window !== 'undefined' ? window : globalThis);

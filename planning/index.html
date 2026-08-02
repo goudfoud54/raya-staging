@@ -15,7 +15,7 @@
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../access.js?v=6.30"></script>
+<script src="../access.js?v=6.31"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.0/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -302,7 +302,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.61 · REVALIDATION : le planning déjà posé est rejugé contre toutes les règles, sur les 3 restaurants — bandeau à l\'ouverture + avertissement avant export PDF';
+const VERSION='v0.62 · confidentialité : le motif d\'une absence n\'est plus visible par l\'équipe (PDF et grille) — encadrement et salarié concerné uniquement';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -859,7 +859,7 @@ function renderTable(){
       const ind=hasIndispo(s.id,date);
       let indBad=null, indObj=null;
       if(ind){
-        indBad=indispoBadge(ind);
+        indBad=indispoBadge(ind, voirMotifAbsence(s.id));
         if(!(ind.heure_debut||ind.heure_fin)){
           tbody+=`<td colspan="4" class="alt-block indispo-block" data-tip="${escP(indBad.full)}">${indBad.ic} ${escP(indBad.lbl)}</td>`;
           colIdx+=4; return;
@@ -1587,7 +1587,7 @@ function _mvBadges(s,date){
   let b='';
   rolesOf(s.id).forEach(cle=>{ b+=`<span style="background:${roleCol(cle)}22;color:${roleCol(cle)};border:1px solid ${roleCol(cle)}55">${escP((roleNom(cle).charAt(0)||'').toUpperCase())}${isExp(s.id,cle)?'★':'🔰'}</span>`; });
   if(date){ const adt=altDayType(s.id,date); if(adt) b+=`<span style="background:rgba(91,156,255,.14);color:#5b9cff">${adt==='examen'?'📝 Examen':'🎓 École'}</span>`;
-    const ind=hasIndispo(s.id,date); if(ind){const ib=indispoBadge(ind);b+=`<span style="background:rgba(224,169,58,.16);color:var(--warn)">${ib.ic} ${escP(ib.lbl)}</span>`;} }
+    const ind=hasIndispo(s.id,date); if(ind){const ib=indispoBadge(ind, voirMotifAbsence(s.id));b+=`<span style="background:rgba(224,169,58,.16);color:var(--warn)">${ib.ic} ${escP(ib.lbl)}</span>`;} }
   const cs=contrOf(s.id); if(cs.length) b+=`<span data-tip="${escP(cs.map(_contrLabelOf).join(' · '))}" style="background:rgba(74,127,189,.14);color:#4a7fbd">🔒 ${cs.length}</span>`;
   const oth=otherSnackHoursOf(s.id); if(oth>0.01) b+=`<span style="background:rgba(200,160,53,.14);color:var(--gold)">+${fmtH1(oth)}h ailleurs</span>`;
   return b;
@@ -1602,7 +1602,7 @@ function _mvEditPanel(s,date){
   // Journée entière bloquée (école/indispo sans heures) → pas d'édition, on explique.
   const adt=altDayType(s.id,date), ind=hasIndispo(s.id,date);
   if(adt==='ecole'||adt==='examen') return `<div class="edit"><div class="blocked">${adt==='examen'?'📝 Examen':'🎓 École'} — alternant indisponible ce jour.</div></div>`;
-  if(ind && !(ind.heure_debut||ind.heure_fin)) return `<div class="edit"><div class="blocked">${indispoBadge(ind).ic} ${escP(indispoBadge(ind).lbl)} — journée entière, non modifiable ici.</div></div>`;
+  if(ind && !(ind.heure_debut||ind.heure_fin)) return `<div class="edit"><div class="blocked">${_ibM(ind,s.id).ic} ${escP(_ibM(ind,s.id).lbl)} — journée entière, non modifiable ici.</div></div>`;
   let h='<div class="edit">';
   for(const svc of ['midi','soir']){
     const cr=getCreneau(s.id,date,svc)||{}; const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
@@ -2299,7 +2299,7 @@ async function openDemandes(){
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
           <div><div style="font-weight:600;font-size:13.5px">${nameOf(d.salarie_id)}</div>
           <div style="color:var(--muted);font-size:11.5px;margin-top:3px">${fmt(d)} · ${plage(d)}</div>
-          ${d.motif?'<div style="color:var(--muted);font-size:12px;margin-top:5px;font-style:italic">'+d.motif+'</div>':''}</div>
+          ${(d.motif && voirMotifAbsence(d.salarie_id))?'<div style="color:var(--muted);font-size:12px;margin-top:5px;font-style:italic">'+escP(d.motif)+'</div>':''}</div>
           <div style="display:flex;gap:8px">
             <button class="btn ghost sm" style="color:var(--bad);border-color:rgba(196,90,90,.4)" onclick="decideDispo('${d.id}','refusee')">Refuser</button>
             <button class="btn sm" onclick="decideDispo('${d.id}','validee')">Valider</button>
@@ -2322,16 +2322,32 @@ async function decideDispo(id,decision){
 
 // Vérifie si un salarié a une indispo validée pour cette date
 // Icône + libellé courts pour l'affichage d'une indispo dans la grille, dérivés du champ motif.
-// full = motif complet (tooltip). Mapping sur les libellés produits par « Ajouter une absence »
+// full = motif complet (info-bulle). Mapping sur les libellés produits par « Ajouter une absence »
 // (+ fallback générique pour "Autre" ou une indispo salarié classique sans motif structuré).
 const INDISPO_ICONS=[['arrêt maladie','🤒'],['arret maladie','🤒'],['congé payé','🌴'],['conge paye','🌴'],['congé sans solde','🚫'],['conge sans solde','🚫'],['absence injustifiée','❌'],['absence injustifiee','❌']];
-function indispoBadge(ind){
+// ── Affichage NEUTRE d'une absence ───────────────────────────────────────────────────────────────
+// L'équipe doit comprendre l'organisation (« il est absent »), jamais la RAISON : un arrêt maladie
+// est une donnée de santé au sens du RGPD, « absence injustifiée » une information disciplinaire.
+// ⚠ L'ICÔNE fait partie de la fuite : 🤒 dit « malade » sans qu'un mot soit écrit. La version neutre
+// remplace donc le libellé ET le pictogramme.
+const ABSENCE_NEUTRE={ic:'🚫', lbl:'Absent', full:'Absent'};
+// `voirMotif` est VOLONTAIREMENT sans valeur par défaut permissive : un appel qui l'oublie expurge.
+// Fail-closed — sur une donnée de santé, l'oubli doit taire, jamais divulguer.
+// Qui a le droit : EatimeAccess.canSeeAbsenceMotif (source unique, partagée entre modules).
+function indispoBadge(ind, voirMotif){
+  if(!voirMotif) return Object.assign({}, ABSENCE_NEUTRE);
   const raw=((ind&&ind.motif)||'').trim();
   const low=raw.toLowerCase();
   for(const [key,ic] of INDISPO_ICONS){ if(low.startsWith(key)) return {ic, lbl:raw.slice(0,key.length), full:raw}; }
   if(raw){ const short=raw.replace(/^autre\s*—?\s*/i,'').trim()||raw; return {ic:'🚫', lbl:(short.length>18?short.slice(0,17)+'…':short), full:raw}; }
   return {ic:'🚫', lbl:'Indisponible', full:'Indisponible'};
 }
+// Le lecteur courant a-t-il le droit de voir le motif de l'absence de `sid` ?
+function voirMotifAbsence(sid){
+  try{ return EatimeAccess.canSeeAbsenceMotif(ME, sid); }catch(e){ return false; }  // en cas de doute : on tait
+}
+// Raccourci d'affichage : badge d'indispo déjà filtré selon le droit du lecteur sur CE salarié.
+function _ibM(ind, sid){ return indispoBadge(ind, voirMotifAbsence(sid)); }
 function hasIndispo(sid,date){
   const di=(new Date(date).getDay()+6)%7;
   return S.dispos.find(d=>{
@@ -2986,7 +3002,7 @@ function explainViolation(v, ctx){
     case 'indispo': {
       const r=v._ind&&v._ind.row;
       const h=r&&(r.heure_debut||r.heure_fin)?` de ${(r.heure_debut||'').slice(0,5)} à ${(r.heure_fin||'').slice(0,5)}`:' toute la journée';
-      why=`Une indisponibilité validée${h} couvre ce créneau${r&&r.motif?` (motif : ${r.motif})`:''}.`;
+      why=`Une indisponibilité validée${h} couvre ce créneau${(r&&r.motif&&voirMotifAbsence(r.salarie_id))?` (motif : ${r.motif})`:''}.`;
       break;
     }
     case 'cfa': why=`L'alternant est au CFA ce jour-là : ${v.label}.`; break;
@@ -4522,7 +4538,10 @@ function drawSnackPage(doc,resto,creneaux,ctx){
       const ind=hasIndispo(s.id,date);
       const fullDayAbs = (adt==='ecole'||adt==='examen') || (ind && !(ind.heure_debut||ind.heure_fin));
       if(fullDayAbs){
-        const lbl = adt==='examen'?'Examen' : adt==='ecole'?'École' : (indispoBadge(ind).lbl||'Absent');
+        // ⚠ PDF : « Absent », SANS CONDITION et quel que soit le lecteur. Ce document est imprimé et
+        // affiché en salle : il n'existe pas de lecteur « autorisé » pour un papier punaisé au mur.
+        // Ne JAMAIS y remettre indispoBadge(...).lbl — c'est ce qui exposait 42 arrêts maladie.
+        const lbl = adt==='examen'?'Examen' : adt==='ecole'?'École' : 'Absent';
         row.push({content:lbl, colSpan:4, styles:{fillColor:[247,244,238],textColor:[150,120,90],fontStyle:'italic',halign:'center'}});
         continue;
       }
