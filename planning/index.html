@@ -302,7 +302,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.62 · confidentialité : le motif d\'une absence n\'est plus visible par l\'équipe (PDF et grille) — encadrement et salarié concerné uniquement';
+const VERSION='v0.63 · confidentialité du PDF affiché en salle : plus de motif d\'absence NI de total d\'heures hebdomadaire — les deux restent dans l\'application';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -4516,8 +4516,8 @@ function drawSnackPage(doc,resto,creneaux,ctx){
   const WEND=[240,236,228], WDAY=[241,241,244], MHEAD=[255,244,222], SHEAD=[228,236,250];
   const head=[
     [{content:'Salarié',rowSpan:2,styles:{halign:'left',valign:'middle',fillColor:[60,60,66],textColor:[245,245,245]}}]
-      .concat(JOURS.map((j,i)=>({content:`${j} ${dateOfDay(i).getDate()}`,colSpan:4,styles:{halign:'center',fillColor:(i>=5?WEND:WDAY),fontStyle:(i>=5?'bold':'normal')}})))
-      .concat([{content:'Total',rowSpan:2,styles:{halign:'center',valign:'middle',fillColor:[60,60,66],textColor:[245,245,245]}}]),
+      // ⚠ PAS de colonne « Total » ici — voir le commentaire du corps de table plus bas.
+      .concat(JOURS.map((j,i)=>({content:`${j} ${dateOfDay(i).getDate()}`,colSpan:4,styles:{halign:'center',fillColor:(i>=5?WEND:WDAY),fontStyle:(i>=5?'bold':'normal')}}))),
     Array(7).fill(0).flatMap((_,i)=>[
       {content:'M dbt',styles:{fillColor:MHEAD}},{content:'M fin',styles:{fillColor:MHEAD}},
       {content:'S dbt',styles:{fillColor:SHEAD}},{content:'S fin',styles:{fillColor:SHEAD}}
@@ -4530,7 +4530,6 @@ function drawSnackPage(doc,resto,creneaux,ctx){
     const rl=roleLetter(s.id);
     const nm=([s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?')+(rl?`  ·${rl}`:'');
     const row=[{content:nm,styles:{fillColor:nmeRgb,textColor:nameTxt,fontStyle:'bold',halign:'left'}}];
-    let wkMin=0;
     for(let i=0;i<7;i++){
       const date=fmtDate(dateOfDay(i));
       // Absence journée entière : congé/arrêt (indispo validée sans heures) ou école/examen CFA → 1 cellule ×4.
@@ -4547,7 +4546,6 @@ function drawSnackPage(doc,resto,creneaux,ctx){
       }
       for(const svc of ['midi','soir']){
         const cr=get(s.id,date,svc)||{};
-        wkMin+=_pdur(cr.heure_debut,cr.heure_fin);
         // Fond atténué MAIS visible : midi = teinte claire, soir = teinte plus soutenue (distinction service).
         const cellTint=svc==='midi'?_tintRgb(s.couleur||'#888888',0.20):_tintRgb(s.couleur||'#888888',0.34);
         const empty=!(cr.heure_debut||cr.heure_fin);
@@ -4555,7 +4553,12 @@ function drawSnackPage(doc,resto,creneaux,ctx){
         row.push(mk(cr.heure_debut)); row.push(mk(cr.heure_fin));
       }
     }
-    row.push({content: wkMin>0?fmtH1(wkMin/60)+'h':'–', styles:{fontStyle:'bold',halign:'center',fillColor:[238,238,242],textColor:(wkMin>0?[30,30,30]:[190,190,190])}});
+    // ⚠ AUCUNE colonne « Total d'heures » dans le PDF, et rien qui la calcule — même raison que les
+    // motifs d'absence : ce document est imprimé et affiché en salle. Le total hebdomadaire de chacun
+    // révèle sa situation contractuelle (temps plein, temps partiel, contrat court) à toute l'équipe.
+    // Le total reste dans l'APPLICATION (colonne « Heures » de la grille, information de gestion) et
+    // dans l'espace du salarié pour ses propres heures. Le cumul wkMin a été retiré volontairement :
+    // le laisser calculé mais inutilisé invitait à réafficher la colonne. Verrou : absence_motif_test.
     return row;
   });
 
@@ -4563,7 +4566,7 @@ function drawSnackPage(doc,resto,creneaux,ctx){
     head,body,startY:26,
     styles:{fontSize:6.5,cellPadding:1.1,halign:'center',valign:'middle',lineWidth:0.1,lineColor:[205,205,205]},
     headStyles:{fontSize:7,textColor:[55,55,60]},
-    columnStyles:{0:{cellWidth:34,fontSize:7.5},29:{cellWidth:12}},
+    columnStyles:{0:{cellWidth:34,fontSize:7.5}},   // plus de colonne 29 : le total d'heures a été retiré du PDF
     margin:{top:26,left:10,right:10},   // top:26 → l'en-tête (didDrawPage) se répète sur CHAQUE page (org 30 salariés = multi-page A3)
     theme:'grid',
     didDrawPage:function(){ _pdfHeader(doc,resto,ctx); },   // en-tête redessiné en haut de chaque page

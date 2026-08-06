@@ -115,6 +115,46 @@ t('… le salarié absent figure quand même au planning (l\'équipe voit l\'org
 t('CONTRÔLE : l\'extraction lit vraiment le document (jours de la semaine présents)',
   /Lundi|Mardi|Mercredi/.test(texte), texte.slice(0,200));
 
+// ── 1 bis. LE TOTAL D'HEURES HEBDOMADAIRE N'EST PAS DANS LE PDF NON PLUS ────────────────────────
+// Même raison que les motifs : le document est affiché en salle. Le total de chacun révèle sa
+// situation contractuelle (temps plein, temps partiel, contrat court) à toute l'équipe.
+// Le décor pose des créneaux réels pour que le total EXISTE : sans heures, l'absence de total ne
+// prouverait rien.
+{
+  const d0=fmtDate(dateOfDay(0)), d1=fmtDate(dateOfDay(1));
+  const creneaux=[
+    {salarie_id:'sal1', date:d0, service:'midi', heure_debut:'11:00:00', heure_fin:'15:00:00'},
+    {salarie_id:'sal1', date:d0, service:'soir', heure_debut:'18:30:00', heure_fin:'23:30:00'},
+    {salarie_id:'sal1', date:d1, service:'soir', heure_debut:'18:30:00', heure_fin:'23:30:00'},
+  ];   // 4 + 5 + 5 = 14 h → « 14h » apparaîtrait dans l'ancienne colonne Total
+  let txt2, prov2;
+  if(jsPDF){
+    const doc2=new jsPDF({orientation:'landscape',unit:'mm',format:'a3',compress:false});
+    drawSnackPage(doc2, RESTO, creneaux, {primary:'#c8a035', org:'Groupe Raya'});
+    const b2=Buffer.from(doc2.output('arraybuffer'));
+    txt2=texteDuPdf(b2); prov2=`PDF RÉEL (${b2.length} octets)`;
+  } else {
+    const vu=[]; const push=v=>{ if(v==null)return; if(Array.isArray(v)) v.forEach(push);
+      else if(typeof v==='object') push(v.content); else vu.push(String(v)); };
+    const doc2={ internal:{pageSize:{getWidth:()=>420,getHeight:()=>297}},
+      setFillColor(){},rect(){},addImage(){},setFontSize(){},setFont(){},setTextColor(){},setDrawColor(){},
+      setLineWidth(){},line(){},text(v){push(v);},
+      autoTable(o){ push(o.head); push(o.body); if(o.didDrawPage) o.didDrawPage({}); } };
+    drawSnackPage(doc2, RESTO, creneaux, {primary:'#c8a035', org:'Groupe Raya'});
+    txt2=vu.join('\n'); prov2='moteur enregistreur';
+  }
+  console.log('   ℹ source (totaux) : '+prov2);
+  // Contrôle de méthode d'abord : les horaires posés DOIVENT être lisibles, sinon l'absence de total
+  // ne prouverait rien (on aurait pu tester un document vide).
+  t('CONTRÔLE : les horaires posés sont bien dans le document', /11:00/.test(txt2)&&/23:30/.test(txt2), txt2.slice(0,200));
+  t('le document ne porte AUCUN en-tête « Total »', !/Total/.test(txt2), (txt2.match(/.{0,20}Total.{0,20}/)||[''])[0]);
+  t('… ni le total hebdomadaire du salarié (14h)', !/\b14h\b/.test(txt2), (txt2.match(/.{0,20}14h.{0,20}/)||[''])[0]);
+  // Garde-fou générique : aucune cellule « <nombre>h » (format fmtH1 du total). Les horaires, eux,
+  // sont au format HH:MM et ne matchent pas.
+  const totaux=(txt2.match(/(^|\n)\s*\d{1,2}(,\d)?h\s*(\n|$)/g)||[]);
+  t('… ni aucune cellule au format « Xh » (format du total)', totaux.length===0, JSON.stringify(totaux));
+}
+
 // ── 2. LE GARDE-FOU : indispoBadge est FAIL-CLOSED ──────────────────────────────────────────────
 console.log('\n── 2. indispoBadge : oublier le droit d\'accès EXPURGE (jamais l\'inverse) ─────────────');
 const IND={motif:'Arrêt maladie — '+COMMENTAIRE};
@@ -166,6 +206,16 @@ console.log('\n── 5. Verrous sur le code source ─────────�
   const zonePdf=hh.slice(hh.indexOf('function drawSnackPage'), hh.indexOf('function buildPrintPage'));
   t('drawSnackPage n\'appelle plus indispoBadge', !/indispoBadge\s*\(/.test(zonePdf));
   t('… et pose bien un libellé neutre « Absent »', /'Absent'/.test(zonePdf));
+  // VERROU sur le total d'heures : ni en-tête, ni cumul, ni largeur de colonne réservée. Trois
+  // marqueurs indépendants — réintroduire la colonne en fait forcément réapparaître au moins un.
+  t('drawSnackPage ne déclare aucun en-tête « Total »', !/content:\s*'Total'/.test(zonePdf),
+    (zonePdf.match(/.{0,40}Total.{0,40}/)||[''])[0]);
+  t('… ne calcule aucun cumul d\'heures (wkMin retiré)', !/wkMin/.test(zonePdf),
+    (zonePdf.match(/.{0,40}wkMin.{0,40}/)||[''])[0]);
+  t('… et ne réserve plus de largeur pour la 29e colonne', !/29\s*:\s*\{/.test(zonePdf),
+    (zonePdf.match(/columnStyles[^\n]*/)||[''])[0]);
+  t('… alors que fmtH1 (format « Xh ») n\'y est plus appelé', !/fmtH1\s*\(/.test(zonePdf),
+    (zonePdf.match(/.{0,40}fmtH1.{0,40}/)||[''])[0]);
   // Tout appel à indispoBadge doit passer un droit explicite (fail-closed, mais on veut aussi l'intention).
   const appels=[...hh.matchAll(/indispoBadge\(([^)]*)\)/g)].map(m=>m[1]).filter(a=>!/^ind,\s*voirMotif$/.test(a));
   const sansDroit=appels.filter(a=>a.split(',').length<2);
