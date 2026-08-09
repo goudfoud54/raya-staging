@@ -394,6 +394,15 @@ t('les jour-types de FIN_CLE_OF_JT couvrent exactement JOUR_TYPES',
   JSON.stringify(Object.keys(FIN_CLE_OF_JT).sort())===JSON.stringify(JOUR_TYPES.slice().sort()));
 t('le panneau de vérification ne sort plus en silence quand un jour n\'a pas de plafond',
   /capCoverageGaps\(_rc\)/.test(code));
+// UNE SEULE logique d'infractions : la modale « Analyser la semaine », le bandeau de non-conformité,
+// l'avertissement de publication et celui de l'export PDF doivent tous lire revalidateWeek(). Sans ce
+// verrou, un créneau hors poste pourrait apparaître dans le bandeau pendant que la modale — celle que
+// le patron ouvre — annonce « tout va bien ».
+t('analyseWeek compte les infractions depuis revalidateWeek (source unique)',
+  /const reval=revalidateWeek\(\);/.test(code) && /infractions:reval\.infractions\.length/.test(code));
+t('le bandeau, la publication et l\'export PDF lisent la même source',
+  (code.match(/revalidateWeek\(\)/g)||[]).length>=4,
+  String((code.match(/revalidateWeek\(\)/g)||[]).length)+' appels');
 // Le moteur ne doit plus dépendre des horaires d'ouverture du restaurant (les 4 champs sont vides).
 t('le moteur ne lit plus SNACK.fermeture_semaine / fermeture_weekend',
   !/SNACK\.fermeture_(semaine|weekend)/.test(code));
