@@ -302,7 +302,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.63 · confidentialité du PDF affiché en salle : plus de motif d\'absence NI de total d\'heures hebdomadaire — les deux restent dans l\'application';
+const VERSION='v0.64 · l\'auto-fill se borne aux postes définis (bornes par RÔLE) · plafond d\'heure de fin sur les 7 jours — le dimanche n\'était couvert par aucune règle, et « 00:00 » était lu comme « pas de plafond »';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -332,6 +332,27 @@ function getShifts(jt,svc,role){
   const [d,f]=DEF_TIME(svc);
   const n=e?(e.nb_cible||0):0;
   return Array(n).fill(0).map(()=>({deb:d,fin:f,exp:false}));
+}
+// ── BORNES DES POSTES — la seule source légitime des heures que l'auto-fill peut produire ────────
+// [début du poste le plus matinal, fin du poste le plus tardif] pour un jour-type / service / RÔLE,
+// en minutes absolues (fin ≤ début ⇒ +1440, service à cheval sur minuit).
+// Les postes sont ce que l'utilisateur a RÉELLEMENT demandé : ni l'heure de fermeture du restaurant,
+// ni une valeur par défaut, ni une règle générale n'a de raison de produire un créneau qu'il n'a pas
+// demandé — une heure hors poste est de la masse salariale que personne n'a réclamée.
+// PAR RÔLE, et non tous rôles confondus : l'enveloppe « tous rôles » utilisée jusqu'en v0.63 autorisait
+// à étendre un créneau de caisse jusqu'à la fin du poste de CUISINE le plus tardif (à Lobau le dimanche :
+// caisse 18:00→00:00 mais enveloppe 17:00→00:30, empruntée à la cuisine). Aucun dépassement n'en est
+// résulté en production — la sur-couverture (_wouldOvercover) le bloquait par ailleurs — mais la borne
+// était fausse et ne tenait que par un second garde-fou. On la rend juste par elle-même.
+// null = aucun poste défini pour ce rôle ce jour-là → aucune heure ne peut être inventée.
+function posteEnvelope(jt,svc,role){
+  let mn=Infinity,mx=-Infinity;
+  for(const v of (getShifts(jt,svc,role)||[])){
+    const d=_pmin(v.deb); if(d==null)continue;
+    let f=_pmin(v.fin); if(f==null)continue; if(f<=d)f+=1440;
+    if(d<mn)mn=d; if(f>mx)mx=f;
+  }
+  return mn===Infinity?null:{mn,mx};
 }
 // ── Profil de BESOIN HORAIRE (projection des vagues déjà en base) ───────────────────────────────
 // nb_cible='2' + vagues [10:30→18:00, 11:30→14:30] N'EST PAS « 2 personnes tout le service » : c'est un
@@ -1323,15 +1344,21 @@ function renderChecks(){
   list.forEach(s=>{ const mn=s.heures_min||0; if(!mn) return; const have=weekHoursOf(s.id); if(have<mn-0.01) under.push(`${nameOf(s.id)} : ${have.toFixed(1)}h < ${mn}h (manque ${(mn-have).toFixed(1)}h)`); });
   CHECKS.push({lbl:'Minimum heures hebdo',ok:under.length===0,details:under});
 
-  // 5b. Heure de fin max (fin_semaine lun→jeu / fin_weekend ven+sam) — miroir a posteriori des
-  //     plafonds durs de checkPlacement, pour que toute règle dure apparaisse aussi dans ce panneau.
+  // 5b. Heure de fin max (une règle par jour-type) — miroir a posteriori des plafonds durs de
+  //     checkPlacement, pour que toute règle dure apparaisse aussi dans ce panneau.
+  //     AVANT v0.64 ce bloc sortait sur `if(!cap) return;` : un jour sans plafond ne produisait
+  //     AUCUNE ligne, et le panneau affichait un vert rassurant là où il n'y avait pas de contrôle.
+  //     Les jours non couverts sont désormais listés explicitement, et le panneau n'est vert que si
+  //     les 7 jours sont plafonnés ET qu'aucun créneau ne dépasse.
   const finCap=[];
   S.creneaux.forEach(c=>{
     if(!c.heure_fin || !c.heure_debut) return;
     const cap=_endCapMin(_rc, dayIdxOfDate(c.date)); if(!cap) return;
     let endM=toMin(c.heure_fin), debM=toMin(c.heure_debut); if(endM==null||debM==null)return; if(endM<=debM)endM+=1440;
-    if(endM>cap.capM) finCap.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} ${c.service} : fin ${(c.heure_fin||'').slice(0,5)} (au-delà du plafond ${cap.cle==='fin_semaine'?'lun→jeu':'ven & sam'})`);
+    if(endM>cap.capM) finCap.push(`${nameOf(c.salarie_id)} · ${JOURS[dayIdxOfDate(c.date)]} ${c.service} : fin ${(c.heure_fin||'').slice(0,5)} (au-delà du plafond ${(JOUR_TYPE_LABELS[cap.jt]||'').toLowerCase()} — ${_absTxt(cap.capM)})`);
   });
+  const _gaps=capCoverageGaps(_rc);
+  _gaps.forEach(g=>finCap.push(`${JOUR_TYPE_LABELS[g.jt]} : aucun plafond d'heure de fin ${g.etat==='desactive'?'(règle décochée)':'(valeur non renseignée)'} — les fins tardives ne sont pas contrôlées ce jour-là`));
   CHECKS.push({lbl:'Heure de fin max (jour)',ok:finCap.length===0,details:finCap});
 
   // 6. Amplitude max consécutive (valeur amplitude_max, comme checkPlacement — plus de 12h codé en dur)
@@ -1774,12 +1801,39 @@ function onSnackChange(){const id=document.getElementById('snackSel').value;SNAC
 // ===== RÉGLAGES =====
 const JOUR_TYPES=['Lu-Me','Je','Ve','Sa','Di'];
 const JOUR_TYPE_LABELS={'Lu-Me':'Lundi – Mercredi','Je':'Jeudi','Ve':'Vendredi','Sa':'Samedi','Di':'Dimanche'};
+// Plafond d'heure de fin : UNE règle par jour-type — les 7 jours de la semaine sont couverts, sans trou.
+const FIN_CLE_OF_JT={'Lu-Me':'fin_lu_me','Je':'fin_je','Ve':'fin_ve','Sa':'fin_sa','Di':'fin_di'};
+// Ancienne règle qui couvrait ce jour-type, lue en REPLI tant que la migration v6.35 n'est pas appliquée.
+// Le dimanche n'a pas d'antécédent : c'est précisément le jour qu'aucune des deux anciennes ne couvrait.
+const FIN_LEGACY_OF_JT={'Lu-Me':'fin_semaine','Je':'fin_semaine','Ve':'fin_weekend','Sa':'fin_weekend','Di':null};
+// Un indice de jour (0=lundi … 6=dimanche) représentatif de chaque jour-type, pour interroger l'état
+// du plafond sans avoir de date sous la main (écran Réglages, panneau de vérification).
+const JT_SAMPLE_DI={'Lu-Me':0,'Je':3,'Ve':4,'Sa':5,'Di':6};
 
 // Métadonnées par règle (libellé, type d'input, unité, aide)
 const RULE_META={
   coupure_min:{lbl:'Coupure minimum entre midi et soir',type:'number',unit:'h',min:0,max:12,help:'Temps de pause minimum requis entre deux services'},
-  fin_semaine:{lbl:'Heure de fin maximale lundi → jeudi',type:'time'},
-  fin_weekend:{lbl:'Heure de fin maximale vendredi & samedi',type:'time'},
+  // ── PLAFONDS D'HEURE DE FIN — UN PAR JOUR-TYPE, LES 7 JOURS COUVERTS ──────────────────────────
+  // Avant v0.64 il n'existait que deux règles : `fin_semaine` (lun→jeu) et `fin_weekend` (ven+sam).
+  // LE DIMANCHE N'APPARTENAIT À AUCUNE DES DEUX : _endCapMin renvoyait null et le contrôle était
+  // SILENCIEUSEMENT absent ce jour-là — y compris dans le panneau de vérification. Un jour sans
+  // plafond n'est pas « un jour permissif », c'est un contrôle manquant que rien ne signale.
+  // Le découpage retenu est celui des JOUR_TYPES, exactement la maille dans laquelle l'utilisateur
+  // définit déjà ses postes : il n'a pas deux grilles mentales à tenir.
+  // ⚠ '00:00' vaut MINUIT (24:00) et non « pas de plafond ». C'était l'inverse avant v0.64, et cette
+  // sentinelle rendait un plafond à minuit littéralement impossible à enregistrer (finRuleInput
+  // relisait la valeur comme « jamais configurée » et la faisait disparaître de l'écran).
+  // « Pas de plafond » se dit maintenant par une valeur VIDE, et l'écran Réglages l'affiche en clair.
+  fin_lu_me:{lbl:'Heure de fin maximale — lundi à mercredi',type:'time',finJour:'Lu-Me',help:'Au-delà de cette heure, l\'auto-fill refuse de placer et une saisie manuelle est bloquée. Laissez vide pour ne poser AUCUNE limite ce jour-là — l\'écran indiquera alors explicitement que rien n\'est contrôlé. Minuit se saisit « 00:00 ».'},
+  fin_je:{lbl:'Heure de fin maximale — jeudi',type:'time',finJour:'Je',help:'Jeudi a son propre plafond : beaucoup d\'établissements ouvrent plus tard ce soir-là sans être encore au régime du week-end.'},
+  fin_ve:{lbl:'Heure de fin maximale — vendredi',type:'time',finJour:'Ve',help:'Au-delà de cette heure, l\'auto-fill refuse de placer et une saisie manuelle est bloquée.'},
+  fin_sa:{lbl:'Heure de fin maximale — samedi',type:'time',finJour:'Sa',help:'Au-delà de cette heure, l\'auto-fill refuse de placer et une saisie manuelle est bloquée.'},
+  fin_di:{lbl:'Heure de fin maximale — dimanche',type:'time',finJour:'Di',help:'Ce jour n\'était couvert par AUCUN plafond avant la version 0.64 : les fins tardives du dimanche n\'étaient contrôlées nulle part, ni à la saisie ni dans le panneau de vérification.'},
+  // Anciennes clés, conservées pour ne rien casser tant que la migration v6.35 n'est pas appliquée
+  // (cf. _endCapMin, qui retombe dessus). `deprecated` les retire de l'écran Réglages : elles ne
+  // doivent plus être modifiées, seulement lues en repli.
+  fin_semaine:{lbl:'Heure de fin maximale lundi → jeudi',type:'time',deprecated:true},
+  fin_weekend:{lbl:'Heure de fin maximale vendredi & samedi',type:'time',deprecated:true},
   // ⚠ Ces trois règles se ressemblent et ont déjà été confondues. Leurs libellés et leurs aides doivent
   // dire NOIR SUR BLANC qu'elles se cumulent : respecter le repos de 11 h ne dispense pas de l'interdit
   // de matin après une fermeture d'après-minuit, et inversement.
@@ -1925,17 +1979,30 @@ function openReglages(){
   // en base apparaît quand même, avec sa valeur par défaut, et la ligne est créée au premier changement.
   // Avant, il était simplement absent de l'écran : c'est ce qui rendait « Autoriser le déplacement vers
   // un autre restaurant » introuvable alors que le rapport d'auto-fill invitait à le décocher.
-  const _cles=[...new Set([...Object.keys(RULE_META), ...(S.regles||[]).map(r=>r.cle)])];
+  // `deprecated` : anciennes clés remplacées (fin_semaine / fin_weekend → une règle par jour-type).
+  // Elles restent LUES en repli par _endCapState tant que la migration n'est pas appliquée, mais ne
+  // doivent plus être modifiables — deux champs qui pilotent le même plafond, c'est la garantie que
+  // l'un des deux sera édité sans effet.
+  const _cles=[...new Set([...Object.keys(RULE_META), ...(S.regles||[]).map(r=>r.cle)])]
+                .filter(c=>!(RULE_META[c]||{}).deprecated);
   const _rows=_cles.map(_regleOf).filter(Boolean);
   if(!_rows.length){
     html+='<div style="padding:18px;color:var(--muted);font-size:12px">Aucune règle configurée. Les vérifications utilisent les valeurs par défaut.</div>';
   } else {
-    // Trier : règles booléennes (avec on/off) en premier, valeurs obligatoires ensuite
+    // Trier : règles booléennes (avec on/off) en premier, valeurs obligatoires ensuite.
+    // Les cinq plafonds d'heure de fin ne portent qu'un JOUR de différence dans leur libellé : triés
+    // sur le texte, ils sortiraient « dimanche, jeudi, lundi à mercredi, samedi, vendredi ». On leur
+    // substitue une clé de tri numérique pour qu'ils se lisent dans l'ordre de la semaine.
+    const _sortKey=r=>{
+      const m=RULE_META[r.cle]||{};
+      if(m.finJour) return 'Heure de fin maximale — '+String(JOUR_TYPES.indexOf(m.finJour)).padStart(2,'0');
+      return m.lbl||r.cle;
+    };
     const sorted=_rows.slice().sort((a,b)=>{
       const ta=(RULE_META[a.cle]?.type||'z'),tb=(RULE_META[b.cle]?.type||'z');
       const aIsBool=ta==='bool'?0:1, bIsBool=tb==='bool'?0:1;
       if(aIsBool!==bIsBool) return aIsBool-bIsBool;
-      return (RULE_META[a.cle]?.lbl||a.cle).localeCompare(RULE_META[b.cle]?.lbl||b.cle);
+      return _sortKey(a).localeCompare(_sortKey(b));
     });
     let lastType=null;
     sorted.forEach((r,idx)=>{
@@ -1956,7 +2023,7 @@ function openReglages(){
         const _onb = LEGAL_LIMITS[r.cle] ? `onRegleValue(this,'${escJS(r.cle)}')` : `saveRegle('${escJS(r.cle)}','valeur',this.value)`;
         const _brk = legalBreach(r.cle, r.valeur);
         valueInput=`<input type="number" ${meta.min!=null?`min="${meta.min}"`:''} ${meta.max!=null?`max="${meta.max}"`:''} value="${r.valeur||0}" onblur="${_onb}" style="width:80px;padding:7px 10px;border-radius:6px;border:1px solid ${_brk?'var(--bad)':'var(--line-2)'};background:var(--bg);color:var(--text);font-size:13px;text-align:center;font-weight:600">${meta.unit?`<span style="color:var(--muted);font-size:12px;margin-left:6px">${meta.unit}</span>`:''}`;
-      } else if(meta.type==='time' && (r.cle==='fin_semaine'||r.cle==='fin_weekend')){
+      } else if(meta.type==='time' && meta.finJour){
         valueInput=finRuleInput(r);
       } else if(meta.type==='time'){
         valueInput=`<input type="time" value="${r.valeur||'00:00'}" onblur="saveRegle('${escJS(r.cle)}','valeur',this.value)" style="padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600">`;
@@ -2140,46 +2207,69 @@ async function saveRegle(cle,field,val){
   }
   setSS('ok','Règle sauvegardée');
 }
-// Suggestion d'heure de fin (plafond) à partir de la fermeture du restaurant + marge (rangement/service).
-const FIN_MARGE_MIN=30;
+// Suggestion de plafond pour un jour-type : la fin du POSTE LE PLUS TARDIF défini ce jour-là, tous
+// services et tous rôles confondus.
+// La source d'avant v0.64 était la FERMETURE DU RESTAURANT (restaurants.fermeture_semaine / _weekend) :
+// ces quatre champs sont vides sur les trois établissements, la suggestion ne se déclenchait donc
+// JAMAIS et l'utilisateur ne voyait qu'un renvoi vers un autre écran. Les postes, eux, sont renseignés
+// — et ce sont eux la source de vérité du besoin. Le moteur ne dépend plus des horaires du restaurant.
+// Une valeur INFÉRIEURE à cette suggestion ferait refuser les postes que l'utilisateur a lui-même
+// définis : c'est le minimum cohérent, pas un simple confort de saisie.
 function suggestionFin(cle){
-  const ferm = cle==='fin_weekend' ? SNACK.fermeture_weekend : SNACK.fermeture_semaine;
-  if(!ferm) return null;
-  const[h,m]=String(ferm).slice(0,5).split(':').map(Number);
-  if(!isFinite(h)||!isFinite(m)) return null;
-  let tot=(h*60+m+FIN_MARGE_MIN)%1440; if(tot<0)tot+=1440;
-  return {ferm:String(ferm).slice(0,5), sug:String(Math.floor(tot/60)).padStart(2,'0')+':'+String(tot%60).padStart(2,'0')};
-}
-// Rendu des règles fin_semaine / fin_weekend dans Réglages.
-// - Déjà configurée (valeur ≠ 00:00) : champ éditable normal (sauvegarde onblur, comme avant).
-// - Jamais configurée (00:00/vide) + horaires du resto connus : champ PRÉ-REMPLI avec la suggestion,
-//   mais SANS écriture auto — un bouton « Enregistrer » explicite est requis (jamais de save silencieux).
-// - Jamais configurée + horaires inconnus : champ manuel + message renvoyant vers Paramètres > Restaurants.
-function finRuleInput(r){
-  const configured = r.valeur && r.valeur!=='00:00';
-  const inpSt='padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600';
-  if(configured){
-    return `<input type="time" value="${r.valeur}" onblur="saveRegle('${escJS(r.cle)}','valeur',this.value)" style="${inpSt}">`;
+  const jt=(RULE_META[cle]||{}).finJour; if(!jt) return null;
+  let mx=-Infinity;
+  for(const svc of ['midi','soir']) for(const r of (S.orgRoles||[])){
+    const env=posteEnvelope(jt,svc,r.cle); if(!env) continue;
+    if(env.mx>mx) mx=env.mx;
   }
+  if(mx===-Infinity) return null;
+  return {sug:_hhmm(mx), abs:mx, apresMinuit:mx>=1440};
+}
+// Rendu d'une règle de plafond d'heure de fin dans Réglages (une par jour-type).
+// - Valeur renseignée : champ éditable + bouton ✕ pour retirer explicitement le plafond.
+//   '00:00' est désormais une valeur LÉGITIME (minuit) : avant v0.64 elle était relue comme
+//   « jamais configurée » et disparaissait de l'écran dès la saisie — un plafond à minuit était
+//   donc impossible à poser, alors que c'est l'heure de fermeture la plus courante.
+// - Valeur absente : l'écran le DIT en rouge. « Aucun plafond » ne doit jamais ressembler à
+//   « plafond respecté » : c'est cette confusion qui a laissé les fins du dimanche sans contrôle.
+function finRuleInput(r){
+  const inpSt='padding:7px 10px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600';
+  const val=String(r.valeur||'').slice(0,5);
   const inpId='finrule_'+r.cle;
+  if(val){
+    return `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="time" value="${val}" onblur="saveRegle('${escJS(r.cle)}','valeur',this.value)" style="${inpSt}">
+        <button class="btn sm" onclick="clearFinRegle('${escJS(r.cle)}')" data-tip="Retirer le plafond — plus aucune limite d'heure de fin ce jour-là" style="padding:6px 9px">✕</button>
+      </div>
+      ${val==='00:00'?'<div style="color:var(--muted);font-size:10.5px">minuit</div>':''}
+    </div>`;
+  }
   const s=suggestionFin(r.cle);
   const saveBtn=`<button class="btn sm" onclick="saveFinRegle('${escJS(r.cle)}','${inpId}')" style="padding:6px 10px">Enregistrer</button>`;
+  const warn='<div style="color:var(--bad);font-size:10.5px;text-align:right;max-width:270px;line-height:1.5">⚠ Aucun plafond : les fins tardives ne sont <b>pas contrôlées</b> ce jour-là, ni à la saisie ni dans les vérifications.</div>';
   if(s){
     return `<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
       <div style="display:flex;gap:6px;align-items:center"><input type="time" id="${inpId}" value="${s.sug}" style="${inpSt};border-color:var(--gold)">${saveBtn}</div>
-      <div style="color:var(--gold);font-size:10.5px;text-align:right">💡 Suggéré d'après la fermeture ${s.ferm} (+${FIN_MARGE_MIN} min) — <b>non enregistré</b></div>
+      <div style="color:var(--gold);font-size:10.5px;text-align:right;max-width:270px;line-height:1.5">💡 Suggéré ${s.sug}${s.apresMinuit?' (le lendemain)':''} — fin du poste le plus tardif que vous avez défini ce jour-là. <b>Non enregistré.</b></div>
+      ${warn}
     </div>`;
   }
   return `<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
     <div style="display:flex;gap:6px;align-items:center"><input type="time" id="${inpId}" value="" style="${inpSt}">${saveBtn}</div>
-    <div style="color:var(--muted);font-size:10.5px;max-width:240px;text-align:right;line-height:1.5">Renseigne les heures d'ouverture de <b>${escP(SNACK.nom||'ce restaurant')}</b> dans <a href="../parametres/#restaurants" style="color:var(--gold)">Paramètres › Restaurants</a> pour obtenir une suggestion automatique.</div>
+    ${warn}
   </div>`;
 }
-// Enregistre explicitement la valeur (éventuellement ajustée) d'une règle fin_semaine/fin_weekend,
-// puis re-rend Réglages pour refléter l'état « configuré ».
+// Retire explicitement le plafond d'un jour-type (valeur vide = aucun contrôle, affiché comme tel).
+async function clearFinRegle(cle){
+  await saveRegle(cle,'valeur','');
+  openReglages();
+}
+// Enregistre explicitement la valeur saisie. Champ laissé vide → '' = pas de plafond (et non '00:00',
+// qui vaut désormais minuit).
 async function saveFinRegle(cle,inpId){
   const el=document.getElementById(inpId); if(!el) return;
-  await saveRegle(cle,'valeur', el.value||'00:00');
+  await saveRegle(cle,'valeur', el.value||'');
   openReglages();
 }
 function setPopupAlerts(v){POPUP_ALERTS=v;localStorage.setItem('pl_popups',v?'1':'0');}
@@ -2894,7 +2984,7 @@ function sortCandidates(ids, h){
 //   presque toutes les fermetures normales alors que le repos légal était respecté.)
 // F2H_MATIN_MIN : un shift commençant avant cette heure est un « matin » (900 = 15:00).
 const F2H_SEUIL_DEF='00:30', F2H_MATIN_MIN=15*60;
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_lu_me:'fin trop tardive (lun→mer)', fin_je:'fin trop tardive (jeudi)', fin_ve:'fin trop tardive (vendredi)', fin_sa:'fin trop tardive (samedi)', fin_di:'fin trop tardive (dimanche)', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', hors_poste:'horaire en dehors des postes définis', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
 // ── Contraintes individuelles (salarie_contraintes) ─────────────────────────────────────────────
 // Longtemps configurables sur la fiche salarié mais JAMAIS lues côté planning → purement décoratives.
 // Désormais branchées dans checkPlacement (donc auto-fill ET saisie manuelle, dérogeables à la main).
@@ -2910,7 +3000,8 @@ function contrOf(sid){ return (S.contraintes||[]).filter(c=>c.salarie_id===sid &
 const RULE_SETTING_OF={
   coupure_min:'coupure_min', repos_quot:'repos_quotidien_h', amplitude_max:'amplitude_max',
   jour_off_min:'jour_off_min', fin_2h_pas_matin:'fin_2h_pas_matin', plafond:'plafond_hebdo',
-  fin_semaine:'fin_semaine', fin_weekend:'fin_weekend',
+  fin_lu_me:'fin_lu_me', fin_je:'fin_je', fin_ve:'fin_ve', fin_sa:'fin_sa', fin_di:'fin_di',
+  fin_semaine:'fin_semaine', fin_weekend:'fin_weekend', hors_poste:null,
   fin_veille_ecole:'fin_veille_ecole', fin_veille_examen:'fin_veille_examen',
   inter_snack:'doublon_inter_snack',
   roster:null, resto:null, role:null, exp:null, dbl_svc:null, indispo:null, cfa:null,
@@ -2918,6 +3009,7 @@ const RULE_SETTING_OF={
 };
 // Où corriger quand ce n'est PAS un réglage du planning.
 const RULE_SOURCE_OF={
+  hors_poste:'Réglages → Effectifs & postes (bouton ⏱ « Définir l\'heure exacte de chaque poste »)',
   indispo:'Disponibilités du salarié (🔔 demandes) ou absence saisie',
   cfa:'Fiche du salarié → calendrier d\'alternance',
   role:'Fiche du salarié → rôles maîtrisés', exp:'Fiche du salarié → niveau par rôle',
@@ -2989,9 +3081,22 @@ function explainViolation(v, ctx){
       break;
     }
     case 'dbl_svc': { const c=v._dbl&&v._dbl.cre; if(c) why=`Il a déjà un créneau sur ce service ici — ${_creTxt(c)}.`; break; }
+    case 'fin_lu_me': case 'fin_je': case 'fin_ve': case 'fin_sa': case 'fin_di':
     case 'fin_semaine': case 'fin_weekend': {
       const p=v._cap; if(!p) break;
-      why=`Ce créneau finit à ${p.fin}, au-delà de l'heure de fin maximale réglée pour ce jour (${_absTxt(p.capM)}).`;
+      const _j=p.jt?(JOUR_TYPE_LABELS[p.jt]||'').toLowerCase():'ce jour';
+      why=`Ce créneau finit à ${p.fin}, au-delà de l'heure de fin maximale réglée pour ${_j} (${_absTxt(p.capM)}).`;
+      break;
+    }
+    // Hors-poste : le créneau sort des bornes des postes définis pour son rôle ce jour-là. Ce n'est PAS
+    // une règle de checkPlacement (une saisie manuelle reste libre — l'utilisateur peut vouloir un
+    // horaire hors poste) : c'est un constat produit par la revalidation.
+    case 'hors_poste': {
+      const p=v._poste; if(!p) break;
+      const bornes=`${_absTxt(p.mn)} → ${_absTxt(p.mx)}`;
+      why = p.cote==='fin'
+        ? `Ce créneau finit à ${p.fin}, alors que le poste le plus tardif de ce rôle ce jour-là s'arrête à ${_absTxt(p.mx)} (postes définis : ${bornes}).`
+        : `Ce créneau commence à ${p.deb}, alors que le poste le plus matinal de ce rôle ce jour-là ouvre à ${_absTxt(p.mn)} (postes définis : ${bornes}).`;
       break;
     }
     case 'fin_veille_ecole': case 'fin_veille_examen': {
@@ -3078,17 +3183,51 @@ function _contrainteBlocking(sid, shift, date, svc, di){
   }
   return null;
 }
-// Heure de fin max autorisée pour un shift selon le jour (di 0=lun … 6=dim), en minutes
-// depuis le début de la journée de service (les fins après minuit comptent +1440).
-// Lun→jeu : règle fin_semaine · ven+sam : règle fin_weekend · dim : non plafonné (aucune
-// des deux règles ne le mentionne). Une valeur vide ou '00:00' = sentinelle « pas de plafond ».
+// État du plafond d'heure de fin pour un jour (di 0=lun … 6=dim). SOURCE UNIQUE : _endCapMin (moteur),
+// l'écran Réglages et le panneau de vérification en dépendent tous les trois — un jour non couvert doit
+// se VOIR partout de la même façon, pas disparaître silencieusement d'un contrôle.
+//   etat 'actif'         → capM renseigné, la règle plafonne
+//   etat 'non_renseigne' → aucune valeur : AUCUN contrôle ce jour-là (à afficher, jamais à taire)
+//   etat 'desactive'     → règle décochée volontairement
+// Les 7 jours renvoient toujours un objet : il n'existe plus de jour « hors modèle ».
+function _endCapState(R,di){
+  const jt=dayJourType(di), cle=FIN_CLE_OF_JT[jt];
+  let row=R.raw(cle), legacy=false;
+  // Repli tant que la migration v6.35 n'est pas appliquée : la ligne du jour-type n'existe pas encore
+  // en base (_regleOf renvoie alors une ligne VIRTUELLE, marquée _virtuel) → on relit l'ancienne règle
+  // qui couvrait ce jour. Objectif : zéro changement de comportement avant migration.
+  if((!row || row._virtuel) && FIN_LEGACY_OF_JT[jt]){
+    const lg=R.raw(FIN_LEGACY_OF_JT[jt]);
+    if(lg && !lg._virtuel){ row=lg; legacy=true; }
+  }
+  if(!row) return {jt, cle, capM:null, etat:'non_renseigne'};
+  if(row.active===false) return {jt, cle, capM:null, etat:'desactive'};
+  const val=String(row.valeur||'').slice(0,5);
+  if(!val) return {jt, cle, capM:null, etat:'non_renseigne'};
+  // ANCIENNE sémantique, conservée UNIQUEMENT pour les lignes héritées : '00:00' y voulait dire
+  // « jamais configurée » (cf. finRuleInput d'avant v0.64). La relire comme minuit inventerait une
+  // contrainte que l'utilisateur n'a jamais posée. Sur les nouvelles clés, '00:00' = minuit.
+  if(legacy && val==='00:00') return {jt, cle, capM:null, etat:'non_renseigne'};
+  let capM=_pmin(val); if(capM==null) return {jt, cle, capM:null, etat:'non_renseigne'};
+  if(capM<=360) capM+=1440;   // 00:00–06:00 → fermeture d'après-minuit (00:00 = minuit = 24:00)
+  return {jt, cle, capM, etat:'actif', valeur:val};
+}
+// Heure de fin max autorisée pour un shift selon le jour, en minutes depuis le début de la journée de
+// service (les fins après minuit comptent +1440). null = pas de plafond applicable.
 function _endCapMin(R,di){
-  const row = (di<=3)?R.raw('fin_semaine') : ((di===4||di===5)?R.raw('fin_weekend') : null);
-  if(!row || row.active===false) return null;
-  const val=row.valeur; if(!val || val==='00:00') return null;
-  let capM=_pmin(val); if(capM==null) return null;
-  if(capM<=360) capM+=1440;   // 00:30–06:00 → fermeture d'après-minuit
-  return {capM, cle:(di<=3?'fin_semaine':'fin_weekend')};
+  const st=_endCapState(R,di);
+  return st.etat==='actif' ? {capM:st.capM, cle:st.cle, jt:st.jt} : null;
+}
+// Jour-types SANS plafond d'heure de fin applicable. Fonction PURE — c'est elle qui rend VISIBLE un
+// contrôle absent. Sans elle, un jour non plafonné ne produit aucune ligne nulle part et ressemble à
+// un jour conforme : c'est exactement ce qui a laissé passer les fins tardives du dimanche.
+function capCoverageGaps(R){
+  const out=[];
+  for(const jt of JOUR_TYPES){
+    const st=_endCapState(R, JT_SAMPLE_DI[jt]);
+    if(st.etat!=='actif') out.push({jt, cle:st.cle, etat:st.etat});
+  }
+  return out;
 }
 // sid: salarié testé · shift={deb,fin,role,exp} · date 'YYYY-MM-DD' · svc · di=0..6 · opt.{rg,excludeSelf}
 function checkPlacement(sid, shift, date, svc, di, opt){
@@ -3197,10 +3336,11 @@ function checkPlacement(sid, shift, date, svc, di, opt){
     else { cur=[a,b]; curSrc=src; }
     if(cur[1]-cur[0]>amp) return {cle:'amplitude_max',label:PLACE_RULES.amplitude_max,_amp:{h:(cur[1]-cur[0])/60,max:amp/60,deb:cur[0],fin:cur[1],other:curSrc&&curSrc.restaurant_id!==SNACK.id?curSrc:null}};
   }
-  // heure de fin max selon le jour (fin_semaine lun→jeu / fin_weekend ven+sam) — dur
+  // Heure de fin max selon le jour — UNE règle par jour-type, les 7 jours couverts (cf. _endCapState).
+  // Le dimanche n'était rattaché à aucune règle avant v0.64 : le contrôle y était absent sans le dire.
   const _cap=_endCapMin(R,di);
   if(_cap){ let endM=_pmin(shift.fin), debM=_pmin(shift.deb);
-    if(endM!=null && debM!=null){ if(endM<=debM) endM+=1440; if(endM>_cap.capM) return {cle:_cap.cle,label:PLACE_RULES[_cap.cle],_cap:{fin:shift.fin,capM:_cap.capM}}; } }
+    if(endM!=null && debM!=null){ if(endM<=debM) endM+=1440; if(endM>_cap.capM) return {cle:_cap.cle,label:PLACE_RULES[_cap.cle],_cap:{fin:shift.fin,capM:_cap.capM,jt:_cap.jt}}; } }
   // repos quotidien fin soir → matin J+1 (11h, obligation légale — TOUJOURS appliqué, non désactivable).
   // fin de shift calculée en absolu (une fin ≤ début = shift à cheval sur minuit → +24h), sinon un soir
   // finissant à 00:30 serait faussement lu comme 00:30 « le matin même » et sous-estimerait le repos.
@@ -3594,6 +3734,23 @@ function _revalPhrase(v, ctx){
   return (R&&R.why)||v.label||'';
 }
 function _dateFr(d){ try{ const x=new Date(d+'T00:00:00'); return `${JOURS[(x.getDay()+6)%7].toLowerCase()} ${x.getDate()}`; }catch(e){ return d; } }
+// Créneau SORTANT des bornes des postes définis pour SON rôle ce jour-là — fonction PURE.
+// Délibérément PAS une règle de checkPlacement : une saisie manuelle hors poste reste permise (un
+// manager peut vouloir un horaire exceptionnel, et c'est le rôle des plafonds fin_* de l'encadrer).
+// C'est en revanche un CONSTAT que la revalidation doit remonter, puisque l'auto-fill, lui, ne doit
+// jamais en produire. null = conforme, ou aucun poste défini pour ce rôle (rien à quoi comparer).
+function horsPosteOf(c){
+  if(!c || !c.heure_debut || !c.heure_fin) return null;
+  const di=(new Date(c.date+'T00:00:00').getDay()+6)%7;
+  const env=_withSnack(c.restaurant_id, ()=>posteEnvelope(dayJourType(di), c.service, c.role));
+  if(!env) return null;
+  const deb=_pmin(c.heure_debut); let fin=_pmin(c.heure_fin);
+  if(deb==null||fin==null) return null; if(fin<=deb) fin+=1440;
+  const base={deb:(c.heure_debut||'').slice(0,5), fin:(c.heure_fin||'').slice(0,5), mn:env.mn, mx:env.mx};
+  if(fin>env.mx) return Object.assign({cote:'fin',   ecart:fin-env.mx}, base);
+  if(deb<env.mn) return Object.assign({cote:'debut', ecart:env.mn-deb}, base);
+  return null;
+}
 // Rejoue TOUTES les règles sur TOUS les créneaux de la semaine, TOUS restaurants confondus.
 // PURE (aucune requête, aucun DOM). → {infractions, derogees, total}
 function revalidateWeek(){
@@ -3640,6 +3797,26 @@ function revalidateWeek(){
                  semaine:REVAL_SEMAINE.has(v.cle),
                  derog: der ? {motif:der.motif||'', regle:der.regle_label||der.regle_cle||''} : null};
     (der?derogees:infractions).push(entry);
+  }
+  // ── Deuxième passe : créneaux HORS DES POSTES définis ────────────────────────────────────────
+  // checkPlacement ne renvoie que la PREMIÈRE règle violée, et le hors-poste n'en fait pas partie
+  // (cf. horsPosteOf) : sans cette passe, un créneau débordant de son poste resterait invisible.
+  for(const c of rows){
+    const sal=salById(c.salarie_id); if(!sal) continue;
+    const hp=horsPosteOf(c); if(!hp) continue;
+    const k=`${c.salarie_id}|hors_poste|${_creKey(c)}`;
+    if(seen.has(k)) continue; seen.add(k);
+    const di=(new Date(c.date+'T00:00:00').getDay()+6)%7;
+    const v={cle:'hors_poste', label:PLACE_RULES.hors_poste, _poste:hp};
+    const expl=explainViolation(v,{shift:{deb:hp.deb,fin:hp.fin,role:c.role}, date:c.date, svc:c.service});
+    const der=derogs.find(d=>d.salarie_id===c.salarie_id && d.date===c.date
+                          && (d.service||null)===(c.service||null) && d.restaurant_id===c.restaurant_id);
+    (der?derogees:infractions).push({
+      sid:c.salarie_id, name:fullName(sal), date:c.date, jour:JOURS[di], svc:c.service,
+      restaurant:_restoNom(c.restaurant_id), restaurantId:c.restaurant_id,
+      horaire:`${hp.deb}→${hp.fin}`, cle:'hors_poste', label:v.label,
+      why:(expl&&expl.why)||v.label, reglage:(expl&&expl.reglage)||'', semaine:false,
+      derog: der ? {motif:der.motif||'', regle:der.regle_label||der.regle_cle||''} : null});
   }
   const ordre=Object.keys(PLACE_RULES);
   const tri=(a,b)=>(ordre.indexOf(a.cle)-ordre.indexOf(b.cle))||String(a.date).localeCompare(String(b.date))||a.name.localeCompare(b.name);
@@ -3804,8 +3981,8 @@ async function autoFillCore(dayIndices, opt={}){
   }
   } // ── fin PHASES 1&2 (sautées si opt.phase3only) ──
   // ── PHASE 3 : DISTRIBUTION — amener les salariés SOUS leur heures_min (proratisé) à leur plancher ──
-  // Deux leviers, dans l'ordre : (A) RALLONGE des créneaux existants dans l'ENVELOPPE du service (bornes
-  // des vagues configurées ce jour/service — pas d'heures hors service), (B) SUREFFECTIF ciblé (créneau
+  // Deux leviers, dans l'ordre : (A) RALLONGE des créneaux existants DANS LES BORNES DES POSTES DU RÔLE
+  // (posteEnvelope — jamais une heure hors des postes définis), (B) SUREFFECTIF ciblé (créneau
   // en plus, opt-in par règle). Chaque modif passe par checkPlacement (toutes les règles, y compris repos/
   // coupure inter-snack) + un garde-fou plafond GLOBAL explicite (checkPlacement ne plafonne que le snack
   // courant). Phase 3 ne touche JAMAIS aux créneaux d'AUTRES salariés (pas de kick — c'est la phase 2).
@@ -3813,9 +3990,9 @@ async function autoFillCore(dayIndices, opt={}){
     updateAutofillProgress(1,1,'Distribution (min. d\'heures)…'); await _yield();
     const _wd=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
     const absToHHMM=m=>{m=((Math.round(m)%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
-    // Enveloppe d'un service = [deb la plus matinale, fin la plus tardive] sur toutes les vagues de ce
-    // jour-type/service (tous rôles). Sans vague configurée → null → pas de rallonge (pas d'heure inventée).
-    const svcEnvelope=(jt,svc)=>{ let mn=Infinity,mx=-Infinity; for(const _r of S.orgRoles){ for(const v of getShifts(jt,svc,_r.cle)){ const d=_pmin(v.deb); if(d==null)continue; let f=_pmin(v.fin); if(f==null)continue; if(f<=d)f+=1440; if(d<mn)mn=d; if(f>mx)mx=f; } } return mn===Infinity?null:{mn,mx}; };
+    // Bornes de rallonge = bornes des POSTES DU RÔLE du créneau (cf. posteEnvelope, portée fichier).
+    // Sans poste configuré → null → aucune rallonge : on n'invente jamais une heure que l'utilisateur
+    // n'a pas demandée.
     const SUREFF_ON=rg.on('sureffectif_minimum',false); // opt-in (défaut OFF, activable dans les Réglages)
     const SUREFF_MAX=Math.max(0,Math.round(rg.num('sureffectif_minimum',2))); // créneaux sureffectif max / salarié
     const INTER_ON=rg.on('transfert_inter_snack',false); // opt-in (défaut OFF) : déplacement vers un autre restaurant
@@ -3857,7 +4034,7 @@ async function autoFillCore(dayIndices, opt={}){
       for(const row of myCre){
         if(weekHoursOf(sid)>=target-0.01)break;
         const jt=dayJourType(dayIdxOfDate(row.date));
-        const env=svcEnvelope(jt,row.service); if(!env)continue;
+        const env=posteEnvelope(jt,row.service,row.role); if(!env)continue;
         const di=dayIdxOfDate(row.date);
         let debM=_pmin(row.heure_debut), finM=_pmin(row.heure_fin); if(finM==null||debM==null)continue; if(finM<=debM)finM+=1440;
         const oldDur=(finM-debM)/60;

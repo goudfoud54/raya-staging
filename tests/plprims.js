@@ -26,6 +26,9 @@ const FNS = [
   'computeHoles', 'diagHole',         // sorties d'autoFillCore, partagées avec analyseWeek
   'costOfCreneaux',                   // coût, partagé par le pied de tableau et l'analyse
   '_virtualRegle', '_regleResolue', '_regleOf',  // résolution des réglages (exception resto > défaut org) — appelés par _ruleCtx
+  'dayJourType', 'getShifts', 'posteEnvelope',   // bornes des POSTES : ce que l'auto-fill a le droit de produire
+  '_endCapState', '_endCapMin', 'capCoverageGaps', // plafond d'heure de fin, un par jour-type (7 jours couverts)
+  'horsPosteOf',                      // constat « créneau hors des postes » — appelé par revalidateWeek
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];
@@ -42,6 +45,15 @@ const CONST_LINES = [
   { first: 'PLAFOND_PROCHE_PCT', names: ['PLAFOND_PROCHE_PCT'] },
   { first: 'REVAL_SEMAINE', names: ['REVAL_SEMAINE'] },
   { first: '_creKey', names: ['_creKey'] },
+  { first: 'JOURS', names: ['JOURS'] },
+  { first: 'DEF_TIME', names: ['DEF_TIME'] },
+  { first: 'PLACE_RULES', names: ['PLACE_RULES'] },
+  // Modèle de plafond d'heure de fin par jour-type — les cinq tables doivent rester alignées.
+  { first: 'JOUR_TYPES', names: ['JOUR_TYPES'] },
+  { first: 'JOUR_TYPE_LABELS', names: ['JOUR_TYPE_LABELS'] },
+  { first: 'FIN_CLE_OF_JT', names: ['FIN_CLE_OF_JT'] },
+  { first: 'FIN_LEGACY_OF_JT', names: ['FIN_LEGACY_OF_JT'] },
+  { first: 'JT_SAMPLE_DI', names: ['JT_SAMPLE_DI'] },
 ];
 
 // Extrait `const <name>={…}` en équilibrant les accolades. Les COMMENTAIRES sont sautés AVANT les

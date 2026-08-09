@@ -50,8 +50,11 @@ function setState(rows, sals, derogations){
                           snacks_priorites:[{restaurant_id:CAR},{restaurant_id:GC},{restaurant_id:LOB}]}])
                 .forEach(s=>SAL[s.id]=s);
   global.SNACK=RESTOS[0];   // restaurant AFFICHÉ — la revalidation doit couvrir les autres quand même
+  // effectifs:[] → aucun poste défini, donc posteEnvelope renvoie null et la passe « hors poste »
+  // de revalidateWeek n'a rien à quoi comparer : ce harnais teste les règles de checkPlacement,
+  // le hors-poste a le sien (postes_bornes_test.js).
   global.S={restos:RESTOS, salaries:Object.values(SAL), orgRoles:[{cle:'cuisine',nom:'cuisine'}],
-            dispos:[], miseAPied:[], contraintes:[], regles:[], derogations:derogations||[],
+            dispos:[], miseAPied:[], contraintes:[], regles:[], effectifs:[], derogations:derogations||[],
             creneaux:rows.filter(c=>c.restaurant_id===CAR), allCreneauxWeek:rows.slice()};
 }
 let ok=true;

@@ -31,14 +31,17 @@ const rg=_ruleCtx();
 
 // ── Réplique EXACTE de la boucle rallonge phase 3 (source autoFillCore) ──
 const absToHHMM=m=>{m=((Math.round(m)%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
-const svcEnvelope=(jt,svc)=>{let mn=Infinity,mx=-Infinity;for(const _r of S.orgRoles){for(const v of getShifts(jt,svc,_r.cle)){const d=_pmin(v.deb);if(d==null)continue;let f=_pmin(v.fin);if(f==null)continue;if(f<=d)f+=1440;if(d<mn)mn=d;if(f>mx)mx=f;}}return mn===Infinity?null:{mn,mx};};
+// v0.64 : la rallonge est bornée par les postes DU RÔLE du créneau (posteEnvelope, installé par
+// plprims depuis le fichier réel). L'ancienne copie locale « tous rôles confondus » a été retirée —
+// elle aurait silencieusement continué de tester un comportement que la production n'a plus.
+const svcEnvelope=(jt,svc,role)=>posteEnvelope(jt,svc,role);
 function updateCreTimes(row,nd,nf){[S.creneaux,S.allCreneauxWeek].forEach(a=>{const it=a.find(c=>c.id===row.id);if(it){it.heure_debut=nd;it.heure_fin=nf;}});return true;}
 function rallonge(sid,target,cap){
   let rallongeH=0; const trace=[];
   const myCre=S.creneaux.filter(c=>c.salarie_id===sid && c.restaurant_id===SNACK.id && c.heure_debut && c.heure_fin);
   for(const row of myCre){
     if(weekHoursOf(sid)>=target-0.01)break;
-    const env=svcEnvelope(dayJourType(dayIdxOfDate(row.date)),row.service);
+    const env=svcEnvelope(dayJourType(dayIdxOfDate(row.date)),row.service,row.role);
     if(!env){trace.push(`${row.date} ${row.service}: env NULL`);continue;}
     const di=dayIdxOfDate(row.date);
     let debM=_pmin(row.heure_debut),finM=_pmin(row.heure_fin); if(finM<=debM)finM+=1440;
