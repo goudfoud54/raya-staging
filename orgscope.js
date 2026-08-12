@@ -196,25 +196,28 @@
      */
     banniere() {
       try {
-        if (typeof document === 'undefined') return;
-        const superA = _role === 'super_admin';
-        if (!superA) return;                                   // un client ne bascule jamais
+        if (typeof document === 'undefined' || !document.body) return;
+        if (_role !== 'super_admin') return;                   // un client ne bascule jamais
+        // PASTILLE D'ANGLE, pas bandeau pleine largeur. Les douze modules ont leurs propres barres
+        // fixes (en-tête, pied d'onglets) : une bande sur toute la largeur en recouvrirait certaines,
+        // et compenser par un padding sur <body> écraserait celui que la page s'est déjà donné.
+        // Une pastille en bas à gauche est « discrète mais permanente » sans rien déplacer.
         let el = document.getElementById('eatime-org-banner');
         if (!el) {
           el = document.createElement('div');
           el.id = 'eatime-org-banner';
           el.setAttribute('role', 'status');
-          el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9998;'
-            + 'background:#3a2d10;color:#f0d68a;border-top:1px solid #c8a035;'
-            + 'font:600 11.5px/1.4 system-ui,-apple-system,sans-serif;'
-            + 'padding:5px 12px;text-align:center;letter-spacing:.02em;pointer-events:none';
+          el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;'
+            + 'background:rgba(58,45,16,.94);color:#f0d68a;border:1px solid #c8a035;border-radius:999px;'
+            + 'font:600 11px/1.3 system-ui,-apple-system,sans-serif;'
+            + 'padding:5px 11px;letter-spacing:.02em;pointer-events:none;max-width:60vw;'
+            + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.35)';
           document.body.appendChild(el);
-          // Le bandeau est en position fixe : sans marge, il recouvre le bas de la page.
-          document.body.style.paddingBottom = '26px';
         }
-        el.textContent = '🏢 Organisation active : ' + (_orgNom || _orgId)
-                       + ' · vous êtes super_admin — toute écriture s\'applique ici';
-      } catch (e) { /* l'absence de bandeau ne doit jamais empêcher la page de fonctionner */ }
+        el.textContent = '🏢 ' + (_orgNom || _orgId) + ' · super_admin';
+        el.title = 'Organisation active : ' + (_orgNom || _orgId)
+                 + '. Vous êtes super_admin : toute écriture s\'applique à CETTE organisation.';
+      } catch (e) { /* l'absence de pastille ne doit jamais empêcher la page de fonctionner */ }
     }
   };
 
