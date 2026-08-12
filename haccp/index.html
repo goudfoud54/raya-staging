@@ -7,6 +7,7 @@
 <title>Eatime360 — HACCP</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -146,6 +147,10 @@ async function loadProfileAndShow(){
   if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
+  // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
+  // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   ORG=org||{};
   // Accès contrôlé par la config org (access.js) — ce module n'avait AUCUNE vérification de rôle avant.
   if(!EatimeAccess.canAccessModule('haccp', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('HACCP');return;}
@@ -164,10 +169,10 @@ sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();else d
 
 async function loadCommonData(){
   const[r,e,z,s]=await Promise.all([
-    sb.from('restaurants').select('id,nom').order('nom'),
-    sb.from('haccp_equipements').select('*').order('ordre').order('nom'),
-    sb.from('haccp_zones_nettoyage').select('*').order('ordre').order('nom'),
-    sb.from('salaries').select('id,nom,prenom').eq('actif',true).order('nom'),
+    EatimeScope.from('restaurants').select('id,nom').order('nom'),
+    EatimeScope.from('haccp_equipements').select('*').order('ordre').order('nom'),
+    EatimeScope.from('haccp_zones_nettoyage').select('*').order('ordre').order('nom'),
+    EatimeScope.from('salaries').select('id,nom,prenom').eq('actif',true).order('nom'),
   ]);
   S.snacks=r.data||[];S.equipements=e.data||[];S.zones=z.data||[];S.salaries=s.data||[];
   const sel=document.getElementById('snackSelect');
@@ -204,10 +209,10 @@ async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
   const since=new Date();since.setDate(since.getDate()-7);
   const sinceIso=since.toISOString();
-  let qT=sb.from('haccp_releves_temperature').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
-  let qH=sb.from('haccp_huiles').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
-  let qR=sb.from('haccp_receptions').select('*').gte('ts',sinceIso).order('ts',{ascending:false});
-  let qN=sb.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
+  let qT=EatimeScope.from('haccp_releves_temperature').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
+  let qH=EatimeScope.from('haccp_huiles').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
+  let qR=EatimeScope.from('haccp_receptions').select('*').gte('ts',sinceIso).order('ts',{ascending:false});
+  let qN=EatimeScope.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
   if(SNACK){qR=qR.eq('restaurant_id',SNACK.id);}
   const[t,h,r,n]=await Promise.all([qT,qH,qR,qN]);
   const filterSnack=arr=>!SNACK?arr:arr.filter(x=>(x.haccp_equipements?.restaurant_id||x.haccp_zones_nettoyage?.restaurant_id||x.restaurant_id)===SNACK.id);
@@ -245,7 +250,7 @@ async function renderTemperatures(el){
     </div>
     <div id="releveList" style="color:var(--muted)">Chargement…</div>`;
   const eq=val('filtEq'),from=val('filtFrom'),to=val('filtTo');
-  let q=sb.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').order('ts',{ascending:false}).limit(500);
+  let q=EatimeScope.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').order('ts',{ascending:false}).limit(500);
   if(eq) q=q.eq('equipement_id',eq);
   if(from) q=q.gte('ts',from+'T00:00:00');
   if(to) q=q.lte('ts',to+'T23:59:59');
@@ -284,12 +289,12 @@ async function saveReleve(){
   const eq=S.equipements.find(e=>e.id===eqId);
   const conforme=(eq.t_min!=null && v<eq.t_min) || (eq.t_max!=null && v>eq.t_max) ? false : true;
   const payload={organization_id:ORG.id,equipement_id:eqId,ts:val('r_ts')?new Date(val('r_ts')).toISOString():new Date().toISOString(),valeur:v,conforme,action_corrective:val('r_act')||null,salarie_id:val('r_sal')||null,notes:val('r_notes')||null};
-  const{error}=await sb.from('haccp_releves_temperature').insert(payload);
+  const{error}=await EatimeScope.from('haccp_releves_temperature').insert(payload);
   if(error){toast(error.message);return;}
   toast(conforme?'Relevé OK ✓':'Relevé hors seuil ⚠');
   closeModal();renderTemperatures(document.getElementById('content'));
 }
-async function delReleve(id){if(!confirm('Supprimer ce relevé ?'))return;const{error}=await sb.from('haccp_releves_temperature').delete().eq('id',id);if(error){toast(error.message);return;}toast('Supprimé');renderTemperatures(document.getElementById('content'));}
+async function delReleve(id){if(!confirm('Supprimer ce relevé ?'))return;const{error}=await EatimeScope.from('haccp_releves_temperature').delete().eq('id',id);if(error){toast(error.message);return;}toast('Supprimé');renderTemperatures(document.getElementById('content'));}
 
 // ────────────── HUILES ──────────────
 async function renderHuiles(el){
@@ -302,7 +307,7 @@ async function renderHuiles(el){
     </div>
     <div id="huileList">Chargement…</div>`;
   const fr=val('filtFr');
-  let q=sb.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').order('ts',{ascending:false}).limit(500);
+  let q=EatimeScope.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').order('ts',{ascending:false}).limit(500);
   if(fr) q=q.eq('equipement_id',fr);
   const{data}=await q;
   let list=data||[];
@@ -339,10 +344,10 @@ function openHuile(){
 }
 async function saveHuile(){
   const payload={organization_id:ORG.id,equipement_id:val('h_eq'),ts:val('h_ts')?new Date(val('h_ts')).toISOString():new Date().toISOString(),action:val('h_act'),polarite_pct:num('h_pol'),marque:val('h_marque')||null,contenance_l:num('h_cont'),conforme:val('h_conf')==='true',salarie_id:val('h_sal')||null,notes:val('h_notes')||null};
-  const{error}=await sb.from('haccp_huiles').insert(payload);
+  const{error}=await EatimeScope.from('haccp_huiles').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderHuiles(document.getElementById('content'));
 }
-async function delHuile(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('haccp_huiles').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderHuiles(document.getElementById('content'));}
+async function delHuile(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('haccp_huiles').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderHuiles(document.getElementById('content'));}
 
 // ────────────── RÉCEPTIONS ──────────────
 async function renderReceptions(el){
@@ -354,7 +359,7 @@ async function renderReceptions(el){
       <button class="btn" onclick="openReception()">+ Nouvelle réception</button>
     </div>
     <div id="recList">Chargement…</div>`;
-  let q=sb.from('haccp_receptions').select('*,haccp_reception_controles(type_produit,lot,dluo,temperature,conforme,produit)').order('ts',{ascending:false}).limit(500);
+  let q=EatimeScope.from('haccp_receptions').select('*,haccp_reception_controles(type_produit,lot,dluo,temperature,conforme,produit)').order('ts',{ascending:false}).limit(500);
   if(SNACK) q=q.eq('restaurant_id',SNACK.id);
   const search=val('filtProd');
   const{data}=await q;
@@ -434,15 +439,15 @@ async function saveReception(){
   if(controles.length===0){toast('Au moins un contrôle requis (sinon coche N/A pour les 3 et utilise les notes)');return;}
   // Insert réception parente
   const payload={organization_id:ORG.id,restaurant_id:val('re_sn')||null,ts:val('re_ts')?new Date(val('re_ts')).toISOString():new Date().toISOString(),fournisseur:val('re_four')||null,produit:val('re_prod')||'Réception '+new Date().toLocaleDateString('fr-FR'),conforme:val('re_conf')==='true' && controles.every(c=>c.conforme),action_corrective:val('re_act')||null,salarie_id:val('re_sal')||null,notes:val('re_notes')||null};
-  const{data:rec,error}=await sb.from('haccp_receptions').insert(payload).select().single();
+  const{data:rec,error}=await EatimeScope.from('haccp_receptions').insert(payload).select().single();
   if(error){toast(error.message);return;}
   // Insert contrôles
   const ctrlInsert=controles.map(c=>({...c,reception_id:rec.id}));
-  const{error:e2}=await sb.from('haccp_reception_controles').insert(ctrlInsert);
+  const{error:e2}=await EatimeScope.from('haccp_reception_controles').insert(ctrlInsert);
   if(e2){toast('Réception créée mais erreur contrôles : '+e2.message);return;}
   toast(`Réception enregistrée + ${controles.length} contrôles ✓`);closeModal();renderReceptions(document.getElementById('content'));
 }
-async function delReception(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('haccp_receptions').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderReceptions(document.getElementById('content'));}
+async function delReception(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('haccp_receptions').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderReceptions(document.getElementById('content'));}
 function voirPhotoReception(url){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:90vw;text-align:center;padding:14px">
     <img src="${url}" style="max-width:100%;max-height:80vh;border-radius:8px">
@@ -464,7 +469,7 @@ async function renderNettoyage(el){
       <button class="btn" onclick="openNettoyage()">+ Saisir un nettoyage</button>
     </div>
     <div id="netList">Chargement…</div>`;
-  let q=sb.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,periodicite,restaurant_id)').order('ts',{ascending:false}).limit(500);
+  let q=EatimeScope.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,periodicite,restaurant_id)').order('ts',{ascending:false}).limit(500);
   if(val('filtZone')) q=q.eq('zone_id',val('filtZone'));
   if(val('filtFromN')) q=q.gte('ts',val('filtFromN')+'T00:00:00');
   if(val('filtToN')) q=q.lte('ts',val('filtToN')+'T23:59:59');
@@ -491,10 +496,10 @@ function openNettoyage(){
 }
 async function saveNettoyage(){
   const payload={organization_id:ORG.id,zone_id:val('n_zone'),ts:val('n_ts')?new Date(val('n_ts')).toISOString():new Date().toISOString(),salarie_id:val('n_sal')||null,notes:val('n_notes')||null};
-  const{error}=await sb.from('haccp_nettoyages').insert(payload);
+  const{error}=await EatimeScope.from('haccp_nettoyages').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderNettoyage(document.getElementById('content'));
 }
-async function delNettoyage(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('haccp_nettoyages').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderNettoyage(document.getElementById('content'));}
+async function delNettoyage(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('haccp_nettoyages').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderNettoyage(document.getElementById('content'));}
 
 // ────────────── ÉQUIPEMENTS ──────────────
 function renderEquipements(el){
@@ -532,10 +537,10 @@ async function saveEq(){
   if(!val('eq_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('eq_nom'),type:val('eq_type'),restaurant_id:val('eq_sn')||null,t_min:num('eq_tmin'),t_max:num('eq_tmax'),qr_code:val('eq_qr')||null,notes:val('eq_notes')||null,actif:document.getElementById('eq_actif').checked};
   const id=val('eq_id');
-  const{error}=id?await sb.from('haccp_equipements').update(payload).eq('id',id):await sb.from('haccp_equipements').insert(payload);
+  const{error}=id?await EatimeScope.from('haccp_equipements').update(payload).eq('id',id):await EatimeScope.from('haccp_equipements').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderEquipements(document.getElementById('content'));
 }
-async function delEq(id){if(!confirm('Supprimer cet équipement (et tous ses relevés) ?'))return;const{error}=await sb.from('haccp_equipements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderEquipements(document.getElementById('content'));}
+async function delEq(id){if(!confirm('Supprimer cet équipement (et tous ses relevés) ?'))return;const{error}=await EatimeScope.from('haccp_equipements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderEquipements(document.getElementById('content'));}
 
 // ────────────── ZONES NETTOYAGE ──────────────
 function renderZones(el){
@@ -568,10 +573,10 @@ async function saveZone(){
   if(!val('z_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('z_nom'),periodicite:val('z_per'),restaurant_id:val('z_sn')||null,produit_utilise:val('z_prod')||null,notes:val('z_notes')||null};
   const id=val('z_id');
-  const{error}=id?await sb.from('haccp_zones_nettoyage').update(payload).eq('id',id):await sb.from('haccp_zones_nettoyage').insert(payload);
+  const{error}=id?await EatimeScope.from('haccp_zones_nettoyage').update(payload).eq('id',id):await EatimeScope.from('haccp_zones_nettoyage').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderZones(document.getElementById('content'));
 }
-async function delZone(id){if(!confirm('Supprimer cette zone ?'))return;const{error}=await sb.from('haccp_zones_nettoyage').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderZones(document.getElementById('content'));}
+async function delZone(id){if(!confirm('Supprimer cette zone ?'))return;const{error}=await EatimeScope.from('haccp_zones_nettoyage').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderZones(document.getElementById('content'));}
 
 // ────────────── EXPORT PDF DDPP ──────────────
 function renderExport(el){
@@ -597,10 +602,10 @@ async function exportPDF(){
   const to=new Date(y,m,0,23,59,59).toISOString();
   const snackName=sid?(S.snacks.find(s=>s.id===sid)?.nom||''):'TOUS LES SNACKS';
   // Récup data
-  let qT=sb.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
-  let qH=sb.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
-  let qR=sb.from('haccp_receptions').select('*').gte('ts',from).lte('ts',to).order('ts');
-  let qN=sb.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
+  let qT=EatimeScope.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
+  let qH=EatimeScope.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
+  let qR=EatimeScope.from('haccp_receptions').select('*').gte('ts',from).lte('ts',to).order('ts');
+  let qN=EatimeScope.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
   if(sid) qR=qR.eq('restaurant_id',sid);
   const[t,h,r,n]=await Promise.all([qT,qH,qR,qN]);
   const filterSnack=arr=>!sid?arr:arr.filter(x=>(x.haccp_equipements?.restaurant_id||x.haccp_zones_nettoyage?.restaurant_id||x.restaurant_id)===sid);

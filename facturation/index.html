@@ -7,6 +7,7 @@
 <title>Eatime360 — Facturation</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
@@ -140,6 +141,10 @@ async function loadProfileAndShow(){
   if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();ORG=org||{};
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
+  // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
+  // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if(!EatimeAccess.canAccessModule('facturation', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Facturation');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
@@ -152,9 +157,9 @@ sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();else d
 
 async function loadCommonData(){
   const[c,p,fp]=await Promise.all([
-    sb.from('clients').select('*').eq('organization_id',ORG.id).order('nom'),
-    sb.from('produits').select('*').eq('organization_id',ORG.id).order('nom'),
-    sb.from('fact_parametres').select('*').eq('organization_id',ORG.id).maybeSingle(),
+    EatimeScope.from('clients').select('*').eq('organization_id',ORG.id).order('nom'),
+    EatimeScope.from('produits').select('*').eq('organization_id',ORG.id).order('nom'),
+    EatimeScope.from('fact_parametres').select('*').eq('organization_id',ORG.id).maybeSingle(),
   ]);
   S.clients=c.data||[];S.produits=p.data||[];S.fparam=fp.data||null;
 }
@@ -173,7 +178,7 @@ function render(){
 // ─────── DASHBOARD ───────
 async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
-  const{data:facs}=await sb.from('factures').select('*,clients(nom),fact_paiements(montant)').eq('organization_id',ORG.id).order('date_facture',{ascending:false});
+  const{data:facs}=await EatimeScope.from('factures').select('*,clients(nom),fact_paiements(montant)').eq('organization_id',ORG.id).order('date_facture',{ascending:false});
   const F=facs||[];
   let totTTC=0,totEncaisse=0,totRestant=0,nbEmis=0,nbPaye=0;
   F.forEach(f=>{
@@ -211,7 +216,7 @@ async function renderFactures(el){
     <div style="flex:1"></div>
     <button class="btn" onclick="openFactureForm()">+ Nouvelle facture</button>
   </div><div id="facList">Chargement…</div>`;
-  const{data}=await sb.from('factures').select('*,clients(nom),fact_paiements(montant)').eq('organization_id',ORG.id).order('date_facture',{ascending:false});
+  const{data}=await EatimeScope.from('factures').select('*,clients(nom),fact_paiements(montant)').eq('organization_id',ORG.id).order('date_facture',{ascending:false});
   S.factures=data||[];
   renderFacturesList();
 }
@@ -233,7 +238,7 @@ function renderFacturesList(){
 function filterFactures(){renderFacturesList();}
 
 async function openFacture(id){
-  const{data:f}=await sb.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
+  const{data:f}=await EatimeScope.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
   if(!f){toast('Facture introuvable');return;}
   const model=await buildFactureModel(f); // MÊME chemin que le PDF (buildFactureModel → factureModel) : écran = PDF
   const paiements=f.fact_paiements||[];
@@ -293,32 +298,32 @@ async function addPaiement(facId,totalTTC){
   // Y insérer un premier règlement recalculerait montant_paye depuis les seules lignes, écrasant
   // l'historique (perte de donnée comptable). On bloque explicitement — blocage visible > écrasement
   // silencieux — plutôt que de matérialiser nous-mêmes l'historique (une écriture, à valider avec le patron).
-  const{data:avant}=await sb.from('factures').select('montant_paye,fact_paiements(id)').eq('id',facId).maybeSingle();
+  const{data:avant}=await EatimeScope.from('factures').select('montant_paye,fact_paiements(id)').eq('id',facId).maybeSingle();
   if(avant&&!(avant.fact_paiements||[]).length&&Number(avant.montant_paye||0)>0){
     toast('Encaissement historique de '+eur(avant.montant_paye)+' sans détail : saisissez-le d\'abord comme ligne de règlement.');return;
   }
-  const{error}=await sb.from('fact_paiements').insert({organization_id:ORG.id,facture_id:facId,date_paiement:val('p_date'),montant:mt,mode:val('p_mode')});
+  const{error}=await EatimeScope.from('fact_paiements').insert({organization_id:ORG.id,facture_id:facId,date_paiement:val('p_date'),montant:mt,mode:val('p_mode')});
   if(error){toast(error.message);return;}
   // Recalcule le cache depuis le détail (source de vérité) → jamais de double comptage à l'affichage.
-  const{data:paiements}=await sb.from('fact_paiements').select('montant').eq('facture_id',facId);
+  const{data:paiements}=await EatimeScope.from('fact_paiements').select('montant').eq('facture_id',facId);
   const totPaye=(paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0);
-  const{error:eF}=await sb.from('factures').update({statut:statutFacture(totalTTC,totPaye),montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
+  const{error:eF}=await EatimeScope.from('factures').update({statut:statutFacture(totalTTC,totPaye),montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
   toast('✓ Paiement enregistré');openFacture(facId);renderFactures(document.getElementById('content'));
 }
 async function delPaiement(id,facId){
   if(!confirm('Supprimer ce paiement ?'))return;
-  const{error}=await sb.from('fact_paiements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}
-  const{data:f}=await sb.from('factures').select('total_ttc').eq('id',facId).maybeSingle();
-  const{data:paiements}=await sb.from('fact_paiements').select('montant').eq('facture_id',facId);
+  const{error}=await EatimeScope.from('fact_paiements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}
+  const{data:f}=await EatimeScope.from('factures').select('total_ttc').eq('id',facId).maybeSingle();
+  const{data:paiements}=await EatimeScope.from('fact_paiements').select('montant').eq('facture_id',facId);
   const totPaye=(paiements||[]).reduce((a,p)=>a+Number(p.montant||0),0);
   // Recalcule le cache depuis le détail restant. Supprimer le dernier règlement écrit montant_paye=0,
   // et le repli d'encaisseFacture renvoie alors 0 : le cache s'auto-répare. NE PAS router par encaisseFacture ici.
-  const{error:eF}=await sb.from('factures').update({statut:statutFacture(f.total_ttc,totPaye),montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
+  const{error:eF}=await EatimeScope.from('factures').update({statut:statutFacture(f.total_ttc,totPaye),montant_paye:totPaye}).eq('id',facId);if(eF){toast('Erreur : '+eF.message);return;}
   openFacture(facId);
 }
 async function annulerFacture(id){
   if(!confirm('Annuler cette facture ? (statut "annulée", non supprimée)'))return;
-  const{error}=await sb.from('factures').update({statut:'annulee'}).eq('id',id);if(error){toast('Erreur : '+error.message);return;}
+  const{error}=await EatimeScope.from('factures').update({statut:'annulee'}).eq('id',id);if(error){toast('Erreur : '+error.message);return;}
   toast('Facture annulée');closeModal();renderFactures(document.getElementById('content'));
 }
 
@@ -329,8 +334,8 @@ async function openFactureForm(){
   CURRENT_LIGNES=[{designation:'',quantite:1,prix_unitaire_ht:0,tva_pct:S.fparam?.tva_defaut||5.5}]; // pour le mode manuel
   // Charge bons + factures pour proposer les bons NON facturés (dérivation blEditable — bl_ids source unique).
   const [blR,facR]=await Promise.all([
-    sb.from('bons_livraison').select('*,clients(nom)').eq('organization_id',ORG.id).order('date_livraison',{ascending:false}),
-    sb.from('factures').select('id,numero,statut,bl_ids').eq('organization_id',ORG.id),
+    EatimeScope.from('bons_livraison').select('*,clients(nom)').eq('organization_id',ORG.id).order('date_livraison',{ascending:false}),
+    EatimeScope.from('factures').select('id,numero,statut,bl_ids').eq('organization_id',ORG.id),
   ]);
   S.bls=blR.data||[]; NF_INDEX=blFactureIndex(facR.data||[]);
   const today=new Date().toISOString().slice(0,10);
@@ -417,7 +422,7 @@ async function saveFactureFromBons(){
   // on insère SANS numero et on le relit. Ouvrir/annuler le formulaire ne consomme aucun numéro.
   // Facture PAR BONS : lignes dans les bons (bl_ids), pas factures_lignes ; booléen `facture` non écrit
   // (statut « facturé » dérivé de bl_ids — source unique).
-  const{data:fac,error}=await sb.from('factures').insert({organization_id:ORG.id,client_id:clientId,date_facture:val('nf_date'),bl_ids:sel.map(b=>b.id),total_ht:model.calcHT,total_ttc:model.calcTTC,statut:'emise'}).select('numero').single();
+  const{data:fac,error}=await EatimeScope.from('factures').insert({organization_id:ORG.id,client_id:clientId,date_facture:val('nf_date'),bl_ids:sel.map(b=>b.id),total_ht:model.calcHT,total_ttc:model.calcTTC,statut:'emise'}).select('numero').single();
   if(error){toast('Erreur création facture : '+error.message);return;}
   toast(`✓ Facture ${fac?.numero||''} créée (${sel.length} bon${sel.length>1?'s':''})`);
   closeModal(); renderFactures(document.getElementById('content'));
@@ -468,11 +473,11 @@ async function saveFacture(){
   });
   // Numéro attribué par le trigger DB (atomique) → insérer SANS numero et relire. `factures` n'a pas de
   // colonne `lignes` (A2) — les lignes vivent dans factures_lignes.
-  const{data:fac,error}=await sb.from('factures').insert({organization_id:ORG.id,client_id:val('nf_cl'),date_facture:val('nf_date'),total_ht:+totHT.toFixed(2),total_ttc:+totTTC.toFixed(2),statut:'emise'}).select().single();
+  const{data:fac,error}=await EatimeScope.from('factures').insert({organization_id:ORG.id,client_id:val('nf_cl'),date_facture:val('nf_date'),total_ht:+totHT.toFixed(2),total_ttc:+totTTC.toFixed(2),statut:'emise'}).select().single();
   if(error){toast('Erreur création facture : '+error.message);return;}
   // Insert lignes structurées
   const lignesPayload=lignes.map(l=>({...l,organization_id:ORG.id,facture_id:fac.id}));
-  const{error:errL}=await sb.from('factures_lignes').insert(lignesPayload);
+  const{error:errL}=await EatimeScope.from('factures_lignes').insert(lignesPayload);
   if(errL){toast('Facture créée mais lignes non enregistrées : '+errL.message);}
   else toast(`✓ Facture ${fac.numero} créée`);
   closeModal();renderFactures(document.getElementById('content'));
@@ -562,8 +567,8 @@ function statutFacture(totalTTC,encaisse){
 // posées sur f._lignes) — puis délègue au modèle PUR factureModel (groupé par livraison + ventilation TVA).
 async function buildFactureModel(f){
   let bls=[];
-  if(f.bl_ids&&f.bl_ids.length){ const{data}=await sb.from('bons_livraison').select('id,date_livraison,lignes').in('id',f.bl_ids); bls=data||[]; }
-  else{ const{data}=await sb.from('factures_lignes').select('*').eq('facture_id',f.id).order('ordre'); f._lignes=data||[]; }
+  if(f.bl_ids&&f.bl_ids.length){ const{data}=await EatimeScope.from('bons_livraison').select('id,date_livraison,lignes').in('id',f.bl_ids); bls=data||[]; }
+  else{ const{data}=await EatimeScope.from('factures_lignes').select('*').eq('facture_id',f.id).order('ordre'); f._lignes=data||[]; }
   return factureModel(f, bls, S.produits, S.fparam||{});
 }
 
@@ -757,7 +762,7 @@ function mercurialeFeuille(model){
 // ─────── PDF (rendu jsPDF ; le logo est la seule image, tout le reste est du texte vectoriel) ───────
 async function downloadFacturePDF(id){
   toast('Génération PDF…');
-  const{data:f}=await sb.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
+  const{data:f}=await EatimeScope.from('factures').select('*,clients(*),fact_paiements(*)').eq('id',id).maybeSingle();
   if(!f){toast('Facture introuvable');return;}
   const par=S.fparam||{};
   const model=await buildFactureModel(f); // MÊME chargement/modèle que la fiche à l'écran (openFacture)
@@ -886,7 +891,7 @@ let MERC_BLS=null;   // bons de livraison réduits (date + lignes), UNIQUEMENT p
                      // utilisées par l'écran des bons et l'édition, et l'écraser ici les casserait.
 async function ensureMercBLs(){
   if(MERC_BLS) return MERC_BLS;
-  const{data,error}=await sb.from('bons_livraison').select('date_livraison,lignes').eq('organization_id',ORG.id);
+  const{data,error}=await EatimeScope.from('bons_livraison').select('date_livraison,lignes').eq('organization_id',ORG.id);
   if(error){toast('Prix livrés indisponibles : '+error.message);MERC_BLS=[];return MERC_BLS;}
   MERC_BLS=data||[];
   return MERC_BLS;
@@ -1070,8 +1075,8 @@ async function renderBLs(el){
   // Le statut « facturé » se DÉRIVE de bl_ids → on charge les factures en même temps que les bons, et on
   // construit l'index UNE fois, AVANT de rendre la première ligne (sinon toutes les puces affichent « Non »).
   const [blR, facR] = await Promise.all([
-    sb.from('bons_livraison').select('*,clients(nom)').eq('organization_id',ORG.id).order('date_livraison',{ascending:false}),
-    sb.from('factures').select('id,numero,statut,bl_ids').eq('organization_id',ORG.id),
+    EatimeScope.from('bons_livraison').select('*,clients(nom)').eq('organization_id',ORG.id).order('date_livraison',{ascending:false}),
+    EatimeScope.from('factures').select('id,numero,statut,bl_ids').eq('organization_id',ORG.id),
   ]);
   S.bls=blR.data||[]; S.facturesMin=facR.data||[];
   BL_INDEX=blFactureIndex(S.facturesMin);
@@ -1201,7 +1206,7 @@ async function saveBL(){
   const tot=blTotals(BL_LIGNES);
   // On n'écrit PAS `facture` : le « facturé » est dérivé de bl_ids (source unique). La colonne reste héritée.
   const payload={organization_id:ORG.id,client_id:clientId,date_livraison:date,lignes,total_achat:tot.total_achat,total_revente:tot.total_revente};
-  const{error}=BL_EDIT_ID?await sb.from('bons_livraison').update(payload).eq('id',BL_EDIT_ID):await sb.from('bons_livraison').insert(payload);
+  const{error}=BL_EDIT_ID?await EatimeScope.from('bons_livraison').update(payload).eq('id',BL_EDIT_ID):await EatimeScope.from('bons_livraison').insert(payload);
   if(error){toast('Erreur : '+error.message);return;}
   // Le rapprochement de la mercuriale s'appuie sur ces lignes : son cache devient faux dès qu'un bon
   // change. Sans cette invalidation, revenir sur le Catalogue dans la même session afficherait des
@@ -1237,10 +1242,10 @@ async function saveClient(){
   if(!val('c_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('c_nom'),ref:val('c_ref')||null,adr:val('c_adr')||null,ville:val('c_ville')||null};
   const id=val('c_id');
-  const{error}=id?await sb.from('clients').update(payload).eq('id',id):await sb.from('clients').insert(payload);
+  const{error}=id?await EatimeScope.from('clients').update(payload).eq('id',id):await EatimeScope.from('clients').insert(payload);
   if(error){toast(error.message);return;}toast('✓ Enregistré');closeModal();await loadCommonData();renderClients(document.getElementById('content'));
 }
-async function delClient(id){if(!confirm('Supprimer ce client ?'))return;const{error}=await sb.from('clients').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderClients(document.getElementById('content'));}
+async function delClient(id){if(!confirm('Supprimer ce client ?'))return;const{error}=await EatimeScope.from('clients').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderClients(document.getElementById('content'));}
 
 // ─────── CATALOGUE ───────
 async function renderCatalogue(el){
@@ -1332,10 +1337,10 @@ async function saveProd(){
   if(!val('pc_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('pc_nom'),cat:val('pc_cat')||null,grammage:val('pc_g')||null,unite:val('pc_u')||null,prix_achat:num('pc_pa'),prix_revente:num('pc_pr')||0,tva:num('pc_tva')||5.5};
   const id=val('pc_id');
-  const{error}=id?await sb.from('produits').update(payload).eq('id',id):await sb.from('produits').insert(payload);
+  const{error}=id?await EatimeScope.from('produits').update(payload).eq('id',id):await EatimeScope.from('produits').insert(payload);
   if(error){toast(error.message);return;}toast('✓');closeModal();await loadCommonData();renderCatalogue(document.getElementById('content'));
 }
-async function delProd(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('produits').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderCatalogue(document.getElementById('content'));}
+async function delProd(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('produits').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderCatalogue(document.getElementById('content'));}
 
 // ─────── PARAMÈTRES ───────
 function renderParametres(el){
@@ -1433,7 +1438,7 @@ function checkColorContrast(){
 async function saveFparam(){
   const payload={organization_id:ORG.id,raison_sociale:val('fp_rs'),forme_juridique:val('fp_fj')||null,siret:val('fp_sir')||null,rcs:val('fp_rcs')||null,num_tva:val('fp_tva')||null,ape_code:val('fp_ape')||null,capital_social:num('fp_cap'),adresse:val('fp_adr')||null,code_postal:val('fp_cp')||null,ville:val('fp_vil')||null,telephone:val('fp_tel')||null,email:val('fp_em')||null,iban:val('fp_iban')||null,bic:val('fp_bic')||null,banque:val('fp_bk')||null,conditions_paiement:val('fp_cond')||null,penalites_retard:val('fp_pen')||null,mentions_complementaires:val('fp_mt')||null,prefix_numero:val('fp_pre')||'',format_numero:val('fp_format')||'mensuel',couleur_accent:val('fp_accent')||null,couleur_bandeau:val('fp_bandeau')||null,mode_reglement:val('fp_reglement')||null};
   if(LOGO_DATA!==undefined) payload.logo_url=LOGO_DATA; // n'écrit le logo que s'il a changé (sinon préservé)
-  const{error}=await sb.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
+  const{error}=await EatimeScope.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
   if(error){toast(error.message);return;}toast('✓ Paramètres enregistrés');LOGO_DATA=undefined;await loadCommonData();
 }
 

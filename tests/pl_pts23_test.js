@@ -1,5 +1,6 @@
 const fs=require("fs");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
+require("./plprims.js").installScopeStub();   // EatimeScope.from() délègue au stub sb (cf. plprims.js)
 function grab(name){const re=new RegExp("(?:async\\s+)?function "+name+"\\s*\\(");const i=h.search(re);let d=0,s=h.indexOf("{",i),j=s;for(;j<h.length;j++){if(h[j]==="{")d++;else if(h[j]==="}"){d--;if(d===0){j++;break;}}}return h.slice(i,j);}
 eval(h.match(/const _pdur\s*=[^\n]*/)[0].replace(/^const/,'var'));
 eval(h.match(/const fmtH1\s*=[^\n]*/)[0].replace(/^const/,'var'));

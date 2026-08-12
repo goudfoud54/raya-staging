@@ -7,6 +7,7 @@
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -463,7 +464,11 @@ async function init(){
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if (!EatimeAccess.canAccessModule('avertissements', profile, profile.organizations?.permissions)) { document.body.innerHTML = EatimeAccess.renderAccessDenied('Avertissements'); return; }
   S.profile = profile;
-  const fp = await sb.from('fact_parametres').select('*').eq('organization_id', profile.organization_id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — avant toute lecture (cf. orgscope.js). Pour un super_admin, RLS
+  // ne filtre plus rien (« OR auth_role() = 'super_admin' ») : c'est ce filtre qui garantit qu'on
+  // travaille bien sur l'organisation qu'on croit.
+  await EatimeScope.init(sb, profile.organization_id, {nom: profile.organizations?.nom || '', role: profile.role});
+  const fp = await EatimeScope.from('fact_parametres').select('*').eq('organization_id', profile.organization_id).maybeSingle();
   S.params = fp.data || {};
   document.getElementById('orgBadge').textContent = profile.organizations?.nom || 'org';
   if (profile.organizations?.couleur_primaire) document.documentElement.style.setProperty('--accent', profile.organizations.couleur_primaire);
@@ -474,19 +479,19 @@ async function init(){
 
 async function loadAll(){
   const SAL_COLS = 'id,nom,prenom,sexe,date_entree,date_naissance,adresse,code_postal,ville,poste_intitule,type_contrat,actif';
-  const s = await sb.from('salaries').select(SAL_COLS).order('nom');
+  const s = await EatimeScope.from('salaries').select(SAL_COLS).order('nom');
   if (s.error) console.error('[avert] salaries:', s.error);
   S.salaries = s.data || [];
-  const rr = await sb.from('restaurants').select('id,nom,adresse,code_postal,ville').eq('organization_id', S.profile.organization_id).eq('actif',true).order('nom');
+  const rr = await EatimeScope.from('restaurants').select('id,nom,adresse,code_postal,ville').eq('organization_id', S.profile.organization_id).eq('actif',true).order('nom');
   S.restos = rr.data || [];
   const restoOpts = '<option value="">— Choisir un restaurant —</option>' + S.restos.map(r=>`<option value="${r.id}">${esc(r.nom)}</option>`).join('') + '<option value="__autre__">Autre / saisir manuellement…</option>';
   const rsel = document.getElementById('ed_faits_restaurant');
   if (rsel) rsel.innerHTML = restoOpts;
   const esel = document.getElementById('ed_entretien_restaurant');
   if (esel) esel.innerHTML = restoOpts;
-  let d = await sb.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at', { ascending: false });
+  let d = await EatimeScope.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at', { ascending: false });
   if (d.error) {
-    d = await sb.from('disciplinary_actions').select('*').order('created_at', { ascending: false });
+    d = await EatimeScope.from('disciplinary_actions').select('*').order('created_at', { ascending: false });
     (d.data || []).forEach(x => { const sal = S.salaries.find(z=>z.id===x.salarie_id); x.salarie = sal ? {id:sal.id,nom:sal.nom,prenom:sal.prenom} : null; });
   }
   S.dossiers = d.data || [];
@@ -923,7 +928,7 @@ function renderVulnBanner(sid){
 async function loadAntecedents(salId, excludeId){
   S.antecedents=[]; S.antIncluded=new Set();
   if (salId){
-    const { data } = await sb.from('disciplinary_actions')
+    const { data } = await EatimeScope.from('disciplinary_actions')
       .select('id,type,motif_court,notification_date,date_effet,faits_date,status')
       .eq('salarie_id', salId).in('status',['sanction_notifiee','cloture'])
       .order('notification_date',{ascending:false,nullsFirst:false});
@@ -1116,7 +1121,7 @@ async function recordDocGenerated(kind){
   S._docRecords=S._docRecords||{};
   const prev=S._docRecords[kind]||{};
   S._docRecords[kind]={ ...prev, sig:faitsSignature(_currentFaits(),kind), at:new Date().toISOString() };
-  await sb.from('disciplinary_actions').update({pdfs:S._docRecords}).eq('id',id);
+  await EatimeScope.from('disciplinary_actions').update({pdfs:S._docRecords}).eq('id',id);
   checkFaitsCoherence(); renderRemiseZone();
 }
 function onGenClick(kind){
@@ -1165,7 +1170,7 @@ async function saveRemise(kind, field, value){
   const patch={pdfs:S._docRecords};
   if(kind==='convocation' && field==='date_remise'){ patch.convocation_presentation_date=value||null;
     const e=document.getElementById('ed_presentation_date'); if(e){ e.value=value||''; checkConvocDelai&&checkConvocDelai(); } }
-  await sb.from('disciplinary_actions').update(patch).eq('id',id);
+  await EatimeScope.from('disciplinary_actions').update(patch).eq('id',id);
   renderRemiseZone();
 }
 async function uploadRemiseScan(kind, ev){
@@ -1304,8 +1309,8 @@ function collectPayload(){
 }
 // Recharge UNIQUEMENT les dossiers (pas les salariés) : ne touche pas au <select> du modal ouvert.
 async function reloadDossiers(){
-  let d = await sb.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at',{ascending:false});
-  if (d.error){ d = await sb.from('disciplinary_actions').select('*').order('created_at',{ascending:false});
+  let d = await EatimeScope.from('disciplinary_actions').select('*, salarie:salarie_id(id,nom,prenom)').order('created_at',{ascending:false});
+  if (d.error){ d = await EatimeScope.from('disciplinary_actions').select('*').order('created_at',{ascending:false});
     (d.data||[]).forEach(x=>{ const s=S.salaries.find(z=>z.id===x.salarie_id); x.salarie=s?{id:s.id,nom:s.nom,prenom:s.prenom}:null; }); }
   S.dossiers = d.data || [];
   populateFilters();
@@ -1317,8 +1322,8 @@ async function persistDossier(reload){
   if (!p.salarie_id){ alert('Salarié requis'); return null; }
   if (!p.motif_court){ alert('Motif court requis'); return null; }
   let result, savedId;
-  if (id){ result = await sb.from('disciplinary_actions').update(p).eq('id', id).select().single(); savedId=id; }
-  else { p.organization_id=S.profile.organization_id; p.created_by=S.profile.id; result = await sb.from('disciplinary_actions').insert(p).select().single(); savedId=result.data?.id; document.getElementById('ed_id').value=savedId||''; if(savedId) document.getElementById('btnDel').style.display=''; }
+  if (id){ result = await EatimeScope.from('disciplinary_actions').update(p).eq('id', id).select().single(); savedId=id; }
+  else { p.organization_id=S.profile.organization_id; p.created_by=S.profile.id; result = await EatimeScope.from('disciplinary_actions').insert(p).select().single(); savedId=result.data?.id; document.getElementById('ed_id').value=savedId||''; if(savedId) document.getElementById('btnDel').style.display=''; }
   if (result.error){ alert(result.error.message); return null; }
   await syncCalendarEvents(savedId, p);
   await reloadDossiers();
@@ -1326,7 +1331,7 @@ async function persistDossier(reload){
   return savedId;
 }
 async function syncCalendarEvents(actionId, p){
-  await sb.from('calendar_events').delete().eq('source_table','disciplinary_actions').eq('source_id', actionId);
+  await EatimeScope.from('calendar_events').delete().eq('source_table','disciplinary_actions').eq('source_id', actionId);
   const sal = S.salaries.find(x=>x.id===p.salarie_id);
   const name = sal ? `${sal.nom} ${sal.prenom||''}` : '—';
   const events = [];
@@ -1340,15 +1345,15 @@ async function syncCalendarEvents(actionId, p){
   if (p.notification_date) events.push({ type:'disciplinaire_notification', titre:`Notification sanction · ${name}`, date_debut:p.notification_date, color:'#dc2626', description:`${TYPE_LABELS[p.type]} — ${p.motif_court}`, reminder_days:3 });
   if (p.date_effet) events.push({ type:'disciplinaire_effet', titre:`Date d'effet · ${name}`, date_debut:p.date_effet, color:'#7f1d1d', description:`${TYPE_LABELS[p.type]} — ${p.motif_court}`, reminder_days:3 });
   for (const e of events){
-    await sb.from('calendar_events').insert({ ...e, salarie_id:p.salarie_id, organization_id:S.profile.organization_id, auto_generated:true, source_table:'disciplinary_actions', source_id:actionId, created_by:S.profile.id });
+    await EatimeScope.from('calendar_events').insert({ ...e, salarie_id:p.salarie_id, organization_id:S.profile.organization_id, auto_generated:true, source_table:'disciplinary_actions', source_id:actionId, created_by:S.profile.id });
   }
 }
 
 async function delDossier(){
   const id = document.getElementById('ed_id').value; if (!id) return;
   if (!confirm('Supprimer définitivement ce dossier et ses événements calendrier associés ?')) return;
-  await sb.from('calendar_events').delete().eq('source_table','disciplinary_actions').eq('source_id', id);
-  const { error } = await sb.from('disciplinary_actions').delete().eq('id', id);
+  await EatimeScope.from('calendar_events').delete().eq('source_table','disciplinary_actions').eq('source_id', id);
+  const { error } = await EatimeScope.from('disciplinary_actions').delete().eq('id', id);
   if (error) return alert(error.message);
   closeModal(); await loadAll(); render();
 }
@@ -1789,7 +1794,7 @@ function showAIOverlay(state,msg,data){
 async function applyAIEnhance(){
   if (_aiPending && _aiTargetId){
     const patch={}; if(_aiPending.motif_court)patch.motif_court=_aiPending.motif_court; if(_aiPending.motif_detail)patch.motif_detail=_aiPending.motif_detail; if(_aiPending.faits_impact)patch.faits_impact=_aiPending.faits_impact;
-    const { error } = await sb.from('disciplinary_actions').update(patch).eq('id',_aiTargetId);
+    const { error } = await EatimeScope.from('disciplinary_actions').update(patch).eq('id',_aiTargetId);
     if (error){ alert('Erreur mise à jour : '+error.message); return; }
     // reflète dans le formulaire ouvert
     if (document.getElementById('ed_id').value===_aiTargetId){ if(patch.motif_court)document.getElementById('ed_motif_court').value=patch.motif_court; if(patch.motif_detail)document.getElementById('ed_motif_detail').value=patch.motif_detail; if(patch.faits_impact)document.getElementById('ed_faits_impact').value=patch.faits_impact; }

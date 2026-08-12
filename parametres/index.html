@@ -7,6 +7,7 @@
 <script>(function(){var t=localStorage.getItem('eatime_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="../alertes.js?v=1"></script>
 <script src="../utils.js?v=1.5"></script>
 <style>
@@ -487,6 +488,10 @@ async function loadProfileAndShow(){
   if(!profile){document.getElementById('err').textContent='Accès refusé.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
+  // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
+  // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   ORG=org||{};
   // Accès contrôlé par access.js comme tous les autres modules (plus de liste de rôles codée en dur
   // ici) : sinon une exception accordant ou retirant « Paramètres » resterait sans effet sur cette
@@ -547,7 +552,7 @@ async function renderTablettes(){
   host.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
   const current=await fetchCurrentKioskVersion();
   // RLS scope la lecture à l'organisation de l'utilisateur (super_admin voit tout).
-  const{data,error}=await sb.from('kiosk_heartbeats').select('*, restaurants:restaurant_id(nom)').order('kiosk_type');
+  const{data,error}=await EatimeScope.from('kiosk_heartbeats').select('*, restaurants:restaurant_id(nom)').order('kiosk_type');
   if(error){host.innerHTML='<div style="color:var(--warn)">Erreur : '+error.message+'</div>';return;}
   const rows=data||[];
   if(!rows.length){host.innerHTML='<div style="color:var(--muted)">Aucune tablette n\'a encore signalé sa présence. Après déploiement, chaque kiosque se signale au démarrage puis toutes les 5 min.</div>';return;}
@@ -567,7 +572,7 @@ async function renderTablettes(){
 }
 async function delTablet(id){
   if(!confirm('Retirer cette tablette de la liste ?\nSi elle est encore en service, elle réapparaîtra à son prochain signalement (dans quelques minutes).')) return;
-  const{error}=await sb.from('kiosk_heartbeats').delete().eq('id',id);
+  const{error}=await EatimeScope.from('kiosk_heartbeats').delete().eq('id',id);
   if(error){toast('Erreur : '+error.message);return;}
   renderTablettes();
 }
@@ -575,7 +580,7 @@ async function delTablet(id){
 // ─────────── ONGLET SOCIÉTÉ (identité légale + signature) ───────────
 let SOC=null, sigData=null;
 async function loadSociete(){
-  const{data}=await sb.from('fact_parametres').select('*').eq('organization_id',ORG.id).maybeSingle();
+  const{data}=await EatimeScope.from('fact_parametres').select('*').eq('organization_id',ORG.id).maybeSingle();
   SOC=data||{};
   const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=(v==null?'':v);};
   set('soc_raison_sociale',SOC.raison_sociale);
@@ -646,13 +651,13 @@ async function saveSociete(){
     adresse_inspection_travail:v('soc_insp'),adresse_mairie:v('soc_mairie'),
     presence_cse:!!(document.getElementById('soc_cse')||{}).checked,
     signature_data:sigData};
-  const{error}=await sb.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
+  const{error}=await EatimeScope.from('fact_parametres').upsert(payload,{onConflict:'organization_id'});
   if(error){toast('Erreur : '+error.message);return;}
   toast('Infos société enregistrées ✓');
 }
 async function loadWaUserStatus(){
   // Affiche un statut "actif" si un bot est déjà configuré + en ligne pour cette org
-  const{data}=await sb.from('wa_bot_config').select('last_ping_at,status').eq('organization_id',ORG.id).order('created_at',{ascending:false}).limit(1);
+  const{data}=await EatimeScope.from('wa_bot_config').select('last_ping_at,status').eq('organization_id',ORG.id).order('created_at',{ascending:false}).limit(1);
   const el=document.getElementById('waUserStatus');
   if(!data||!data.length){el.innerHTML='<span style="color:var(--muted);font-size:12px">📴 Non activé pour ton organisation</span>';return;}
   const b=data[0];
@@ -728,25 +733,25 @@ async function callAdminUsers(body){
 }
 async function loadUsers(){
   // Récupère les salariés (pour la liste d'association dans la modale + invitation)
-  const{data:sals}=await sb.from('salaries').select('id,nom,prenom,actif').eq('organization_id',ORG.id).order('nom');
+  const{data:sals}=await EatimeScope.from('salaries').select('id,nom,prenom,actif').eq('organization_id',ORG.id).order('nom');
   SALARIES_CACHE=sals||[];
   // Liste des users via edge function (récupère aussi auth_email + last_sign_in_at)
   let profiles=[];
   try{const j=await callAdminUsers({action:'list'});profiles=j.profiles||[];}
   catch(e){
     // Fallback en lecture directe si edge function down
-    const{data}=await sb.from('profiles').select('id,full_name,email,role,salarie_id').eq('organization_id',ORG.id).order('role').order('full_name');
+    const{data}=await EatimeScope.from('profiles').select('id,full_name,email,role,salarie_id').eq('organization_id',ORG.id).order('role').order('full_name');
     profiles=(data||[]).map(p=>({...p,auth_email:p.email,last_sign_in_at:null}));
   }
   // Les exceptions par module viennent d'une lecture DIRECTE de profiles : l'edge function
   // admin-users ne renvoie pas cette colonne (liste de colonnes explicite côté serveur), et la RLS
   // autorise déjà un admin à lire les profils de son organisation. Une page qui oublierait cette
   // fusion afficherait « hérité » partout alors que des exceptions existent.
-  const{data:excRows}=await sb.from('profiles').select('id,module_exceptions').eq('organization_id',ORG.id);
+  const{data:excRows}=await EatimeScope.from('profiles').select('id,module_exceptions').eq('organization_id',ORG.id);
   const excById={};(excRows||[]).forEach(r=>{excById[r.id]=r.module_exceptions||{};});
   profiles=profiles.map(p=>({...p,module_exceptions:p.module_exceptions||excById[p.id]||{}}));
   USERS_CACHE=profiles;
-  const{data:invs}=await sb.from('invitations').select('id,email,role,token,expires_at,accepted_at,created_at').eq('organization_id',ORG.id).is('accepted_at',null).order('created_at',{ascending:false});
+  const{data:invs}=await EatimeScope.from('invitations').select('id,email,role,token,expires_at,accepted_at,created_at').eq('organization_id',ORG.id).is('accepted_at',null).order('created_at',{ascending:false});
   let html='<div style="margin-bottom:6px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Membres actifs</div>';
   if(!profiles||profiles.length===0){html+='<div style="color:var(--muted);padding:8px">Aucun membre.</div>';}
   else{
@@ -792,7 +797,7 @@ async function loadUsers(){
   document.getElementById('usersList').innerHTML=html;
 }
 async function loadSalariesForInvite(){
-  const{data}=await sb.from('salaries').select('id,nom,prenom').eq('actif',true).order('nom');
+  const{data}=await EatimeScope.from('salaries').select('id,nom,prenom').eq('actif',true).order('nom');
   const sel=document.getElementById('inv_salarie');
   sel.innerHTML='<option value="">— Aucune —</option>'+(data||[]).map(s=>`<option value="${s.id}">${s.nom} ${s.prenom||''}</option>`).join('');
   EatimeAutocomplete.enhance(sel, { placeholder:'Aucune — tape un nom…' });
@@ -808,7 +813,7 @@ async function sendInvite(){
   const salarie_id=document.getElementById('inv_salarie').value||null;
   if(!email||!email.includes('@')){toast('Email invalide');return;}
   document.getElementById('inv_result').innerHTML='<span style="color:var(--muted)">Génération…</span>';
-  const{data,error}=await sb.from('invitations').insert({
+  const{data,error}=await EatimeScope.from('invitations').insert({
     organization_id:ORG.id,email,role,
     salarie_id:role==='salarie'?salarie_id:null,
     created_by:ME.id
@@ -841,14 +846,14 @@ async function sendInvite(){
 }
 async function cancelInvite(id){
   if(!confirm('Annuler cette invitation ?'))return;
-  const{error}=await sb.from('invitations').delete().eq('id',id);
+  const{error}=await EatimeScope.from('invitations').delete().eq('id',id);
   if(error){toast(error.message);return;}
   loadUsers();
 }
 async function removeUser(id,name){
   if(!confirm('Retirer '+name+' de l\'organisation ?\n(Le compte auth reste mais perdra accès.)'))return;
   // On désactive en mettant l'organization_id à null, ou on supprime le profil
-  const{error}=await sb.from('profiles').delete().eq('id',id);
+  const{error}=await EatimeScope.from('profiles').delete().eq('id',id);
   if(error){toast(error.message);return;}
   toast('Utilisateur retiré');
   loadUsers();
@@ -858,9 +863,9 @@ async function removeUser(id,name){
 let RESTOS_CACHE=[], STOCK_CFG={}, RETARD_CFG={};
 async function loadRestos(){
   const[rRes,scRes,rcRes]=await Promise.all([
-    sb.from('restaurants').select('id,nom,actif,created_at,adresse,code_postal,ville,ouverture_semaine,fermeture_semaine,ouverture_weekend,fermeture_weekend').eq('organization_id',ORG.id).order('nom'),
-    sb.from('stock_alertes_config').select('*').eq('organization_id',ORG.id),
-    sb.from('retard_alertes_config').select('*').eq('organization_id',ORG.id),
+    EatimeScope.from('restaurants').select('id,nom,actif,created_at,adresse,code_postal,ville,ouverture_semaine,fermeture_semaine,ouverture_weekend,fermeture_weekend').eq('organization_id',ORG.id).order('nom'),
+    EatimeScope.from('stock_alertes_config').select('*').eq('organization_id',ORG.id),
+    EatimeScope.from('retard_alertes_config').select('*').eq('organization_id',ORG.id),
   ]);
   if(rRes.error){document.getElementById('restosList').innerHTML='<div style="color:var(--bad)">'+rRes.error.message+'</div>';return;}
   RESTOS_CACHE=rRes.data||[];
@@ -895,7 +900,7 @@ async function createResto(){
   const err=document.getElementById('resto_err');err.textContent='';
   if(!nom){err.textContent='Nom requis';return;}
   const hv=id=>{const e=document.getElementById(id);return e&&e.value?e.value:null;};
-  const{error}=await sb.from('restaurants').insert({organization_id:ORG.id,nom,actif:true,
+  const{error}=await EatimeScope.from('restaurants').insert({organization_id:ORG.id,nom,actif:true,
     ouverture_semaine:hv('resto_ouv_sem'),fermeture_semaine:hv('resto_ferm_sem'),
     ouverture_weekend:hv('resto_ouv_we'),fermeture_weekend:hv('resto_ferm_we')});
   if(error){err.textContent=error.message;return;}
@@ -904,13 +909,13 @@ async function createResto(){
   loadRestos();
 }
 async function toggleResto(id,actif){
-  const{error}=await sb.from('restaurants').update({actif}).eq('id',id);
+  const{error}=await EatimeScope.from('restaurants').update({actif}).eq('id',id);
   if(error){toast(error.message);return;}
   toast(actif?'✓ Réactivé':'⏸ Désactivé');loadRestos();
 }
 async function deleteResto(id,nom){
   if(!confirm(`Supprimer définitivement le restaurant "${nom}" ?\n\n⚠ Toutes les données associées (saisies stock, pointages, factures liées) resteront en base mais sans restaurant rattaché.\n\nSi tu veux juste le cacher temporairement, utilise "Désactiver" ⏸ à la place.`))return;
-  const{error}=await sb.from('restaurants').delete().eq('id',id);
+  const{error}=await EatimeScope.from('restaurants').delete().eq('id',id);
   if(error){toast('Impossible : '+error.message+' (utilise ⏸ pour désactiver)');return;}
   toast('🗑 Supprimé');loadRestos();
 }
@@ -936,9 +941,9 @@ async function sendTestAlerte(restaurantId,type,btn){
 async function openEditResto(id){
   const r=RESTOS_CACHE.find(x=>x.id===id);if(!r)return;
   // Récupérer la config alertes
-  const{data:cfg}=await sb.from('stock_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
+  const{data:cfg}=await EatimeScope.from('stock_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
   const alerteCfg=cfg||{actif:false,heure_check:'22:30',email_alerte:'',wa_groupe_id:'',wa_groupe_nom:''};
-  const{data:rcfg}=await sb.from('retard_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
+  const{data:rcfg}=await EatimeScope.from('retard_alertes_config').select('*').eq('restaurant_id',id).maybeSingle();
   const retardCfg=rcfg||{actif:false,seuil_minutes:15,plage_debut:'06:00',plage_fin:'23:59',alerte_sortie_oubliee:false,notif_salarie:true,email_alerte:'',wa_groupe_id:'',wa_groupe_nom:''};
   // État explicite (source unique alertes.js) : ce qui se passera réellement, + bouton de test bout-en-bout.
   const _esS=etatAlerte(alerteCfg,'stock'), _esR=etatAlerte(retardCfg,'retard');
@@ -1031,7 +1036,7 @@ async function openEditResto(id){
 function closeEditResto(){const m=document.getElementById('editRestoModal');if(m)m.remove();}
 // ────────────────────────────────  BOT WHATSAPP  ────────────────────────────────
 async function loadWaBot(){
-  const{data}=await sb.from('wa_bot_config').select('id,nom,api_token,last_ping_at,status,created_at').eq('organization_id',ORG.id).order('created_at',{ascending:false});
+  const{data}=await EatimeScope.from('wa_bot_config').select('id,nom,api_token,last_ping_at,status,created_at').eq('organization_id',ORG.id).order('created_at',{ascending:false});
   const block=document.getElementById('waBotBlock');
   if(!data||!data.length){
     block.innerHTML=`<div style="background:var(--surface);border:1px dashed var(--line-2);border-radius:8px;padding:18px;text-align:center">
@@ -1070,19 +1075,19 @@ async function loadWaBot(){
 function newToken(){const c='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';let s='wabot_';for(let i=0;i<40;i++)s+=c.charAt(Math.floor(Math.random()*c.length));return s;}
 async function createBotToken(){
   const nom=prompt('Nom du bot (label affiché) :','Bot principal');if(!nom)return;
-  const{error}=await sb.from('wa_bot_config').insert({organization_id:ORG.id,nom,api_token:newToken()});
+  const{error}=await EatimeScope.from('wa_bot_config').insert({organization_id:ORG.id,nom,api_token:newToken()});
   if(error){toast(error.message);return;}
   toast('✓ Token créé');loadWaBot();
 }
 async function regenBotToken(id){
   if(!confirm('Régénérer le token ? Le bot devra être redéployé avec le nouveau.'))return;
-  const{error}=await sb.from('wa_bot_config').update({api_token:newToken(),status:'offline'}).eq('id',id);
+  const{error}=await EatimeScope.from('wa_bot_config').update({api_token:newToken(),status:'offline'}).eq('id',id);
   if(error){toast(error.message);return;}
   toast('✓ Token régénéré');loadWaBot();
 }
 async function deleteBotToken(id){
   if(!confirm('Supprimer ce token ? Le bot ne pourra plus se connecter.'))return;
-  const{error}=await sb.from('wa_bot_config').delete().eq('id',id);
+  const{error}=await EatimeScope.from('wa_bot_config').delete().eq('id',id);
   if(error){toast(error.message);return;}
   loadWaBot();
 }
@@ -1094,7 +1099,7 @@ async function saveEditResto(id){
   if(!nom){err.textContent='Nom requis';return;}
   // 1. update restaurant
   const v=id2=>{const e=document.getElementById(id2);return e&&e.value.trim()?e.value.trim():null;};
-  const{error}=await sb.from('restaurants').update({nom,actif,adresse:v('er_adresse'),code_postal:v('er_cp'),ville:v('er_ville'),
+  const{error}=await EatimeScope.from('restaurants').update({nom,actif,adresse:v('er_adresse'),code_postal:v('er_cp'),ville:v('er_ville'),
     ouverture_semaine:v('er_ouv_sem'),fermeture_semaine:v('er_ferm_sem'),ouverture_weekend:v('er_ouv_we'),fermeture_weekend:v('er_ferm_we')}).eq('id',id);
   if(error){err.textContent=error.message;return;}
   // 2. upsert config alertes
@@ -1108,7 +1113,7 @@ async function saveEditResto(id){
     wa_groupe_nom:document.getElementById('er_wa_grp_nom').value.trim()||null,
     updated_at:new Date().toISOString(),
   };
-  const{error:e2}=await sb.from('stock_alertes_config').upsert(cfg,{onConflict:'restaurant_id'});
+  const{error:e2}=await EatimeScope.from('stock_alertes_config').upsert(cfg,{onConflict:'restaurant_id'});
   if(e2){err.textContent=e2.message;return;}
   // 3. upsert config alertes de retard
   const gv=(id2)=>{const e=document.getElementById(id2);return e&&e.value.trim()?e.value.trim():null;};
@@ -1126,7 +1131,7 @@ async function saveEditResto(id){
     wa_groupe_nom:gv('er_retard_wa_nom'),
     updated_at:new Date().toISOString(),
   };
-  const{error:e3}=await sb.from('retard_alertes_config').upsert(rcfg,{onConflict:'restaurant_id'});
+  const{error:e3}=await EatimeScope.from('retard_alertes_config').upsert(rcfg,{onConflict:'restaurant_id'});
   if(e3){err.textContent=e3.message;return;}
   toast('✓ Restaurant + alertes mis à jour');closeEditResto();loadRestos();
 }
@@ -1324,7 +1329,7 @@ async function saveEditUser(id){
       const nouv=euCollectExceptions();
       const ancien=u.module_exceptions||{};
       if(JSON.stringify(nouv)!==JSON.stringify(ancien)){
-        const{error:exErr}=await sb.from('profiles').update({module_exceptions:nouv}).eq('id',id);
+        const{error:exErr}=await EatimeScope.from('profiles').update({module_exceptions:nouv}).eq('id',id);
         if(exErr){err.textContent='Exceptions : '+exErr.message;return;}
       }
     }
@@ -1346,7 +1351,7 @@ async function saveEditUser(id){
 
 // ────────────────────────────────  CLÉS API & MCP  ────────────────────────────────
 async function loadApiKeys(){
-  const{data:keys}=await sb.from('api_keys').select('id,prefix,label,scopes,created_at,last_used_at,revoked_at').eq('organization_id',ORG.id).order('created_at',{ascending:false});
+  const{data:keys}=await EatimeScope.from('api_keys').select('id,prefix,label,scopes,created_at,last_used_at,revoked_at').eq('organization_id',ORG.id).order('created_at',{ascending:false});
   if(!keys||keys.length===0){document.getElementById('apiKeysList').innerHTML='<div style="color:var(--muted);padding:10px;text-align:center;font-size:12.5px">Aucune clé API. Génère-en une ci-dessous.</div>';return;}
   let html='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
   keys.forEach(k=>{
@@ -1382,7 +1387,7 @@ async function createApiKey(){
   const key=genApiKey();
   const hash=await sha256Hex(key);
   const prefix=key.slice(0,12); // "eat_xxxxxxxx"
-  const{error}=await sb.from('api_keys').insert({organization_id:ORG.id,key_hash:hash,prefix,label,scopes,created_by:ME.id});
+  const{error}=await EatimeScope.from('api_keys').insert({organization_id:ORG.id,key_hash:hash,prefix,label,scopes,created_by:ME.id});
   if(error){document.getElementById('ak_result').innerHTML='<span style="color:var(--bad)">'+error.message+'</span>';return;}
   document.getElementById('ak_result').innerHTML=`
     <div style="background:rgba(192,80,80,.08);border:1px solid var(--bad);border-radius:8px;padding:14px">
@@ -1408,7 +1413,7 @@ async function createApiKey(){
 }
 async function revokeApiKey(id){
   if(!confirm('Révoquer cette clé ? Toute connexion l\'utilisant échouera immédiatement.'))return;
-  const{error}=await sb.from('api_keys').update({revoked_at:new Date().toISOString()}).eq('id',id);
+  const{error}=await EatimeScope.from('api_keys').update({revoked_at:new Date().toISOString()}).eq('id',id);
   if(error){toast(error.message);return;}
   toast('Clé révoquée ✓');
   loadApiKeys();
@@ -1507,7 +1512,7 @@ async function createOrg(){
   const{data:newOrg,error}=await sb.from('organizations').insert({nom,slug,plan,permissions:{salaries:['admin'],planning:['admin','manager'],badgeuse:['*'],dispos:['*'],stock:['admin','manager'],facturation:['admin'],parametres:['admin']}}).select().single();
   if(error){document.getElementById('new_org_result').innerHTML='<span style="color:var(--bad)">'+error.message+'</span>';return;}
   // Invitation admin
-  const{data:inv,error:e2}=await sb.from('invitations').insert({organization_id:newOrg.id,email:adminEmail,role:'admin',created_by:ME.id}).select().single();
+  const{data:inv,error:e2}=await EatimeScope.from('invitations').insert({organization_id:newOrg.id,email:adminEmail,role:'admin',created_by:ME.id}).select().single();
   if(e2){document.getElementById('new_org_result').innerHTML='<span style="color:var(--warn)">Org créée mais invitation échouée: '+e2.message+'</span>';loadOrgs();return;}
   const link=buildInviteLink(inv.token);
   document.getElementById('new_org_result').innerHTML=`

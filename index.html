@@ -8,6 +8,7 @@
 <script>(function(){var t=localStorage.getItem('eatime_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="access.js?v=6.31"></script>
+<script src="orgscope.js?v=1"></script>
 <script src="alertes.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -181,6 +182,9 @@ async function loadProfileAndShow(){
     sb.from('system_modules').select('module_id,en_maintenance,message_maintenance'),
   ]);
   ORG=orgRes.data||{};
+  // Portée de l'ORGANISATION ACTIVE — avant toute lecture bornée (cf. orgscope.js). Le portail lit
+  // les restaurants et les configurations d'alerte : pour un super_admin, RLS ne filtre plus rien.
+  await EatimeScope.init(sb, profile.organization_id, {nom:ORG.nom||'', role:profile.role});
   MAINT={};(modRes.data||[]).forEach(m=>{MAINT[m.module_id]={en_maintenance:m.en_maintenance,message:m.message_maintenance};});
   applyTheme();
   // BLOCAGE si org suspendue (sauf super_admin)
@@ -248,9 +252,9 @@ async function checkAlertesBanner(){
   if(!ME || !['admin','super_admin'].includes(ME.role) || !ORG.id) return;
   try{
     const[rRes,scRes,rcRes]=await Promise.all([
-      sb.from('restaurants').select('id,nom,actif').eq('organization_id',ORG.id),
-      sb.from('stock_alertes_config').select('*').eq('organization_id',ORG.id),
-      sb.from('retard_alertes_config').select('*').eq('organization_id',ORG.id),
+      EatimeScope.from('restaurants').select('id,nom,actif').eq('organization_id',ORG.id),
+      EatimeScope.from('stock_alertes_config').select('*').eq('organization_id',ORG.id),
+      EatimeScope.from('retard_alertes_config').select('*').eq('organization_id',ORG.id),
     ]);
     const restos=rRes.data||[]; const sc={},rc={};
     (scRes.data||[]).forEach(c=>{sc[c.restaurant_id]=c;});

@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="../icons/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -150,6 +151,10 @@ async function loadAndShow(){
   if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();ORG=org||{};
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
+  // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
+  // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   // Cette page n'avait aucun contrôle d'accès : le module « moi » est ouvert à tous par défaut ('*'),
   // mais sans ce passage par access.js une exception le refusant n'aurait aucun effet ici — la carte
   // aurait disparu du portail alors que l'URL directe continuait de fonctionner.
@@ -157,7 +162,7 @@ async function loadAndShow(){
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   if(ORG.suspended){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue.</div>';return;}
   // Charger la fiche salarié liée
-  if(profile.salarie_id){const{data:s}=await sb.from('salaries').select('*').eq('id',profile.salarie_id).maybeSingle();SALARIE=s;}
+  if(profile.salarie_id){const{data:s}=await EatimeScope.from('salaries').select('*').eq('id',profile.salarie_id).maybeSingle();SALARIE=s;}
   document.getElementById('lock').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   const nm=SALARIE?((SALARIE.prenom?SALARIE.prenom+' ':'')+SALARIE.nom):(profile.full_name||profile.email);
@@ -185,7 +190,7 @@ function render(){
 async function renderTaches(el){
   el.innerHTML='<div style="text-align:center;color:var(--muted);padding:40px 20px">⏳ Chargement de tes tâches…</div>';
   if(!SALARIE){el.innerHTML='<div style="text-align:center;color:var(--muted);padding:40px 20px">Aucune fiche salarié liée à ton compte.</div>';return;}
-  const {data: tasks, error} = await sb.from('team_tasks').select('*').eq('salarie_id', SALARIE.id).eq('archived', false).order('priorite', {ascending:false}).order('deadline', {ascending: true, nullsFirst: false});
+  const {data: tasks, error} = await EatimeScope.from('team_tasks').select('*').eq('salarie_id', SALARIE.id).eq('archived', false).order('priorite', {ascending:false}).order('deadline', {ascending: true, nullsFirst: false});
   if(error){el.innerHTML='<div style="color:var(--bad);padding:20px;text-align:center">Erreur: '+error.message+'</div>';return;}
   const todo = (tasks||[]).filter(t=>t.statut==='todo');
   const doing = (tasks||[]).filter(t=>t.statut==='doing');
@@ -234,7 +239,7 @@ async function renderTaches(el){
 }
 
 async function changeTaskStatus(id, newStatut){
-  const { error } = await sb.from('team_tasks').update({ statut: newStatut }).eq('id', id);
+  const { error } = await EatimeScope.from('team_tasks').update({ statut: newStatut }).eq('id', id);
   if (error) return toast('Erreur : ' + error.message);
   toast(newStatut==='done'?'✓ Terminé !':newStatut==='doing'?'▶ Démarrée':'↺ Reprise');
   render();
@@ -243,7 +248,7 @@ async function changeTaskStatus(id, newStatut){
 // Charge le nombre de tâches au démarrage pour afficher le badge
 async function loadTaskBadge(){
   if(!SALARIE)return;
-  const { data } = await sb.from('team_tasks').select('id,statut').eq('salarie_id', SALARIE.id).eq('archived', false).in('statut',['todo','doing']);
+  const { data } = await EatimeScope.from('team_tasks').select('id,statut').eq('salarie_id', SALARIE.id).eq('archived', false).in('statut',['todo','doing']);
   const nb = (data||[]).length;
   const badge = document.getElementById('taskBadge');
   if(badge){if(nb){badge.textContent=nb;badge.style.display='';}else{badge.style.display='none';}}
@@ -270,7 +275,7 @@ async function renderPlanning(el){
       <button class="btn ghost sm" style="margin-left:auto" onclick="WEEK_OFFSET++;renderPlanning(document.getElementById('content'))">Semaine suiv. ›</button>
     </div>
     <div id="planContent">Chargement…</div>`;
-  const{data:cren}=await sb.from('planning_creneaux').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('date',from).lte('date',to).order('date').order('service');
+  const{data:cren}=await EatimeScope.from('planning_creneaux').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('date',from).lte('date',to).order('date').order('service');
   const list=cren||[];
   let html='<div class="week-grid">';
   for(let i=0;i<7;i++){
@@ -293,7 +298,7 @@ async function renderPlanning(el){
 // ─────── INDISPOS ───────
 async function renderDispos(el){
   if(!SALARIE){el.innerHTML='<div class="card-x" style="text-align:center;color:var(--muted)">Compte non lié à une fiche salarié.</div>';return;}
-  const{data}=await sb.from('salarie_dispos').select('*').eq('salarie_id',SALARIE.id).order('created_at',{ascending:false});
+  const{data}=await EatimeScope.from('salarie_dispos').select('*').eq('salarie_id',SALARIE.id).order('created_at',{ascending:false});
   const list=data||[];
   let html=`<div class="h2">Mes indisponibilités</div>
     <div class="h2-sub">${list.filter(d=>d.statut_demande==='en_attente').length} en attente · ${list.filter(d=>d.statut_demande==='validee').length} validées</div>`;
@@ -334,7 +339,7 @@ async function saveDispo(){
     payload.date_specifique=ds;
   } else payload.jour_semaine=parseInt(val('d_jour'));
   if(val('d_full')==='0'){payload.heure_debut=val('d_hd');payload.heure_fin=val('d_hf');}
-  const{error}=await sb.from('salarie_dispos').insert(payload);
+  const{error}=await EatimeScope.from('salarie_dispos').insert(payload);
   if(error){toast(error.message);return;}
   toast('✓ Demande envoyée');closeModal();renderDispos(document.getElementById('content'));
 }
@@ -343,7 +348,7 @@ async function saveDispo(){
 async function renderPointages(el){
   if(!SALARIE){el.innerHTML='<div class="card-x" style="text-align:center;color:var(--muted)">Compte non lié à une fiche salarié.</div>';return;}
   const since=new Date();since.setDate(since.getDate()-30);
-  const{data}=await sb.from('pointages').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('ts',since.toISOString()).order('ts',{ascending:false});
+  const{data}=await EatimeScope.from('pointages').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('ts',since.toISOString()).order('ts',{ascending:false});
   const list=data||[];
   // Calcul heures par jour
   const byDay={};list.forEach(p=>{const d=p.ts.slice(0,10);(byDay[d]=byDay[d]||[]).push(p);});
@@ -426,7 +431,7 @@ async function enablePush(){
     const reg=await _swReg();if(!reg){toast('Erreur service worker');return;}
     const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64(PUSH_PUBLIC_KEY)});
     const j=sub.toJSON();
-    const{error}=await sb.from('push_subscriptions').upsert({
+    const{error}=await EatimeScope.from('push_subscriptions').upsert({
       profile_id:ME.id,salarie_id:SALARIE?SALARIE.id:null,organization_id:ME.organization_id,
       endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,user_agent:navigator.userAgent,disabled_at:null,
     },{onConflict:'endpoint'});
@@ -438,7 +443,7 @@ async function enablePush(){
 async function disablePush(){
   try{
     const sub=await _currentSub();
-    if(sub){await sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint);await sub.unsubscribe();}
+    if(sub){await EatimeScope.from('push_subscriptions').delete().eq('endpoint',sub.endpoint);await sub.unsubscribe();}
     toast('Notifications désactivées');
   }catch(e){console.error(e);}
   renderPushCard();

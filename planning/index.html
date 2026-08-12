@@ -16,6 +16,7 @@
 <script src="../ui.js?v=2"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.0/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -302,7 +303,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.64 · l\'auto-fill se borne aux postes définis (bornes par RÔLE) · plafond d\'heure de fin sur les 7 jours — le dimanche n\'était couvert par aucune règle, et « 00:00 » était lu comme « pas de plafond »';
+const VERSION='v0.65 · portée de l\'organisation active : les 55 lectures et écritures du planning sont bornées explicitement, en plus de la sécurité de la base';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -399,9 +400,9 @@ async function applyAction(a,direction){
   const target=direction===1?a.after:a.before;
   const fallback=direction===1?a.before:a.after;
   if(target){
-    await sb.from('planning_creneaux').upsert(target,{onConflict:'restaurant_id,salarie_id,date,service'});
+    await EatimeScope.from('planning_creneaux').upsert(target,{onConflict:'restaurant_id,salarie_id,date,service'});
   } else if(fallback){
-    await sb.from('planning_creneaux').delete().eq('restaurant_id',fallback.restaurant_id).eq('salarie_id',fallback.salarie_id).eq('date',fallback.date).eq('service',fallback.service);
+    await EatimeScope.from('planning_creneaux').delete().eq('restaurant_id',fallback.restaurant_id).eq('salarie_id',fallback.salarie_id).eq('date',fallback.date).eq('service',fallback.service);
   }
 }
 async function undo(){
@@ -420,7 +421,7 @@ async function redo(){
 // (kick-chain) et la purge de semaine passent par ici → même comportement + undo/redo cohérent.
 // Met à jour S.creneaux ET S.allCreneauxWeek. recordAction route dans le _txn courant si ouvert.
 async function removeCreneau(row){
-  await sb.from('planning_creneaux').delete().eq('id',row.id);
+  await EatimeScope.from('planning_creneaux').delete().eq('id',row.id);
   S.creneaux=S.creneaux.filter(c=>c.id!==row.id);
   S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==row.id);
   recordAction(row,null);
@@ -593,6 +594,10 @@ async function loadProfileAndShow(){
   if(error||!profile){document.getElementById('pwerr').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('id,couleur_primaire,coef_charges,permissions,logo_url,nom').eq('id',profile.organization_id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
+  // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
+  // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if(!EatimeAccess.canAccessModule('planning', profile, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Planning');return;}
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
@@ -620,7 +625,7 @@ function wkRangeLabel(){const e=new Date(MONDAY);e.setDate(e.getDate()+6);return
 
 async function init(){
   MONDAY=getMonday(new Date());
-  const{data:restos}=await sb.from('restaurants').select('*').eq('actif',true).order('nom');
+  const{data:restos}=await EatimeScope.from('restaurants').select('*').eq('actif',true).order('nom');
   S.restos=restos||[];
   const gc=S.restos.find(r=>r.nom.toLowerCase().includes('grand cœur')||r.nom.toLowerCase().includes('grand coeur'));
   SNACK=gc||S.restos[0]||null;
@@ -632,29 +637,29 @@ async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
   const toIncl=fmtDate(new Date(MONDAY.getTime()+7*86400000)); // lundi suivant (pour la règle « veille » du dimanche)
   const[s,ro,d,cr,crAll,eff,reg,orr,alt,disc,ct,der]=await Promise.all([
-    sb.from('salaries').select('*').order('nom'),
-    sb.from('salarie_roles').select('*'),
-    sb.from('salarie_dispos').select('*'),
-    sb.from('planning_creneaux').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to),
-    sb.from('planning_creneaux').select('*').gte('date',from).lt('date',to),
-    sb.from('planning_effectifs').select('*'),
+    EatimeScope.from('salaries').select('*').order('nom'),
+    EatimeScope.from('salarie_roles').select('*'),
+    EatimeScope.from('salarie_dispos').select('*'),
+    EatimeScope.from('planning_creneaux').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to),
+    EatimeScope.from('planning_creneaux').select('*').gte('date',from).lt('date',to),
+    EatimeScope.from('planning_effectifs').select('*'),
     // Réglages : valeur par DÉFAUT de l'organisation (restaurant_id NULL) + EXCEPTIONS du restaurant
     // affiché. Le cloisonnement par organisation est assuré par la RLS (v6.33) ; ce filtre-ci évite
     // simplement de rapatrier les exceptions des AUTRES restaurants, qui ne s'appliquent pas ici.
-    sb.from('planning_regles').select('*').or(`restaurant_id.is.null,restaurant_id.eq.${SNACK.id}`),
-    sb.from('org_roles').select('*').eq('actif',true).order('ordre'),
-    sb.from('alternance_jours').select('salarie_id,date,type').gte('date',from).lte('date',toIncl),
+    EatimeScope.from('planning_regles').select('*').or(`restaurant_id.is.null,restaurant_id.eq.${SNACK.id}`),
+    EatimeScope.from('org_roles').select('*').eq('actif',true).order('ordre'),
+    EatimeScope.from('alternance_jours').select('salarie_id,date,type').gte('date',from).lte('date',toIncl),
     // Mises à pied (disciplinary_actions) chevauchant la semaine → jours où le salarié est suspendu,
     // donc légitimement absent (utilisé pour ne pas l'alerter « sous son minimum »). select tolérant :
     // si la table/colonne n'est pas lisible (RLS), on retombe sur [] sans casser le chargement.
-    sb.from('disciplinary_actions').select('salarie_id,mise_a_pied_debut,mise_a_pied_fin').not('mise_a_pied_debut','is',null).lte('mise_a_pied_debut',fmtDate(new Date(MONDAY.getTime()+6*86400000))).gte('mise_a_pied_fin',from),
+    EatimeScope.from('disciplinary_actions').select('salarie_id,mise_a_pied_debut,mise_a_pied_fin').not('mise_a_pied_debut','is',null).lte('mise_a_pied_debut',fmtDate(new Date(MONDAY.getTime()+6*86400000))).gte('mise_a_pied_fin',from),
     // Contraintes individuelles (pas_apres, pas_avant, pas_de_coupure, max_soirs_semaine, indispo_jour,
     // jours_off_consecutifs, autre) : appliquées dans checkPlacement (auto-fill + saisie manuelle).
-    sb.from('salarie_contraintes').select('*'),
+    EatimeScope.from('salarie_contraintes').select('*'),
     // Dérogations de la semaine (créneaux forcés outre une règle) → section dédiée du rapport d'analyse.
     // salarie_id non nul : les lignes à salarie_id null sont les journalisations de « réglage sous seuil
     // légal » (logLegalOverride), pas des créneaux. select tolérant : RLS refusée → [] sans casser la page.
-    sb.from('planning_derogations').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to).not('salarie_id','is',null)
+    EatimeScope.from('planning_derogations').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to).not('salarie_id','is',null)
   ]);
   S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];S.derogations=der.data||[];
   S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
@@ -1070,7 +1075,7 @@ async function saveCell(sid,date,svc,which,el){
     el.dataset.saved=v;
     setSS('busy','Enregistrement…');
     if(cr.id){
-      const{error}=await sb.from('planning_creneaux').delete().eq('id',cr.id);
+      const{error}=await EatimeScope.from('planning_creneaux').delete().eq('id',cr.id);
       if(error){setSS('err','Erreur: '+error.message);return;}
     }
     S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));
@@ -1106,7 +1111,7 @@ async function saveCell(sid,date,svc,which,el){
   setSS('busy','Enregistrement…');
   // upsert
   const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin};
-  const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+  const{data,error}=await EatimeScope.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
   if(error){setSS('err','Erreur: '+error.message);return;}
   S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));S.creneaux.push(data);
   S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc && c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
@@ -1124,7 +1129,7 @@ async function saveCell(sid,date,svc,which,el){
 // WITH CHECK). Best-effort : un échec de log ne bloque jamais l'enregistrement du créneau.
 async function logDerogation(sid,date,svc,viol,motif){
   try{
-    await sb.from('planning_derogations').insert({restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,regle_cle:viol.cle,regle_label:viol.label,motif,forced_by:ME&&ME.id});
+    await EatimeScope.from('planning_derogations').insert({restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,regle_cle:viol.cle,regle_label:viol.label,motif,forced_by:ME&&ME.id});
   }catch(e){ console.warn('[planning] journalisation dérogation échouée', e); }
 }
 
@@ -1216,18 +1221,18 @@ async function submitAbsence(sid){
   const btn=document.getElementById('abs_save'); if(btn){ btn.disabled=true; }
   err.textContent='';
   // Créneaux déjà planifiés sur la période (tous restos) → proposer de les supprimer
-  const{data:existing,error:exErr}=await sb.from('planning_creneaux').select('id,date').eq('salarie_id',sid).gte('date',debut).lte('date',fin);
+  const{data:existing,error:exErr}=await EatimeScope.from('planning_creneaux').select('id,date').eq('salarie_id',sid).gte('date',debut).lte('date',fin);
   if(exErr){ err.textContent='Erreur: '+exErr.message; if(btn)btn.disabled=false; return; }
   if(existing && existing.length){
     if(confirm(`⚠ ${existing.length} créneau(x) déjà planifié(s) pour ce salarié sur la période.\n\nOK = les supprimer et marquer l'absence.\nAnnuler = garder les créneaux (ils apparaîtront en conflit avec l'absence).`)){
-      const{error:delErr}=await sb.from('planning_creneaux').delete().eq('salarie_id',sid).gte('date',debut).lte('date',fin);
+      const{error:delErr}=await EatimeScope.from('planning_creneaux').delete().eq('salarie_id',sid).gte('date',debut).lte('date',fin);
       if(delErr){ err.textContent='Suppression impossible: '+delErr.message; if(btn)btn.disabled=false; return; }
     }
   }
   // Une ligne d'indispo validée par jour (checkPlacement bloque déjà sur ce mécanisme — pas de duplication)
   const motif=type+(comment?(' — '+comment):'');
   const rows=days.map(day=>({salarie_id:sid, type:'ponctuelle', statut:'indispo', statut_demande:'validee', date_specifique:day, motif, decided_at:new Date().toISOString()}));
-  const{error:insErr}=await sb.from('salarie_dispos').insert(rows);
+  const{error:insErr}=await EatimeScope.from('salarie_dispos').insert(rows);
   if(insErr){ err.textContent='Erreur: '+insErr.message; if(btn)btn.disabled=false; return; }
   document.getElementById('pdfModal').innerHTML='';
   setSS('ok',`✓ Absence enregistrée (${days.length} jour${days.length>1?'s':''})`);
@@ -1774,7 +1779,7 @@ async function assignPosteCell(date,svc,role,deb,fin,newSid,oldCreneauId){
   if(oldCreneauId){
     const oldCr=S.creneaux.find(c=>c.id===oldCreneauId);
     if(oldCr && (!newSid || newSid !== oldCr.salarie_id)){
-      await sb.from('planning_creneaux').delete().eq('id',oldCreneauId);
+      await EatimeScope.from('planning_creneaux').delete().eq('id',oldCreneauId);
       S.creneaux=S.creneaux.filter(c=>c.id!==oldCreneauId);
       S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==oldCreneauId);
       if(_txn)_txn.push({before:oldCr,after:null});
@@ -1783,7 +1788,7 @@ async function assignPosteCell(date,svc,role,deb,fin,newSid,oldCreneauId){
   // 2) Si nouveau salarié sélectionné → upsert
   if(newSid){
     const payload={restaurant_id:SNACK.id,salarie_id:newSid,role,date,service:svc,heure_debut:deb,heure_fin:fin};
-    const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+    const{data,error}=await EatimeScope.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
     if(error){setSS('err','Erreur: '+error.message);endTxn();return;}
     S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===newSid&&c.date===date&&c.service===svc));S.creneaux.push(data);
     S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!(c.salarie_id===newSid&&c.date===date&&c.service===svc&&c.restaurant_id===SNACK.id));S.allCreneauxWeek.push(data);
@@ -1901,7 +1906,7 @@ async function onRegleValue(el, cle){
 }
 // Traçabilité : qui a réglé sous le seuil légal et quand (réutilise planning_derogations, salarie_id null).
 async function logLegalOverride(r,val,L){
-  try{ await sb.from('planning_derogations').insert({restaurant_id:SNACK.id, salarie_id:null, service:null, date:fmtDate(new Date()), regle_cle:r.cle, regle_label:`Réglage sous seuil légal : ${L.label}`, motif:`Confirmé à ${val}${L.unit} (seuil ${L.seuil}${L.unit}) — ${L.ref}`, forced_by:ME&&ME.id}); }
+  try{ await EatimeScope.from('planning_derogations').insert({restaurant_id:SNACK.id, salarie_id:null, service:null, date:fmtDate(new Date()), regle_cle:r.cle, regle_label:`Réglage sous seuil légal : ${L.label}`, motif:`Confirmé à ${val}${L.unit} (seuil ${L.seuil}${L.unit}) — ${L.ref}`, forced_by:ME&&ME.id}); }
   catch(e){ console.warn('[planning] journalisation seuil légal échouée', e); }
 }
 // Encart « généré sous un seuil légal » pour le rapport d'auto-fill (discret mais présent).
@@ -2115,11 +2120,11 @@ async function saveEffField(inp){
   const col=f==='exp'?'nb_experimentes':'nb_cible';
   const existing=S.effectifs.find(e=>e.restaurant_id===SNACK.id&&e.jour_type===jt&&e.service===svc&&e.role===role);
   if(existing){
-    const{error}=await sb.from('planning_effectifs').update({[col]:v}).eq('id',existing.id);
+    const{error}=await EatimeScope.from('planning_effectifs').update({[col]:v}).eq('id',existing.id);
     if(error){alert('Erreur: '+error.message);return;} existing[col]=v;
   } else {
     const payload={restaurant_id:SNACK.id,jour_type:jt,service:svc,role,nb_cible:0,nb_experimentes:0}; payload[col]=v;
-    const{data,error}=await sb.from('planning_effectifs').insert(payload).select().single();
+    const{data,error}=await EatimeScope.from('planning_effectifs').insert(payload).select().single();
     if(error){alert('Erreur: '+error.message);return;} S.effectifs.push(data);
   }
   // Afficher/masquer le bouton ⏱ (éditeur de postes) selon le requis, sans rouvrir le modal
@@ -2139,10 +2144,10 @@ async function saveEffectif(inp){
   const jt=inp.dataset.jt,svc=inp.dataset.svc,role=inp.dataset.role,nb=parseInt(inp.value)||0;
   const existing=S.effectifs.find(e=>e.restaurant_id===SNACK.id&&e.jour_type===jt&&e.service===svc&&e.role===role);
   if(existing){
-    const{error}=await sb.from('planning_effectifs').update({nb_cible:nb}).eq('id',existing.id);
+    const{error}=await EatimeScope.from('planning_effectifs').update({nb_cible:nb}).eq('id',existing.id);
     if(error){alert('Erreur: '+error.message);return;}existing.nb_cible=nb;
   } else {
-    const{data,error}=await sb.from('planning_effectifs').insert({restaurant_id:SNACK.id,jour_type:jt,service:svc,role,nb_cible:nb}).select().single();
+    const{data,error}=await EatimeScope.from('planning_effectifs').insert({restaurant_id:SNACK.id,jour_type:jt,service:svc,role,nb_cible:nb}).select().single();
     if(error){alert('Erreur: '+error.message);return;}S.effectifs.push(data);
   }
   setSS('ok','Effectif sauvegardé');
@@ -2153,11 +2158,11 @@ async function saveEffectif(inp){
 async function toggleSureffRule(on){
   const existing=_regleResolue('sureffectif_minimum');
   if(existing){
-    const{error}=await sb.from('planning_regles').update({active:on}).eq('id',existing.id);
+    const{error}=await EatimeScope.from('planning_regles').update({active:on}).eq('id',existing.id);
     if(error){setSS('err','Erreur: '+error.message);return;}
     existing.active=on;
   } else {
-    const{data,error}=await sb.from('planning_regles').insert({organization_id:_orgId(),restaurant_id:SNACK.id,cle:'sureffectif_minimum',libelle:'Sureffectif auto (min. d\'heures)',active:on,valeur:'2',type_regle:'souple'}).select().single();
+    const{data,error}=await EatimeScope.from('planning_regles').insert({organization_id:_orgId(),restaurant_id:SNACK.id,cle:'sureffectif_minimum',libelle:'Sureffectif auto (min. d\'heures)',active:on,valeur:'2',type_regle:'souple'}).select().single();
     if(error){setSS('err','Erreur: '+error.message);return;}
     if(data)S.regles.push(data);
   }
@@ -2169,11 +2174,11 @@ async function toggleSureffRule(on){
 async function toggleInterSnackRule(on){
   const existing=_regleResolue('transfert_inter_snack');
   if(existing){
-    const{error}=await sb.from('planning_regles').update({active:on}).eq('id',existing.id);
+    const{error}=await EatimeScope.from('planning_regles').update({active:on}).eq('id',existing.id);
     if(error){setSS('err','Erreur: '+error.message);return;}
     existing.active=on;
   } else {
-    const{data,error}=await sb.from('planning_regles').insert({organization_id:_orgId(),restaurant_id:SNACK.id,cle:'transfert_inter_snack',libelle:'Transfert inter-snack (min. d\'heures)',active:on,valeur:'1',type_regle:'souple'}).select().single();
+    const{data,error}=await EatimeScope.from('planning_regles').insert({organization_id:_orgId(),restaurant_id:SNACK.id,cle:'transfert_inter_snack',libelle:'Transfert inter-snack (min. d\'heures)',active:on,valeur:'1',type_regle:'souple'}).select().single();
     if(error){setSS('err','Erreur: '+error.message);return;}
     if(data)S.regles.push(data);
   }
@@ -2190,7 +2195,7 @@ async function saveRegle(cle,field,val){
   // valeur par défaut de l'organisation) — pas la première venue.
   const r=_regleResolue(cle);
   if(r&&r.id){
-    const{error}=await sb.from('planning_regles').update({[field]:val}).eq('id',r.id);
+    const{error}=await EatimeScope.from('planning_regles').update({[field]:val}).eq('id',r.id);
     if(error){alert('Erreur: '+error.message);return;}
     r[field]=val;
   } else {
@@ -2201,7 +2206,7 @@ async function saveRegle(cle,field,val){
     const base=_virtualRegle(cle)||{active:true,valeur:''};
     const payload={cle, organization_id:_orgId(), restaurant_id:null, libelle:(RULE_META[cle]||{}).lbl||cle,
                    active:base.active, valeur:base.valeur, [field]:val};
-    const{data,error}=await sb.from('planning_regles').insert(payload).select().single();
+    const{data,error}=await EatimeScope.from('planning_regles').insert(payload).select().single();
     if(error){alert('Erreur: '+error.message);return;}
     if(data){ S.regles=(S.regles||[]).filter(x=>x.cle!==cle); S.regles.push(data); }
   }
@@ -2345,11 +2350,11 @@ async function saveShifts(){
     const existing=S.effectifs.find(x=>x.restaurant_id===SNACK.id&&x.jour_type===targetJt&&x.service===svc&&x.role===role);
     const payload={restaurant_id:SNACK.id,jour_type:targetJt,service:svc,role,nb_cible:shifts.length,vagues:shifts};
     if(existing){
-      const{error}=await sb.from('planning_effectifs').update(payload).eq('id',existing.id);
+      const{error}=await EatimeScope.from('planning_effectifs').update(payload).eq('id',existing.id);
       if(error){alert('Erreur sur '+targetJt+': '+error.message);continue;}
       Object.assign(existing,payload);savedCount++;
     } else {
-      const{data,error}=await sb.from('planning_effectifs').insert(payload).select().single();
+      const{data,error}=await EatimeScope.from('planning_effectifs').insert(payload).select().single();
       if(error){alert('Erreur sur '+targetJt+': '+error.message);continue;}
       S.effectifs.push(data);savedCount++;
     }
@@ -2368,7 +2373,7 @@ function updateDemandesBadge(){
 }
 async function openDemandes(){
   // Reload dispos pour avoir les dernières demandes
-  const{data}=await sb.from('salarie_dispos').select('*');
+  const{data}=await EatimeScope.from('salarie_dispos').select('*');
   S.dispos=data||[];updateDemandesBadge();
   const JOURS_LBL=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
   const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
@@ -2402,7 +2407,7 @@ async function openDemandes(){
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:640px">${html}</div></div>`;
 }
 async function decideDispo(id,decision){
-  const{error}=await sb.from('salarie_dispos').update({statut_demande:decision,decided_at:new Date().toISOString()}).eq('id',id);
+  const{error}=await EatimeScope.from('salarie_dispos').update({statut_demande:decision,decided_at:new Date().toISOString()}).eq('id',id);
   if(error){alert('Erreur: '+error.message);return;}
   const d=S.dispos.find(x=>x.id===id);
   if(d){d.statut_demande=decision;d.decided_at=new Date().toISOString();}
@@ -2466,7 +2471,7 @@ function hasPonctuelleAbsence(sid,date){
 async function openReport(){
   setSS('busy','Chargement pointages…');
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
-  const{data:pts,error}=await sb.from('pointages').select('*').gte('ts',from+'T00:00:00').lt('ts',to+'T00:00:00').order('ts');
+  const{data:pts,error}=await EatimeScope.from('pointages').select('*').gte('ts',from+'T00:00:00').lt('ts',to+'T00:00:00').order('ts');
   if(error){setSS('err','Erreur: '+error.message);return;}
   setSS('','');
   // Index pointages par (sid|date)
@@ -2566,7 +2571,7 @@ async function openReport(){
 async function openPointageCorrection(sid,date){
   setSS('busy','Chargement…');
   const from=date+'T00:00:00', to=fmtDate(new Date(new Date(date+'T00:00:00').getTime()+86400000))+'T10:00:00';
-  const{data:pts,error}=await sb.from('pointages').select('*').eq('salarie_id',sid).gte('ts',from).lt('ts',to).order('ts');
+  const{data:pts,error}=await EatimeScope.from('pointages').select('*').eq('salarie_id',sid).gte('ts',from).lt('ts',to).order('ts');
   if(error){setSS('err','Erreur: '+error.message);return;}
   setSS('','');
   const s=S.salaries.find(x=>x.id===sid);
@@ -2612,10 +2617,10 @@ async function savePointageTime(id,sid,date){
   if(!motif){alert('Motif requis pour toute correction (traçabilité).');return;}
   const[h,m]=inp.value.split(':');
   // On garde la date d'origine du pointage, on change juste l'heure saisie.
-  const{data:orig}=await sb.from('pointages').select('ts').eq('id',id).maybeSingle();
+  const{data:orig}=await EatimeScope.from('pointages').select('ts').eq('id',id).maybeSingle();
   if(!orig){alert('Pointage introuvable');return;}
   const d=new Date(orig.ts);d.setHours(+h,+m,0,0);
-  const{error}=await sb.from('pointages').update({ts:d.toISOString(),corrige_par:ME.id,corrige_le:new Date().toISOString(),motif_correction:motif}).eq('id',id);
+  const{error}=await EatimeScope.from('pointages').update({ts:d.toISOString(),corrige_par:ME.id,corrige_le:new Date().toISOString(),motif_correction:motif}).eq('id',id);
   if(error){alert('Erreur: '+error.message);return;}
   openPointageCorrection(sid,date);
 }
@@ -2623,7 +2628,7 @@ async function deletePointageRow(id,sid,date){
   const motif=prompt('Motif de la suppression (obligatoire) :');
   if(!motif){alert('Motif requis pour toute correction (traçabilité).');return;}
   if(!confirm('Supprimer ce pointage ?'))return;
-  const{error}=await sb.from('pointages').delete().eq('id',id);
+  const{error}=await EatimeScope.from('pointages').delete().eq('id',id);
   if(error){alert('Erreur: '+error.message);return;}
   openPointageCorrection(sid,date);
 }
@@ -2634,7 +2639,7 @@ async function addPointageManual(sid,date){
   const motif=prompt('Motif de l\'ajout manuel (obligatoire) :');
   if(!motif){alert('Motif requis pour toute correction (traçabilité).');return;}
   const restaurant_id=SNACK.id;
-  const{error}=await sb.from('pointages').insert({salarie_id:sid,restaurant_id,type,ts:new Date(d2+'T'+t+':00').toISOString(),source:'admin_correction',corrige_par:ME.id,corrige_le:new Date().toISOString(),motif_correction:motif});
+  const{error}=await EatimeScope.from('pointages').insert({salarie_id:sid,restaurant_id,type,ts:new Date(d2+'T'+t+':00').toISOString(),source:'admin_correction',corrige_par:ME.id,corrige_le:new Date().toISOString(),motif_correction:motif});
   if(error){alert('Erreur: '+error.message);return;}
   openPointageCorrection(sid,date);
 }
@@ -3458,7 +3463,7 @@ async function openAnalyse(){
   let prevCost=null;
   try{
     const pFrom=fmtDate(new Date(MONDAY.getTime()-7*86400000)), pTo=fmtDate(MONDAY);
-    const {data}=await sb.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin')
+    const {data}=await EatimeScope.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin')
       .eq('restaurant_id',SNACK.id).gte('date',pFrom).lt('date',pTo);
     if(data) prevCost=costOfCreneaux(data).brut;
   }catch(e){ console.warn('[planning] coût semaine précédente indisponible', e); }
@@ -3893,7 +3898,7 @@ async function autoFillCore(dayIndices, opt={}){
   const orphans=S.creneaux.filter(c=>purgeDates.includes(c.date) && !onRoster(salById(c.salarie_id)));
   if(orphans.length){
     const oids=orphans.map(c=>c.id).filter(Boolean);
-    if(oids.length) await sb.from('planning_creneaux').delete().in('id',oids);
+    if(oids.length) await EatimeScope.from('planning_creneaux').delete().in('id',oids);
     const odel=new Set(oids);
     S.creneaux=S.creneaux.filter(c=>!odel.has(c.id));
     S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>!odel.has(c.id));
@@ -3905,7 +3910,7 @@ async function autoFillCore(dayIndices, opt={}){
   const dayIdxOfDate=d=>(new Date(d).getDay()+6)%7;
   const placeCre=async(sid,sh,date,svc,extra)=>{
     const payload={restaurant_id:SNACK.id,salarie_id:sid,role:sh.role,date,service:svc,heure_debut:sh.deb,heure_fin:sh.fin,...(extra||{})};
-    const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+    const{data,error}=await EatimeScope.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
     if(error)return null; S.creneaux.push(data); S.allCreneauxWeek.push(data); if(_txn)_txn.push({before:null,after:data}); return data;
   };
   // Mise à jour des horaires d'un créneau EXISTANT (phase 3 rallonge) : un seul write vers la valeur
@@ -3913,7 +3918,7 @@ async function autoFillCore(dayIndices, opt={}){
   // distincts) + trace undo {before,after} (applyAction ré-upsert before à l'annulation → restaure).
   const updateCreTimes=async(row,newDeb,newFin)=>{
     const before={...row};
-    const{data,error}=await sb.from('planning_creneaux').update({heure_debut:newDeb,heure_fin:newFin}).eq('id',row.id).select().single();
+    const{data,error}=await EatimeScope.from('planning_creneaux').update({heure_debut:newDeb,heure_fin:newFin}).eq('id',row.id).select().single();
     if(error||!data) return null;
     [S.creneaux,S.allCreneauxWeek].forEach(arr=>{const it=arr.find(c=>c.id===row.id); if(it){it.heure_debut=data.heure_debut;it.heure_fin=data.heure_fin;}});
     if(_txn)_txn.push({before,after:{...data}});
@@ -4416,14 +4421,14 @@ async function deleteSelectedCells(minR,maxR,minC,maxC){
     const newFin=finSel?null:cr.heure_fin;
     if(!newDeb && !newFin){
       // Suppression complète
-      await sb.from('planning_creneaux').delete().eq('id',cr.id);
+      await EatimeScope.from('planning_creneaux').delete().eq('id',cr.id);
       S.creneaux=S.creneaux.filter(c=>c.id!==cr.id);
       S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==cr.id);
       if(_txn)_txn.push({before,after:null});
     } else {
       // Mise à jour partielle
       const payload={...cr,heure_debut:newDeb,heure_fin:newFin};
-      const{data,error}=await sb.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
+      const{data,error}=await EatimeScope.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
       if(!error){
         S.creneaux=S.creneaux.filter(c=>c.id!==cr.id);S.creneaux.push(data);
         S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==cr.id);S.allCreneauxWeek.push(data);
@@ -4486,7 +4491,7 @@ async function runPdf(){
   closePdfModal();setSS('busy','Génération PDF…');
 
   const from=fmtDate(MONDAY), to=fmtDate(new Date(MONDAY.getTime()+7*86400000));
-  const{data:allCr}=await sb.from('planning_creneaux').select('*').in('restaurant_id',ids).gte('date',from).lt('date',to);
+  const{data:allCr}=await EatimeScope.from('planning_creneaux').select('*').in('restaurant_id',ids).gte('date',from).lt('date',to);
   const creneauxByResto={};(allCr||[]).forEach(c=>{(creneauxByResto[c.restaurant_id]=creneauxByResto[c.restaurant_id]||[]).push(c);});
 
   // Logo de l'org en dataURL (graceful : un logo distant/CORS qui échoue → on continue sans logo).
@@ -4639,9 +4644,9 @@ async function doImport(){
     let snackId=null,multi=false;
     if(d.home==='MULTI')multi=true; else {const key=(HOME_TO_RESTO[d.home]||d.home||'').toLowerCase();const r=S.restos.find(x=>x.nom.toLowerCase().includes(key));if(r)snackId=r.id;}
     const pin=String(Math.floor(Math.random()*10000)).padStart(4,'0');
-    const{data,error}=await sb.from('salaries').insert({nom:name,snack_origine_id:snackId,est_multi:multi,actif:true,pin_badgeuse:pin}).select().single();
+    const{data,error}=await EatimeScope.from('salaries').insert({nom:name,snack_origine_id:snackId,est_multi:multi,actif:true,pin_badgeuse:pin}).select().single();
     if(error){console.warn('Ajout '+name+': '+error.message);continue;}
-    await sb.from('salarie_roles').insert({salarie_id:data.id,role:d.role||'cuisine'});
+    await EatimeScope.from('salarie_roles').insert({salarie_id:data.id,role:d.role||'cuisine'});
     S.salaries.push(data);S.roles.push({salarie_id:data.id,role:d.role||'cuisine'});
     nameMap.set(name.toLowerCase(),data.id);created++;
   }
@@ -4654,7 +4659,7 @@ async function doImport(){
       const date=fmtDate(dateOfDay(+di));
       for(const svc of ['midi','soir']){
         const s=slots[svc];if(!s.deb&&!s.fin)continue;
-        const{error}=await sb.from('planning_creneaux').upsert({restaurant_id:row.resto.id,salarie_id:sid,role:row.role,date,service:svc,heure_debut:s.deb,heure_fin:s.fin},{onConflict:'restaurant_id,salarie_id,date,service'});
+        const{error}=await EatimeScope.from('planning_creneaux').upsert({restaurant_id:row.resto.id,salarie_id:sid,role:row.role,date,service:svc,heure_debut:s.deb,heure_fin:s.fin},{onConflict:'restaurant_id,salarie_id,date,service'});
         if(error){skipped++;}else added++;
       }
     }

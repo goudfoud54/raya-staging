@@ -7,6 +7,7 @@
 <title>Eatime360 — Finance</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="../utils.js?v=1.2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -164,6 +165,10 @@ async function loadProfileAndShow(){
   if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
+  // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
+  // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   ORG=org||{};
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if(!EatimeAccess.canAccessModule('finance', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Finance');return;}
@@ -179,9 +184,9 @@ sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();else d
 
 async function loadCommonData(){
   const[r,c,sa]=await Promise.all([
-    sb.from('restaurants').select('id,nom').eq('organization_id',ORG.id).order('nom'),
-    sb.from('fin_categories').select('*').eq('organization_id',ORG.id).eq('actif',true).order('type').order('ordre'),
-    sb.from('salaries').select('id,nom,prenom,taux_horaire_brut,coef_charges_perso').eq('organization_id',ORG.id).eq('actif',true),
+    EatimeScope.from('restaurants').select('id,nom').eq('organization_id',ORG.id).order('nom'),
+    EatimeScope.from('fin_categories').select('*').eq('organization_id',ORG.id).eq('actif',true).order('type').order('ordre'),
+    EatimeScope.from('salaries').select('id,nom,prenom,taux_horaire_brut,coef_charges_perso').eq('organization_id',ORG.id).eq('actif',true),
   ]);
   S.snacks=r.data||[];S.categories=c.data||[];S.salaries=sa.data||[];
   const sel=document.getElementById('snackSelect');
@@ -223,9 +228,9 @@ function render(){
 async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
   const r=periodRange();
-  let qCa=sb.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
-  let qDep=sb.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
-  let qEnc=sb.from('fin_encaissements').select('*').gte('date',r.from).lte('date',r.to);
+  let qCa=EatimeScope.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
+  let qDep=EatimeScope.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
+  let qEnc=EatimeScope.from('fin_encaissements').select('*').gte('date',r.from).lte('date',r.to);
   if(SNACK){qCa=qCa.eq('restaurant_id',SNACK.id);qDep=qDep.eq('restaurant_id',SNACK.id);qEnc=qEnc.eq('restaurant_id',SNACK.id);}
   const[ca,dep,enc]=await Promise.all([qCa,qDep,qEnc]);
   const CA=ca.data||[],DEP=dep.data||[],ENC=enc.data||[];
@@ -281,7 +286,7 @@ async function renderCA(el){
     <button class="btn ghost sm" onclick="openCABulk()">+ Saisie rapide multi-jours</button>
   </div><div id="caList">Chargement…</div>`;
   const r=periodRange();
-  let q=sb.from('fin_ca_journalier').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).order('service');
+  let q=EatimeScope.from('fin_ca_journalier').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).order('service');
   if(SNACK) q=q.eq('restaurant_id',SNACK.id);
   const{data}=await q;
   const list=data||[];
@@ -321,10 +326,10 @@ async function saveCA(){
   if(!val('ca_date')||!val('ca_sn')){toast('Date + snack requis');return;}
   const payload={organization_id:ORG.id,restaurant_id:val('ca_sn'),date:val('ca_date'),service:val('ca_sv'),ca_ttc:num('ca_ttc'),ca_ht:num('ca_ht'),nb_couverts:num('ca_couv'),ticket_moyen:num('ca_tm'),notes:val('ca_notes')||null,saisi_par:ME.id};
   const id=val('ca_id');
-  const{error}=id?await sb.from('fin_ca_journalier').update(payload).eq('id',id):await sb.from('fin_ca_journalier').upsert(payload,{onConflict:'organization_id,restaurant_id,date,service'});
+  const{error}=id?await EatimeScope.from('fin_ca_journalier').update(payload).eq('id',id):await EatimeScope.from('fin_ca_journalier').upsert(payload,{onConflict:'organization_id,restaurant_id,date,service'});
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderCA(document.getElementById('content'));
 }
-async function delCA(id){if(!confirm('Supprimer cette saisie ?'))return;const{error}=await sb.from('fin_ca_journalier').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderCA(document.getElementById('content'));}
+async function delCA(id){if(!confirm('Supprimer cette saisie ?'))return;const{error}=await EatimeScope.from('fin_ca_journalier').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderCA(document.getElementById('content'));}
 function openCABulk(){
   const today=new Date().toISOString().slice(0,10);
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:480px">
@@ -351,7 +356,7 @@ async function saveBulk(){
   const sn=val('cab_sn');
   const rows=[];inputs.forEach(i=>{const v=parseFloat(i.value);if(!isNaN(v))rows.push({organization_id:ORG.id,restaurant_id:sn,date:i.dataset.date,service:'total',ca_ttc:v,ca_ht:+(v/1.10).toFixed(2),saisi_par:ME.id});});
   if(!rows.length){toast('Rien à enregistrer');return;}
-  const{error}=await sb.from('fin_ca_journalier').upsert(rows,{onConflict:'organization_id,restaurant_id,date,service'});
+  const{error}=await EatimeScope.from('fin_ca_journalier').upsert(rows,{onConflict:'organization_id,restaurant_id,date,service'});
   if(error){toast(error.message);return;}toast(rows.length+' jours enregistrés ✓');closeModal();renderCA(document.getElementById('content'));
 }
 
@@ -366,7 +371,7 @@ async function renderDepenses(el){
     <button class="btn" onclick="openDep()">+ Nouvelle dépense</button>
   </div><div id="depList">Chargement…</div>`;
   const r=periodRange();
-  let q=sb.from('fin_depenses').select('*,fin_categories(nom,type),restaurants(nom)').gte('date_facture',r.from).lte('date_facture',r.to).order('date_facture',{ascending:false}).limit(1000);
+  let q=EatimeScope.from('fin_depenses').select('*,fin_categories(nom,type),restaurants(nom)').gte('date_facture',r.from).lte('date_facture',r.to).order('date_facture',{ascending:false}).limit(1000);
   if(SNACK) q=q.eq('restaurant_id',SNACK.id);
   if(val('filtStat')) q=q.eq('statut',val('filtStat'));
   if(val('filtCat')) q=q.eq('categorie_id',val('filtCat'));
@@ -421,14 +426,14 @@ async function saveDep(){
   if(!val('d_df')||!val('d_ttc')){toast('Date + TTC requis');return;}
   const payload={organization_id:ORG.id,restaurant_id:val('d_sn')||null,categorie_id:val('d_cat')||null,fournisseur:val('d_four')||null,num_facture:val('d_num')||null,date_facture:val('d_df'),date_echeance:val('d_de')||null,date_paiement:val('d_dp')||null,montant_ht:num('d_ht'),tva_pct:num('d_tva'),montant_ttc:num('d_ttc'),mode_paiement:val('d_mp')||null,statut:val('d_stat'),notes:val('d_notes')||null,saisi_par:ME.id};
   const id=val('d_id');
-  const{error}=id?await sb.from('fin_depenses').update(payload).eq('id',id):await sb.from('fin_depenses').insert(payload);
+  const{error}=id?await EatimeScope.from('fin_depenses').update(payload).eq('id',id):await EatimeScope.from('fin_depenses').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderDepenses(document.getElementById('content'));
 }
 async function markPaid(id){
-  const{error}=await sb.from('fin_depenses').update({statut:'paye',date_paiement:new Date().toISOString().slice(0,10)}).eq('id',id);
+  const{error}=await EatimeScope.from('fin_depenses').update({statut:'paye',date_paiement:new Date().toISOString().slice(0,10)}).eq('id',id);
   if(error){toast(error.message);return;}toast('Marqué payé ✓');renderDepenses(document.getElementById('content'));
 }
-async function delDep(id){if(!confirm('Supprimer cette dépense ?'))return;const{error}=await sb.from('fin_depenses').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderDepenses(document.getElementById('content'));}
+async function delDep(id){if(!confirm('Supprimer cette dépense ?'))return;const{error}=await EatimeScope.from('fin_depenses').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderDepenses(document.getElementById('content'));}
 
 // ─────── TRÉSORERIE ───────
 async function renderTreso(el){
@@ -438,8 +443,8 @@ async function renderTreso(el){
   </div>
   <div class="grid grid2"><div id="encList">Chargement…</div><div id="versList">Chargement…</div></div>`;
   const r=periodRange();
-  let qE=sb.from('fin_encaissements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
-  let qV=sb.from('fin_versements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
+  let qE=EatimeScope.from('fin_encaissements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
+  let qV=EatimeScope.from('fin_versements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
   if(SNACK){qE=qE.eq('restaurant_id',SNACK.id);qV=qV.eq('restaurant_id',SNACK.id);}
   const[e,v]=await Promise.all([qE,qV]);
   // Encaissements
@@ -480,10 +485,10 @@ function openEnc(){
 }
 async function saveEnc(){
   if(!val('e_sn')||!val('e_mt')){toast('Snack + montant requis');return;}
-  const{error}=await sb.from('fin_encaissements').insert({organization_id:ORG.id,restaurant_id:val('e_sn'),date:val('e_date'),mode:val('e_mode'),montant:num('e_mt'),notes:val('e_notes')||null,saisi_par:ME.id});
+  const{error}=await EatimeScope.from('fin_encaissements').insert({organization_id:ORG.id,restaurant_id:val('e_sn'),date:val('e_date'),mode:val('e_mode'),montant:num('e_mt'),notes:val('e_notes')||null,saisi_par:ME.id});
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderTreso(document.getElementById('content'));
 }
-async function delEnc(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('fin_encaissements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderTreso(document.getElementById('content'));}
+async function delEnc(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('fin_encaissements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderTreso(document.getElementById('content'));}
 function openVers(){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>Nouveau versement banque</h2>
@@ -502,18 +507,18 @@ function openVers(){
 }
 async function saveVers(){
   if(!val('v_mt')){toast('Montant requis');return;}
-  const{error}=await sb.from('fin_versements').insert({organization_id:ORG.id,restaurant_id:val('v_sn')||null,date:val('v_date'),banque:val('v_bk')||null,reference:val('v_ref')||null,montant:num('v_mt'),notes:val('v_notes')||null,saisi_par:ME.id});
+  const{error}=await EatimeScope.from('fin_versements').insert({organization_id:ORG.id,restaurant_id:val('v_sn')||null,date:val('v_date'),banque:val('v_bk')||null,reference:val('v_ref')||null,montant:num('v_mt'),notes:val('v_notes')||null,saisi_par:ME.id});
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderTreso(document.getElementById('content'));
 }
-async function delVers(id){if(!confirm('Supprimer ?'))return;const{error}=await sb.from('fin_versements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderTreso(document.getElementById('content'));}
+async function delVers(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('fin_versements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderTreso(document.getElementById('content'));}
 
 // ─────── MARGE & RATIOS ───────
 async function renderMarge(el){
   el.innerHTML='<div style="color:var(--muted)">Calcul en cours…</div>';
   const r=periodRange();
-  let qCa=sb.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
-  let qDep=sb.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
-  let qPl=sb.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin,date').gte('date',r.from).lte('date',r.to);
+  let qCa=EatimeScope.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
+  let qDep=EatimeScope.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
+  let qPl=EatimeScope.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin,date').gte('date',r.from).lte('date',r.to);
   if(SNACK){qCa=qCa.eq('restaurant_id',SNACK.id);qDep=qDep.eq('restaurant_id',SNACK.id);qPl=qPl.eq('restaurant_id',SNACK.id);}
   const[ca,dep,pl]=await Promise.all([qCa,qDep,qPl]);
   const CA=ca.data||[],DEP=dep.data||[],PL=pl.data||[];
@@ -596,19 +601,19 @@ async function saveCat(){
   if(!val('c_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('c_nom'),type:val('c_type'),actif:document.getElementById('c_actif').checked};
   const id=val('c_id');
-  const{error}=id?await sb.from('fin_categories').update(payload).eq('id',id):await sb.from('fin_categories').insert(payload);
+  const{error}=id?await EatimeScope.from('fin_categories').update(payload).eq('id',id):await EatimeScope.from('fin_categories').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderCategories(document.getElementById('content'));
 }
-async function delCat(id){if(!confirm('Supprimer cette catégorie ?'))return;const{error}=await sb.from('fin_categories').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderCategories(document.getElementById('content'));}
+async function delCat(id){if(!confirm('Supprimer cette catégorie ?'))return;const{error}=await EatimeScope.from('fin_categories').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderCategories(document.getElementById('content'));}
 
 // ─────── BANQUE (import + transactions + règles) ───────
 async function renderBanque(el){
   el.innerHTML='Chargement…';
   const r=periodRange();
   const[c,t,reg]=await Promise.all([
-    sb.from('fin_comptes_bancaires').select('*').eq('actif',true).order('nom'),
-    sb.from('fin_transactions_bancaires').select('*,fin_categories(nom)').gte('date_operation',r.from).lte('date_operation',r.to).order('date_operation',{ascending:false}).limit(1000),
-    sb.from('fin_regles_catego').select('*,fin_categories(nom)').eq('actif',true).order('priorite',{ascending:false}),
+    EatimeScope.from('fin_comptes_bancaires').select('*').eq('actif',true).order('nom'),
+    EatimeScope.from('fin_transactions_bancaires').select('*,fin_categories(nom)').gte('date_operation',r.from).lte('date_operation',r.to).order('date_operation',{ascending:false}).limit(1000),
+    EatimeScope.from('fin_regles_catego').select('*,fin_categories(nom)').eq('actif',true).order('priorite',{ascending:false}),
   ]);
   const COMPTES=c.data||[],TRX=t.data||[],REGLES=reg.data||[];
   // Comptes summary
@@ -656,9 +661,9 @@ async function renderBanque(el){
   document.getElementById('bk_trx_list').innerHTML=html;
 }
 async function autoCategorize(){
-  const{data:regles}=await sb.from('fin_regles_catego').select('id,pattern,categorie_id,priorite,applies_to').eq('organization_id',ORG.id).eq('actif',true).order('priorite',{ascending:false});
+  const{data:regles}=await EatimeScope.from('fin_regles_catego').select('id,pattern,categorie_id,priorite,applies_to').eq('organization_id',ORG.id).eq('actif',true).order('priorite',{ascending:false});
   if(!regles||!regles.length){toast('Aucune règle active.');return;}
-  const{data:trx}=await sb.from('fin_transactions_bancaires').select('id,libelle,debit,credit').eq('organization_id',ORG.id).eq('statut','non_categorisee');
+  const{data:trx}=await EatimeScope.from('fin_transactions_bancaires').select('id,libelle,debit,credit').eq('organization_id',ORG.id).eq('statut','non_categorisee');
   if(!trx||!trx.length){toast('Aucune transaction non catégorisée');return;}
   toast(`Analyse de ${trx.length} transactions…`);
   let nbCat=0,nbSkip=0;
@@ -676,26 +681,26 @@ async function autoCategorize(){
   if(nbCat===0){toast('Aucune correspondance trouvée');return;}
   const byCat={};Object.entries(updates).forEach(([id,catId])=>{(byCat[catId]=byCat[catId]||[]).push(id);});
   for(const[catId,ids]of Object.entries(byCat)){
-    const{error}=await sb.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).in('id',ids);if(error){toast('Erreur : '+error.message);return;}
+    const{error}=await EatimeScope.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).in('id',ids);if(error){toast('Erreur : '+error.message);return;}
   }
   toast(`✨ ${nbCat} transactions catégorisées · ${nbSkip} sans match`);
   renderBanque(document.getElementById('content'));
 }
 async function categoriserTrx(id,catId){
   if(!catId)return;
-  const{error}=await sb.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).eq('id',id);
+  const{error}=await EatimeScope.from('fin_transactions_bancaires').update({categorie_id:catId,statut:'categorisee'}).eq('id',id);
   if(error){toast(error.message);return;}
   // Proposer création règle
   const trx=document.querySelector(`button[onclick*="${id}"]`)?.closest('tr');
   const lib=trx?.children[2]?.textContent.trim();
   if(lib && confirm(`Créer une règle pour catégoriser auto les futures transactions contenant "${lib.slice(0,40)}…" ?`)){
     const pattern=prompt('Pattern (le texte à détecter dans le libellé) :',lib.slice(0,30));
-    if(pattern){const{error:eR}=await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pattern.toLowerCase(),categorie_id:catId,priorite:1});toast(eR?('Règle non créée : '+eR.message):'Règle créée ✓');}
+    if(pattern){const{error:eR}=await EatimeScope.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pattern.toLowerCase(),categorie_id:catId,priorite:1});toast(eR?('Règle non créée : '+eR.message):'Règle créée ✓');}
   }
   toast('Catégorisé ✓');renderBanque(document.getElementById('content'));
 }
-async function ignoreTrx(id){const{error}=await sb.from('fin_transactions_bancaires').update({statut:'ignoree'}).eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderBanque(document.getElementById('content'));}
-async function delTrx(id){if(!confirm('Supprimer cette transaction ?'))return;const{error}=await sb.from('fin_transactions_bancaires').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderBanque(document.getElementById('content'));}
+async function ignoreTrx(id){const{error}=await EatimeScope.from('fin_transactions_bancaires').update({statut:'ignoree'}).eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderBanque(document.getElementById('content'));}
+async function delTrx(id){if(!confirm('Supprimer cette transaction ?'))return;const{error}=await EatimeScope.from('fin_transactions_bancaires').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderBanque(document.getElementById('content'));}
 
 function openCompte(){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
@@ -714,7 +719,7 @@ function openCompte(){
 }
 async function saveCompte(){
   if(!val('co_nom')){toast('Nom requis');return;}
-  const{error}=await sb.from('fin_comptes_bancaires').insert({organization_id:ORG.id,nom:val('co_nom'),banque:val('co_bk')||null,iban:val('co_iban')||null,solde_initial:num('co_si')||0,date_solde_initial:val('co_dsi')||null});
+  const{error}=await EatimeScope.from('fin_comptes_bancaires').insert({organization_id:ORG.id,nom:val('co_nom'),banque:val('co_bk')||null,iban:val('co_iban')||null,solde_initial:num('co_si')||0,date_solde_initial:val('co_dsi')||null});
   if(error){toast(error.message);return;}toast('Compte créé ✓');closeModal();renderBanque(document.getElementById('content'));
 }
 
@@ -764,7 +769,7 @@ function openImport(){
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" id="imp_btn" onclick="doImport()" disabled style="opacity:.4">Importer</button></div>
   </div></div>`;
   // Charger comptes
-  sb.from('fin_comptes_bancaires').select('id,nom').eq('actif',true).order('nom').then(({data})=>{
+  EatimeScope.from('fin_comptes_bancaires').select('id,nom').eq('actif',true).order('nom').then(({data})=>{
     document.getElementById('imp_co').innerHTML=(data||[]).map(c=>`<option value="${c.id}">${c.nom}</option>`).join('');
   });
 }
@@ -845,7 +850,7 @@ async function doImport(){
   const compteId=val('imp_co');if(!compteId){toast('Compte requis');return;}
   if(!IMP_DATA||!IMP_DATA.length){toast('Aucune donnée à importer');return;}
   // Charger règles pour catégorisation auto
-  const{data:reglesData}=await sb.from('fin_regles_catego').select('id,pattern,categorie_id,priorite,applies_to').eq('actif',true).eq('organization_id',ORG.id).order('priorite',{ascending:false});
+  const{data:reglesData}=await EatimeScope.from('fin_regles_catego').select('id,pattern,categorie_id,priorite,applies_to').eq('actif',true).eq('organization_id',ORG.id).order('priorite',{ascending:false});
   const regles=reglesData||[];
   // Construire transactions
   const toInsert=[];const skipped=[];
@@ -873,7 +878,7 @@ async function doImport(){
   });
   if(!toInsert.length){toast('Aucune ligne valide — vérifie le mapping');return;}
   // Créer import record
-  const{data:imp,error:eImp}=await sb.from('fin_imports_bancaires').insert({organization_id:ORG.id,compte_id:compteId,nom_fichier:document.getElementById('imp_file').files[0].name,format_detecte:IMP_FORMAT,nb_lignes:toInsert.length,imported_by:ME.id}).select().single();
+  const{data:imp,error:eImp}=await EatimeScope.from('fin_imports_bancaires').insert({organization_id:ORG.id,compte_id:compteId,nom_fichier:document.getElementById('imp_file').files[0].name,format_detecte:IMP_FORMAT,nb_lignes:toInsert.length,imported_by:ME.id}).select().single();
   if(eImp){toast('⚠️ Suivi d\'import non créé : '+eImp.message);}
 
   // Progress UI
@@ -897,13 +902,13 @@ async function doImport(){
   for(let i=0;i<toInsert.length;i+=CHUNK){
     const batch=toInsert.slice(i,i+CHUNK).map(tx=>({...tx,import_id:imp?.id}));
     // Tente insert batch — si conflict (dup), retry une par une
-    const{error}=await sb.from('fin_transactions_bancaires').insert(batch);
+    const{error}=await EatimeScope.from('fin_transactions_bancaires').insert(batch);
     if(!error){
       nbNew+=batch.length;
     } else {
       // Conflict ou autre erreur → fallback ligne par ligne
       for(const tx of batch){
-        const{error:e2}=await sb.from('fin_transactions_bancaires').insert(tx);
+        const{error:e2}=await EatimeScope.from('fin_transactions_bancaires').insert(tx);
         if(!e2)nbNew++;
         else if(e2.code==='23505')nbDup++;
         else {nbErr++;console.error(e2);}
@@ -916,7 +921,7 @@ async function doImport(){
     document.getElementById('imp_prog_bar').style.width=pct+'%';
     document.getElementById('imp_prog_sub').textContent=`${nbNew} nouvelles · ${nbDup} doublons${nbErr?' · '+nbErr+' erreurs':''}`;
   }
-  if(imp){const{error:eU}=await sb.from('fin_imports_bancaires').update({nb_nouvelles:nbNew,nb_dupliquees:nbDup}).eq('id',imp.id);if(eU)console.warn('[finance] maj stats import:',eU.message);}
+  if(imp){const{error:eU}=await EatimeScope.from('fin_imports_bancaires').update({nb_nouvelles:nbNew,nb_dupliquees:nbDup}).eq('id',imp.id);if(eU)console.warn('[finance] maj stats import:',eU.message);}
   document.getElementById('imp_preview').innerHTML=`<div style="background:rgba(63,184,127,.08);border:1px solid var(--ok);border-radius:10px;padding:18px;text-align:center"><div style="color:var(--ok);font-weight:700;font-size:16px;margin-bottom:6px">✓ Import terminé</div><div style="color:var(--text);font-size:13.5px;line-height:1.7">${nbNew} <b>nouvelles</b> transactions insérées<br>${nbDup} doublons déjà présents ${nbErr?' · '+nbErr+' erreurs':''}${skipped.length?'<br>'+skipped.length+' lignes vides ignorées':''}</div><div style="margin-top:12px;color:var(--muted);font-size:11.5px">Période ajustée automatiquement sur <b>"Tout"</b> pour afficher tes transactions.</div></div>`;
   toast(`Import OK · ${nbNew} nouvelles, ${nbDup} doublons`);
   // Auto-switch period sur "all" pour montrer les trx importées (qu'elles soient nouvelles ou pré-existantes)
@@ -925,7 +930,7 @@ async function doImport(){
 }
 
 async function openRegles(){
-  const{data:regles}=await sb.from('fin_regles_catego').select('*,fin_categories(nom)').eq('organization_id',ORG.id).order('priorite',{ascending:false});
+  const{data:regles}=await EatimeScope.from('fin_regles_catego').select('*,fin_categories(nom)').eq('organization_id',ORG.id).order('priorite',{ascending:false});
   const list=regles||[];
   const sensLabel=s=>s==='debit'?'<span class="badge bad" style="font-size:10px">DÉBIT</span>':s==='credit'?'<span class="badge ok" style="font-size:10px">CRÉDIT</span>':'<span class="badge info" style="font-size:10px">TOUT</span>';
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:780px">
@@ -949,10 +954,10 @@ async function openRegles(){
 async function saveRegle(){
   const pat=val('rg_pat').toLowerCase();
   if(!pat){toast('Pattern requis');return;}
-  const{error}=await sb.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pat,categorie_id:val('rg_cat'),priorite:num('rg_pri')||5,applies_to:val('rg_sens')||'all'});
+  const{error}=await EatimeScope.from('fin_regles_catego').insert({organization_id:ORG.id,pattern:pat,categorie_id:val('rg_cat'),priorite:num('rg_pri')||5,applies_to:val('rg_sens')||'all'});
   if(error){toast(error.message);return;}toast('Règle créée ✓');openRegles();
 }
-async function delRegle(id){if(!confirm('Supprimer cette règle ?'))return;await sb.from('fin_regles_catego').delete().eq('id',id);openRegles();}
+async function delRegle(id){if(!confirm('Supprimer cette règle ?'))return;await EatimeScope.from('fin_regles_catego').delete().eq('id',id);openRegles();}
 
 function closeModal(){document.getElementById('modalHost').innerHTML='';}
 </script>

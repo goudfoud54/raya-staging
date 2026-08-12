@@ -7,6 +7,7 @@
 <title>Eatime360 — Stock</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="../utils.js?v=1.4"></script>
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
@@ -178,6 +179,10 @@ async function loadProfileAndShow(){
   if(!profile){document.getElementById('err').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
   const{data:org}=await sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle();ORG=org||{};
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
+  // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
+  // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if(!EatimeAccess.canAccessModule('stock', profile, ORG.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Stock');return;}
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
@@ -190,12 +195,12 @@ sb.auth.getSession().then(({data})=>{if(data.session)loadProfileAndShow();else d
 
 async function loadCommonData(){
   const[r,p,f,m]=await Promise.all([
-    sb.from('restaurants').select('id,nom').eq('organization_id',ORG.id).order('nom'),
-    sb.from('stock_produits').select('*').eq('organization_id',ORG.id).eq('actif',true).order('categorie').order('nom'),
-    sb.from('fournisseurs').select('*').eq('organization_id',ORG.id).eq('actif',true).order('nom'),
+    EatimeScope.from('restaurants').select('id,nom').eq('organization_id',ORG.id).order('nom'),
+    EatimeScope.from('stock_produits').select('*').eq('organization_id',ORG.id).eq('actif',true).order('categorie').order('nom'),
+    EatimeScope.from('fournisseurs').select('*').eq('organization_id',ORG.id).eq('actif',true).order('nom'),
     // On charge TOUS les stock_max (actifs ET désactivés) : l'onglet "Stock max" doit pouvoir voir
     // et réactiver une ligne désactivée. Les flows opérationnels filtrent `m.actif!==false` eux-mêmes.
-    sb.from('stock_max').select('*').eq('organization_id',ORG.id),
+    EatimeScope.from('stock_max').select('*').eq('organization_id',ORG.id),
   ]);
   S.snacks=r.data||[];S.produits=p.data||[];S.fournisseurs=f.data||[];S.stockMax=m.data||[];
   const sel=document.getElementById('snackSelect');
@@ -240,7 +245,7 @@ async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
   const cut=ORG.journee_exploitation_debut;                 // heure de bascule de l'organisation
   const today=exploitationToday(cut);                        // journée d'exploitation en cours
-  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',exploitationDay(Date.now()-30*86400000,cut)).order('date_saisie',{ascending:false});
+  const{data:saisies}=await EatimeScope.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',exploitationDay(Date.now()-30*86400000,cut)).order('date_saisie',{ascending:false});
   const SL=saisies||[];
   const last={};SL.forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
   const aujourdhui=SL.filter(s=>s.date_saisie===today);
@@ -278,7 +283,7 @@ async function renderDashboard(el){
 async function renderSaisie(el){
   const cut=ORG.journee_exploitation_debut;
   const today=exploitationToday(cut); S.saisieDay=today;      // journée d'exploitation figée pour ce rendu (garde-fou saveSaisie)
-  const{data:saisies}=await sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today);
+  const{data:saisies}=await EatimeScope.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today);
   const byProd={};(saisies||[]).forEach(s=>{byProd[s.produit_id]=s;});S.saisiesAujourdhui=byProd;
   const max={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>max[m.produit_id]=m);
   // Produits désactivés sur CE snack (seuil défini mais actif=false) : exclus de la saisie du jour.
@@ -329,7 +334,7 @@ async function saveSaisie(pid,vTxt){
   // s'affichait quand même → l'admin croyait une saisie enregistrée alors que la base n'avait rien reçu.
   if(isNaN(v)){
     if(S.saisiesAujourdhui[pid]){
-      const{error}=await sb.from('stock_saisies').delete().eq('id',S.saisiesAujourdhui[pid].id);
+      const{error}=await EatimeScope.from('stock_saisies').delete().eq('id',S.saisiesAujourdhui[pid].id);
       if(error){toast('⚠ Non enregistré : '+error.message);return;}
       delete S.saisiesAujourdhui[pid];
     }
@@ -338,11 +343,11 @@ async function saveSaisie(pid,vTxt){
   if(v<0){toast('⚠ Quantité négative impossible');return;}
   const existing=S.saisiesAujourdhui[pid];
   if(existing){
-    const{error}=await sb.from('stock_saisies').update({quantite:v}).eq('id',existing.id);
+    const{error}=await EatimeScope.from('stock_saisies').update({quantite:v}).eq('id',existing.id);
     if(error){toast('⚠ Non enregistré : '+error.message);return;}
     existing.quantite=v;
   } else {
-    const{data,error}=await sb.from('stock_saisies').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,date_saisie:d}).select().single();
+    const{data,error}=await EatimeScope.from('stock_saisies').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite:v,date_saisie:d}).select().single();
     if(error){toast('⚠ Non enregistré : '+error.message);return;}
     S.saisiesAujourdhui[pid]=data;
   }
@@ -361,7 +366,7 @@ const shortSnack=n=>(n||'').replace(/^Raya\s+/i,'').trim()||n;
 async function computeBesoin(snackIds){
   const ids=(snackIds||[]).filter(Boolean);
   if(!ids.length) return {list:[],notes:[],staleAtMax:[],totalEur:0,snackIds:[],snackNames:[],multi:false};
-  const{data:saisies}=await sb.from('stock_saisies').select('restaurant_id,produit_id,quantite,commentaire,date_saisie').in('restaurant_id',ids).order('date_saisie',{ascending:false});
+  const{data:saisies}=await EatimeScope.from('stock_saisies').select('restaurant_id,produit_id,quantite,commentaire,date_saisie').in('restaurant_id',ids).order('date_saisie',{ascending:false});
   const last={};(saisies||[]).forEach(s=>{const b=last[s.restaurant_id]=last[s.restaurant_id]||{};if(!b[s.produit_id]||s.date_saisie>b[s.produit_id].date_saisie)b[s.produit_id]=s;});
   const snackNom=sid=>{const r=S.snacks.find(x=>x.id===sid);return r?r.nom:'?';};
   const aggMap={};const staleAtMax=[];
@@ -671,10 +676,10 @@ async function saveProduit(){
   if(!val('p_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('p_nom'),categorie:val('p_cat'),conditionnement:val('p_cond')||null,grammage:val('p_gram')||null,unite:val('p_unit')||null,cout_unitaire:num('p_cout')||0,note:val('p_note')||null,fournisseur_principal_id:val('p_f1')||null,prix_fourn1:num('p_pf1'),cond_fourn1:val('p_cf1')||null,fournisseur_secondaire_id:val('p_f2')||null,prix_fourn2:num('p_pf2'),cond_fourn2:val('p_cf2')||null,actif:true};
   const id=val('p_id');
-  const{error}=id?await sb.from('stock_produits').update(payload).eq('id',id):await sb.from('stock_produits').insert(payload);
+  const{error}=id?await EatimeScope.from('stock_produits').update(payload).eq('id',id):await EatimeScope.from('stock_produits').insert(payload);
   if(error){toast(error.message);return;}toast('✓ Enregistré');closeModal();await loadCommonData();renderProduits(document.getElementById('content'));
 }
-async function delProduit(id){if(!confirm('Désactiver ce produit ?'))return;await sb.from('stock_produits').update({actif:false}).eq('id',id);await loadCommonData();renderProduits(document.getElementById('content'));}
+async function delProduit(id){if(!confirm('Désactiver ce produit ?'))return;await EatimeScope.from('stock_produits').update({actif:false}).eq('id',id);await loadCommonData();renderProduits(document.getElementById('content'));}
 
 function renderFournisseurs(el){
   let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openFourn()">+ Nouveau fournisseur</button></div>
@@ -699,10 +704,10 @@ async function saveFourn(){
   if(!val('f_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('f_nom'),actif:true};
   const id=val('f_id');
-  const{error}=id?await sb.from('fournisseurs').update(payload).eq('id',id):await sb.from('fournisseurs').insert(payload);
+  const{error}=id?await EatimeScope.from('fournisseurs').update(payload).eq('id',id):await EatimeScope.from('fournisseurs').insert(payload);
   if(error){toast(error.message);return;}toast('✓ Enregistré');closeModal();await loadCommonData();renderFournisseurs(document.getElementById('content'));
 }
-async function delFourn(id){if(!confirm('Désactiver ce fournisseur ?'))return;await sb.from('fournisseurs').update({actif:false}).eq('id',id);await loadCommonData();renderFournisseurs(document.getElementById('content'));}
+async function delFourn(id){if(!confirm('Désactiver ce fournisseur ?'))return;await EatimeScope.from('fournisseurs').update({actif:false}).eq('id',id);await loadCommonData();renderFournisseurs(document.getElementById('content'));}
 
 function renderMax(el){
   const max={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>max[m.produit_id]=m);
@@ -741,7 +746,7 @@ async function toggleMaxActif(pid,checked){
   if(!existing){
     if(!checked)return; // rien à faire : pas de ligne = déjà "non suivi/actif par défaut"
     // Aucun seuil défini : on crée directement la ligne désactivée (pas besoin d'inventer un faux seuil avant).
-    const{data,error}=await sb.from('stock_max').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite_max:0,actif:false}).select().single();
+    const{data,error}=await EatimeScope.from('stock_max').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite_max:0,actif:false}).select().single();
     if(error){toast('⚠ Non enregistré : '+error.message);renderMax(document.getElementById('content'));return;}
     if(data)S.stockMax.push(data);
     toast(`${(S.produits.find(p=>p.id===pid)||{}).nom||'Produit'} désactivé sur ${SNACK.nom}`);
@@ -749,7 +754,7 @@ async function toggleMaxActif(pid,checked){
     return;
   }
   const newActif=!checked;
-  const{error}=await sb.from('stock_max').update({actif:newActif}).eq('id',existing.id);
+  const{error}=await EatimeScope.from('stock_max').update({actif:newActif}).eq('id',existing.id);
   if(error){toast('⚠ Non enregistré : '+error.message);renderMax(document.getElementById('content'));return;}
   existing.actif=newActif;
   toast(checked?`${(S.produits.find(p=>p.id===pid)||{}).nom||'Produit'} désactivé sur ${SNACK.nom}`:'Produit réactivé');
@@ -761,14 +766,14 @@ async function setMaxMode(pid,mode){
   const existing=S.stockMax.find(m=>m.restaurant_id===SNACK.id && m.produit_id===pid);
   if(!existing){
     if(mode==='aucun')return; // pas de ligne = déjà 'aucun'
-    const{data,error}=await sb.from('stock_max').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite_max:0,actif:true,mode_commentaire:mode}).select().single();
+    const{data,error}=await EatimeScope.from('stock_max').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite_max:0,actif:true,mode_commentaire:mode}).select().single();
     if(error){toast('⚠ Non enregistré : '+error.message);renderMax(document.getElementById('content'));return;}
     if(data)S.stockMax.push(data);
     toast('Mode commentaire mis à jour');
     renderMax(document.getElementById('content'));
     return;
   }
-  const{error}=await sb.from('stock_max').update({mode_commentaire:mode}).eq('id',existing.id);
+  const{error}=await EatimeScope.from('stock_max').update({mode_commentaire:mode}).eq('id',existing.id);
   if(error){toast('⚠ Non enregistré : '+error.message);renderMax(document.getElementById('content'));return;}
   existing.mode_commentaire=mode;
   toast('Mode commentaire mis à jour');
@@ -778,9 +783,9 @@ function filterMax(){const q=val('max_search').toLowerCase();document.querySelec
 async function saveMax(pid,vTxt){
   const v=parseFloat((vTxt||'').replace(',','.'));
   const existing=S.stockMax.find(m=>m.restaurant_id===SNACK.id && m.produit_id===pid);
-  if(isNaN(v)||v<=0){if(existing){await sb.from('stock_max').delete().eq('id',existing.id);S.stockMax=S.stockMax.filter(m=>m.id!==existing.id);}return;}
-  if(existing){await sb.from('stock_max').update({quantite_max:v}).eq('id',existing.id);existing.quantite_max=v;}
-  else {const{data}=await sb.from('stock_max').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite_max:v,actif:true}).select().single();if(data)S.stockMax.push(data);}
+  if(isNaN(v)||v<=0){if(existing){await EatimeScope.from('stock_max').delete().eq('id',existing.id);S.stockMax=S.stockMax.filter(m=>m.id!==existing.id);}return;}
+  if(existing){await EatimeScope.from('stock_max').update({quantite_max:v}).eq('id',existing.id);existing.quantite_max=v;}
+  else {const{data}=await EatimeScope.from('stock_max').insert({organization_id:ORG.id,restaurant_id:SNACK.id,produit_id:pid,quantite_max:v,actif:true}).select().single();if(data)S.stockMax.push(data);}
   toast('✓');
 }
 
@@ -806,7 +811,7 @@ async function renderHistorique(el){
 async function loadHistorique(){
   const host=document.getElementById('histList'); if(!host) return; // barre pas encore rendue
   host.innerHTML='Chargement…';
-  let q=sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',val('hist_from')).lte('date_saisie',val('hist_to')).order('date_saisie',{ascending:false}).limit(500);
+  let q=EatimeScope.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',val('hist_from')).lte('date_saisie',val('hist_to')).order('date_saisie',{ascending:false}).limit(500);
   if(val('hist_prod')) q=q.eq('produit_id',val('hist_prod'));
   const{data}=await q;const list=data||[];
   let html=`<table class="tbl"><thead><tr><th>Date</th><th>Produit</th><th>Qté</th><th>Catégorie</th></tr></thead><tbody>`;
@@ -834,7 +839,7 @@ async function genererSnapshotMensuel(){
   const monthStart=ymdLocal(lastMonth);
   const monthEnd=ymdLocal(new Date(now.getFullYear(),now.getMonth(),0));
   toast('Génération du snapshot…');
-  const{data:saisiesAll}=await sb.from('stock_saisies').select('*').eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd);
+  const{data:saisiesAll}=await EatimeScope.from('stock_saisies').select('*').eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd);
   // Le snapshot est NUMÉRIQUE → on n'agrège que les saisies avec quantité. Les saisies « commentaire
   // seul » (quantite NULL) sont ignorées ici ET conservées en base (non purgées ci-dessous).
   const saisies=(saisiesAll||[]).filter(s=>s.quantite!=null);
@@ -842,8 +847,8 @@ async function genererSnapshotMensuel(){
   const agg={};
   saisies.forEach(s=>{const k=`${s.restaurant_id}|${s.produit_id}`;if(!agg[k])agg[k]={qte:[],last:null,restaurant_id:s.restaurant_id,produit_id:s.produit_id};agg[k].qte.push(Number(s.quantite));if(!agg[k].last||s.date_saisie>agg[k].last.date)agg[k].last={date:s.date_saisie,qte:Number(s.quantite)};});
   const snaps=Object.values(agg).map(g=>{const p=S.produits.find(x=>x.id===g.produit_id);return {organization_id:ORG.id,restaurant_id:g.restaurant_id,produit_id:g.produit_id,annee:lastMonth.getFullYear(),mois:lastMonth.getMonth()+1,qte_moyenne:+(g.qte.reduce((a,b)=>a+b,0)/g.qte.length).toFixed(2),qte_min:Math.min(...g.qte),qte_max:Math.max(...g.qte),qte_derniere:g.last.qte,nb_saisies:g.qte.length,valorisation_eur:+(g.last.qte*Number(p?.cout_unitaire||0)).toFixed(2)};});
-  await sb.from('stock_snapshots_mensuels').upsert(snaps,{onConflict:'organization_id,restaurant_id,produit_id,annee,mois'});
-  await sb.from('stock_saisies').delete().eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd).not('quantite','is',null);
+  await EatimeScope.from('stock_snapshots_mensuels').upsert(snaps,{onConflict:'organization_id,restaurant_id,produit_id,annee,mois'});
+  await EatimeScope.from('stock_saisies').delete().eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd).not('quantite','is',null);
   toast(`✓ Snapshot ${snaps.length} lignes · ${saisies.length} saisies purgées`);
   loadHistorique(); // recharge la liste en conservant les critères (barre d'outils déjà en place)
 }

@@ -26,14 +26,19 @@ const DOSSIERS_EXEMPTS = {
   'badgeuse':    'Kiosque tablette : tourne en anon, sans session ni profil, donc sans organisation active. Sa portée vient du restaurant choisi sur la tablette (kiosk-shared.js) et de RLS.',
   'kiosk':       'Kiosque tablette — même raison que badgeuse.',
   'stock-kiosk': 'Kiosque tablette — même raison que badgeuse.',
-  'haccp-kiosk': 'Kiosque tablette — même raison que badgeuse.'
+  'haccp-kiosk': 'Kiosque tablette — même raison que badgeuse.',
+  'dispos':      'Kiosque tablette lui aussi, malgré son nom : le salarié choisit son nom puis saisit son PIN, sans session ni profil. Sa portée vient du snack enregistré sur la tablette (localStorage « dispos_kiosk_snack ») et il filtre déjà .eq(organization_id, SNACK_ORG) sur les salariés.'
 };
 // Appels précis tolérés. `suite` est testée sur le texte qui suit immédiatement l'appel : la
 // tolérance porte sur UNE requête précise, pas sur toute la table. Tolérer « profiles » en bloc
 // laisserait passer la liste des utilisateurs d'une organisation, qui doit bien être bornée.
 const APPELS_TOLERES = [
-  { table: 'profiles', suite: /\.eq\(\s*'id'/, motif: 'Lecture de son PROPRE profil au démarrage (.eq(\'id\')) : c\'est elle qui révèle l\'organisation active — on ne peut pas la borner sur l\'information qu\'elle est justement chargée d\'apporter.' },
-  { table: 'profiles', suite: /\.eq\(\s*'user_id'/, motif: 'Même amorçage, variante par user_id : la ligne est celle de l\'utilisateur connecté, identifiée par son propre identifiant de session.' },
+  // ⚠ La tolérance porte sur la LECTURE (.select) uniquement. Une première version tolérait tout
+  // « profiles » suivi de .eq('id', …) : elle laissait donc passer un delete() et un update() sur
+  // n'importe quel utilisateur, y compris d'une autre organisation. Les deux ont été bornés.
+  { table: 'profiles', suite: /^\s*\.select\([^)]*\)[^;]{0,140}\.eq\(\s*'id'/, motif: 'LECTURE de son PROPRE profil au démarrage (.select(…).eq(\'id\')) : c\'est elle qui révèle l\'organisation active — on ne peut pas la borner sur l\'information qu\'elle est justement chargée d\'apporter.' },
+  { table: 'profiles', suite: /^\s*\.select\([^)]*\)[^;]{0,140}\.eq\(\s*'user_id'/, motif: 'Même amorçage, variante par user_id : la ligne est celle de l\'utilisateur connecté, identifiée par son propre identifiant de session.' },
+  { table: 'profiles', fichiers: ['parametres/index.html'], suite: /^\s*\.update\(\{organization_id:/, motif: 'BASCULE d\'organisation elle-même : elle écrit la nouvelle organisation sur SON PROPRE profil (.eq(\'id\', ME.id)). La borner sur l\'organisation active serait circulaire — c\'est l\'opération qui la change.' },
   { table: 'invitations', suite: /\.eq\(\s*'token'/, motif: 'Acceptation d\'une invitation : l\'utilisateur n\'a pas encore d\'organisation, la ligne se retrouve par son jeton — le borner serait impossible et inutile (le jeton est le secret).' },
   { table: 'restaurants', fichiers: ['orgscope.js'], motif: 'Amorçage du helper lui-même : il filtre explicitement .eq(\'organization_id\') pour construire la liste des restaurants sur laquelle il bornera ensuite les autres tables.' },
   { table: 'salaries', fichiers: ['orgscope.js'], motif: 'Amorçage du helper lui-même : même raison, pour construire la liste des salariés de l\'organisation active.' }
@@ -216,30 +221,59 @@ async function main() {
   })(ROOT, '');
 
   const bornees = new Set(Scope.tablesBornees());
-  const manques = [];
-  let total = 0, tolerees = 0;
-  for (const { p, r } of fichiers) {
-    const dossier = r.includes('/') ? r.split('/')[0] : '';
-    if (DOSSIERS_EXEMPTS[dossier]) continue;
+  // Scanner isolé pour être exerçable sur une source de test : c'est ce qui prouve qu'il ÉCHOUE
+  // vraiment sur une requête sans filtre, plutôt que de passer au vert parce qu'il ne trouve rien.
+  function scanner(source, rel) {
     // On retire les commentaires : plusieurs citent volontairement « sb.from('salaries') » pour
     // expliquer la correction, et feraient échouer une recherche naïve.
-    const src = fs.readFileSync(p, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const src = source.replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n').map(l => l.replace(/(^|[^:'"\\])\/\/.*$/, '$1')).join('\n');
+    const res = { total: 0, tolerees: 0, manques: [] };
     const re = /sb\s*\.\s*from\(\s*'([a-z_0-9]+)'\s*\)/g;
     let m;
     while ((m = re.exec(src))) {
       const table = m[1];
       if (!bornees.has(table)) continue;                       // classe D ou table hors modèle
-      total++;
+      res.total++;
       const suite = src.slice(m.index + m[0].length, m.index + m[0].length + 220);
       const tol = APPELS_TOLERES.find(x => x.table === table
-        && (!x.fichiers || x.fichiers.includes(r))
+        && (!x.fichiers || x.fichiers.includes(rel))
         && (!x.suite || x.suite.test(suite)));
-      if (tol) { tolerees++; continue; }
-      const ligne = src.slice(0, m.index).split('\n').length;
-      manques.push(r + ':' + ligne + '  sb.from(\'' + table + '\')');
+      if (tol) { res.tolerees++; continue; }
+      res.manques.push(rel + ':' + src.slice(0, m.index).split('\n').length + '  sb.from(\'' + table + '\')');
     }
+    return res;
+  }
+
+  // ── Le harnais doit ÉCHOUER sur une requête sans filtre — vérifié, pas supposé ────────────────
+  t('une lecture non bornée réintroduite est DÉTECTÉE',
+    scanner("const {data} = await sb.from('salaries').select('*').order('nom');", 'faux.html').manques.length === 1);
+  t('la même lecture passée par le point d\'accès borné ne l\'est pas',
+    scanner("const {data} = await EatimeScope.from('salaries').select('*').order('nom');", 'faux.html').manques.length === 0);
+  t('une table non rattachée à une organisation reste libre',
+    scanner("await sb.from('organizations').select('*');", 'faux.html').manques.length === 0);
+  t('la tolérance est CIBLÉE : le propre profil passe, la liste des utilisateurs non',
+    scanner("await sb.from('profiles').select('*').eq('id',u.id);", 'faux.html').manques.length === 0 &&
+    scanner("await sb.from('profiles').select('*').order('nom');", 'faux.html').manques.length === 1);
+  // Le trou de la première version : « profiles suivi de .eq('id') » tolérait aussi les ÉCRITURES,
+  // donc la suppression d'un utilisateur d'une autre organisation.
+  t('supprimer un utilisateur par son id n\'est PAS toléré (c\'est une écriture)',
+    scanner("await sb.from('profiles').delete().eq('id',id);", 'faux.html').manques.length === 1);
+  t('modifier un utilisateur par son id n\'est PAS toléré non plus',
+    scanner("await sb.from('profiles').update({role:'admin'}).eq('id',id);", 'faux.html').manques.length === 1);
+  t('la bascule d\'organisation reste tolérée, et seulement dans l\'écran Paramètres',
+    scanner("await sb.from('profiles').update({organization_id:id}).eq('id',ME.id);", 'parametres/index.html').manques.length === 0 &&
+    scanner("await sb.from('profiles').update({organization_id:id}).eq('id',ME.id);", 'salaries/index.html').manques.length === 1);
+  t('un commentaire citant sb.from() ne déclenche pas de faux positif',
+    scanner("// exemple : sb.from('salaries').select('*')\nconst x=1;", 'faux.html').manques.length === 0);
+
+  const manques = [];
+  let total = 0, tolerees = 0;
+  for (const { p, r } of fichiers) {
+    const dossier = r.includes('/') ? r.split('/')[0] : '';
+    if (DOSSIERS_EXEMPTS[dossier]) continue;
+    const res = scanner(fs.readFileSync(p, 'utf8'), r);
+    total += res.total; tolerees += res.tolerees; manques.push(...res.manques);
   }
   console.log('   ' + total + ' appels directs à une table bornée · ' + tolerees + ' tolérés · ' + manques.length + ' à corriger');
   if (manques.length) {

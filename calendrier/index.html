@@ -7,6 +7,7 @@
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <style>
 :root{
   --bg:#0b0e14;--panel:#11151c;--panel2:#161a23;--border:#1f2530;--border2:#2a3140;
@@ -266,6 +267,10 @@ async function init(){
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if (!EatimeAccess.canAccessModule('calendrier', profile, profile.organizations?.permissions)) { document.body.innerHTML = EatimeAccess.renderAccessDenied('Calendrier RH'); return; }
   S.profile = profile;
+  // Portée de l'ORGANISATION ACTIVE — avant toute lecture (cf. orgscope.js). Pour un super_admin, RLS
+  // ne filtre plus rien (« OR auth_role() = 'super_admin' ») : c'est ce filtre qui garantit qu'on
+  // travaille bien sur l'organisation qu'on croit.
+  await EatimeScope.init(sb, profile.organization_id, {nom: profile.organizations?.nom || '', role: profile.role});
   document.getElementById('orgBadge').textContent = profile.organizations?.nom || 'org';
   if (profile.organizations?.couleur_primaire) {
     document.documentElement.style.setProperty('--accent', profile.organizations.couleur_primaire);
@@ -281,8 +286,8 @@ async function init(){
 
 async function loadAll(){
   const [e,s] = await Promise.all([
-    sb.from('calendar_events').select('*').order('date_debut'),
-    sb.from('salaries').select('id,nom,prenom,actif').eq('actif', true).order('nom')
+    EatimeScope.from('calendar_events').select('*').order('date_debut'),
+    EatimeScope.from('salaries').select('id,nom,prenom,actif').eq('actif', true).order('nom')
   ]);
   S.events = e.data || [];
   S.salaries = s.data || [];
@@ -428,7 +433,7 @@ function editFromDetail(){
 
 async function delEventFromDetail(){
   if (!confirm('Supprimer cet événement ?')) return;
-  const { error } = await sb.from('calendar_events').delete().eq('id', S.currentDetailId);
+  const { error } = await EatimeScope.from('calendar_events').delete().eq('id', S.currentDetailId);
   if (error) return alert(error.message);
   closeModal('modalDetail');
   await loadAll(); render();
@@ -458,9 +463,9 @@ async function saveEvent(){
   let resp;
   if (id) {
     delete payload.created_by; delete payload.organization_id;
-    resp = await sb.from('calendar_events').update(payload).eq('id', id);
+    resp = await EatimeScope.from('calendar_events').update(payload).eq('id', id);
   } else {
-    resp = await sb.from('calendar_events').insert(payload);
+    resp = await EatimeScope.from('calendar_events').insert(payload);
   }
   if (resp.error) return alert(resp.error.message);
   closeModal('modalEdit');
@@ -471,7 +476,7 @@ async function delEvent(){
   const id = document.getElementById('ev_id').value;
   if (!id) return;
   if (!confirm('Supprimer cet événement ?')) return;
-  const { error } = await sb.from('calendar_events').delete().eq('id', id);
+  const { error } = await EatimeScope.from('calendar_events').delete().eq('id', id);
   if (error) return alert(error.message);
   closeModal('modalEdit');
   await loadAll(); render();

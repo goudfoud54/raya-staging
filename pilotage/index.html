@@ -7,6 +7,7 @@
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <style>
 :root{
   --bg:#0b0e14;--panel:#11151c;--panel2:#161a23;--border:#1f2530;--border2:#2a3140;
@@ -215,6 +216,10 @@ async function init(){
     return;
   }
   S.profile = profile;
+  // Portée de l'ORGANISATION ACTIVE — avant toute lecture (cf. orgscope.js). Pour un super_admin, RLS
+  // ne filtre plus rien (« OR auth_role() = 'super_admin' ») : c'est ce filtre qui garantit qu'on
+  // travaille bien sur l'organisation qu'on croit.
+  await EatimeScope.init(sb, profile.organization_id, {nom: profile.organizations?.nom || '', role: profile.role});
   document.getElementById('orgBadge').textContent = profile.organizations?.nom || 'org';
   if (profile.organizations?.couleur_primaire) document.documentElement.style.setProperty('--accent', profile.organizations.couleur_primaire);
   const theme = localStorage.getItem('eatime_theme');
@@ -224,9 +229,9 @@ async function init(){
 }
 
 async function loadAll(){
-  const sal = await sb.from('salaries').select('id,nom,prenom,actif').eq('actif', true).order('nom');
+  const sal = await EatimeScope.from('salaries').select('id,nom,prenom,actif').eq('actif', true).order('nom');
   S.salaries = sal.data || [];
-  const ts = await sb.from('team_tasks').select('*').order('position').order('created_at', { ascending: false });
+  const ts = await EatimeScope.from('team_tasks').select('*').order('position').order('created_at', { ascending: false });
   S.tasks = ts.data || [];
   // Filtres
   const fS = document.getElementById('fSal');
@@ -236,7 +241,7 @@ async function loadAll(){
   EatimeAutocomplete.enhance(fS, { placeholder:'Tous les salariés — tape un nom…' });
   EatimeAutocomplete.enhance(tS, { placeholder:'Tape un nom de salarié…' });
   const since = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-  const rt = await sb.from('retards').select('*').gte('date', since).order('date',{ascending:false});
+  const rt = await EatimeScope.from('retards').select('*').gte('date', since).order('date',{ascending:false});
   S.retards = rt.data || [];
   renderRetardsBar();
 }
@@ -362,7 +367,7 @@ async function onDrop(e, newStatus){
   if (newStatus === 'done') t.completed_at = new Date().toISOString();
   else if (t.statut !== 'done') t.completed_at = null;
   render();
-  const { error } = await sb.from('team_tasks').update({ statut: newStatus }).eq('id', id);
+  const { error } = await EatimeScope.from('team_tasks').update({ statut: newStatus }).eq('id', id);
   if (error) { alert('Erreur : ' + error.message); await loadAll(); render(); }
 }
 
@@ -416,11 +421,11 @@ async function saveTask(){
   };
   let r;
   if (id) {
-    r = await sb.from('team_tasks').update(payload).eq('id', id);
+    r = await EatimeScope.from('team_tasks').update(payload).eq('id', id);
   } else {
     payload.organization_id = S.profile.organization_id;
     payload.assigned_by = S.profile.id;
-    r = await sb.from('team_tasks').insert(payload);
+    r = await EatimeScope.from('team_tasks').insert(payload);
   }
   if (r.error) return alert(r.error.message);
   closeModal();
@@ -431,7 +436,7 @@ async function delTask(){
   const id = document.getElementById('t_id').value;
   if (!id) return;
   if (!confirm('Supprimer cette tâche définitivement ?')) return;
-  const { error } = await sb.from('team_tasks').delete().eq('id', id);
+  const { error } = await EatimeScope.from('team_tasks').delete().eq('id', id);
   if (error) return alert(error.message);
   closeModal();
   await loadAll(); render();
@@ -440,7 +445,7 @@ async function delTask(){
 async function archiveTask(){
   const id = document.getElementById('t_id').value;
   if (!id) return;
-  const { error } = await sb.from('team_tasks').update({ archived: true }).eq('id', id);
+  const { error } = await EatimeScope.from('team_tasks').update({ archived: true }).eq('id', id);
   if (error) return alert(error.message);
   closeModal();
   await loadAll(); render();

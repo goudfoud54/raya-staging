@@ -7,6 +7,7 @@
 <title>Bulk upload contrats — Eatime360</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root,[data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -115,12 +116,14 @@ async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){document.getElementById('lock').classList.remove('hidden');return;}
   const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id,module_exceptions').eq('id',session.user.id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — avant toute lecture bornée (cf. orgscope.js).
+  await EatimeScope.init(sb, profile.organization_id, {role:profile.role});
   if(!profile){document.getElementById('lock').classList.remove('hidden');document.getElementById('loginErr').textContent='Profil introuvable';await sb.auth.signOut();return;}
   const{data:org}=await sb.from('organizations').select('permissions').eq('id',profile.organization_id).maybeSingle();
   // Même permission que le module Import contrats (access.js).
   if(!EatimeAccess.canAccessModule('import-contrats', profile, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Upload contrats');return;}
   // Charge les salariés de l'organisation (plus d'UUID en dur — S4). La RLS isole déjà ; on double-filtre côté requête.
-  const{data:sals,error:errS}=await sb.from('salaries').select('id,nom,prenom').eq('organization_id',profile.organization_id).eq('actif',true).order('nom');
+  const{data:sals,error:errS}=await EatimeScope.from('salaries').select('id,nom,prenom').eq('organization_id',profile.organization_id).eq('actif',true).order('nom');
   if(errS){document.getElementById('loginErr').textContent='Erreur chargement salariés : '+errS.message;return;}
   FICHES=(sals||[]).map(s=>{
     const label=[s.nom,s.prenom].filter(Boolean).join(' ');
@@ -201,7 +204,7 @@ async function uploadOne(fiche){
     const path=`${fiche.id}/contrat/${Date.now()}_${safeName}`;
     const up=await sb.storage.from('salaries-docs').upload(path,s.file,{contentType:s.file.type||'application/pdf',upsert:false});
     if(up.error)throw new Error('storage: '+up.error.message);
-    const ins=await sb.from('salarie_documents').insert({
+    const ins=await EatimeScope.from('salarie_documents').insert({
       salarie_id:fiche.id,type:'contrat',nom:s.file.name,path,
       taille:s.file.size,content_type:s.file.type||'application/pdf'
     }).select().single();

@@ -75,7 +75,26 @@ function grabObj(h, name) {
   return h.slice(st, j);
 }
 
+// Depuis v6.32, le code du planning lit et écrit par EatimeScope.from() (portée de l'organisation
+// active, cf. orgscope.js). Les harnais du MOTEUR stubent `sb` et travaillent sur un jeu de données
+// déjà mono-organisation : ici, le point d'accès DÉLÈGUE simplement au stub. La portée elle-même est
+// testée par tests/orgscope_test.js — mélanger les deux rendrait chaque harnais moteur dépendant
+// d'un état d'organisation qui n'a rien à voir avec ce qu'il vérifie.
+// `global.sb` est résolu à l'APPEL, pas ici : les harnais le définissent après ce require.
+function installScopeStub() {
+  if (global.EatimeScope) return;
+  const d = t => global.sb.from(t);
+  global.EatimeScope = {
+    from: t => d(t),
+    init: async () => ({ restaurants: 0, salaries: 0 }),
+    verifierAppartenance: () => true,
+    orgId: () => 'test-org', orgNom: () => 'Test', pret: () => true,
+    restaurantIds: () => [], salarieIds: () => [], banniere: () => {}
+  };
+}
+
 function installPlanningPrims(src) {
+  installScopeStub();
   const h = src || fs.readFileSync(path.join(__dirname, '..', 'planning/index.html'), 'utf8');
   for (const c of CONST_LINES) {
     const m = h.match(new RegExp('const ' + c.first + '\\s*=[^\\n]*'));
@@ -93,4 +112,4 @@ function installPlanningPrims(src) {
   }
 }
 
-module.exports = { installPlanningPrims, grabObj };
+module.exports = { installPlanningPrims, installScopeStub, grabObj };

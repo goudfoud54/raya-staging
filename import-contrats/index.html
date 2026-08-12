@@ -7,6 +7,7 @@
 <title>Import IA contrats — Eatime360</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root,[data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--blue:#5b9cff}
@@ -184,12 +185,14 @@ async function init(){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){document.getElementById('lock').classList.remove('hidden');return;}
   const{data:profile}=await sb.from('profiles').select('full_name,role,email,organization_id,module_exceptions').eq('id',session.user.id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — avant toute lecture bornée (cf. orgscope.js).
+  await EatimeScope.init(sb, profile.organization_id, {role:profile.role});
   if(!profile){document.getElementById('lock').classList.remove('hidden');document.getElementById('loginErr').textContent='Profil introuvable';await sb.auth.signOut();return;}
   ME=profile;
   const[orgRes,salRes,snRes]=await Promise.all([
     sb.from('organizations').select('*').eq('id',profile.organization_id).maybeSingle(),
-    sb.from('salaries').select('id,nom,prenom,actif').eq('organization_id',profile.organization_id),
-    sb.from('restaurants').select('id,nom').eq('organization_id',profile.organization_id).eq('actif',true),
+    EatimeScope.from('salaries').select('id,nom,prenom,actif').eq('organization_id',profile.organization_id),
+    EatimeScope.from('restaurants').select('id,nom').eq('organization_id',profile.organization_id).eq('actif',true),
   ]);
   ORG=orgRes.data; SALARIES=salRes.data||[]; SNACKS=snRes.data||[];
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
@@ -397,13 +400,13 @@ async function commitAll(){
 
     let salarie_id=r.match_id;
     if(salarie_id){
-      const{error}=await sb.from('salaries').update(patch).eq('id',salarie_id);
+      const{error}=await EatimeScope.from('salaries').update(patch).eq('id',salarie_id);
       if(error){results.errors.push(r.file.name+' : '+error.message);continue;}
       results.updated++;
     } else {
       patch.organization_id=ORG.id;patch.actif=true;
       if(!patch.nom){results.errors.push(r.file.name+' : nom manquant');continue;}
-      const{data,error}=await sb.from('salaries').insert(patch).select().single();
+      const{data,error}=await EatimeScope.from('salaries').insert(patch).select().single();
       if(error){results.errors.push(r.file.name+' : '+error.message);continue;}
       salarie_id=data.id;
       results.created++;
@@ -414,7 +417,7 @@ async function commitAll(){
       const path=`${salarie_id}/contrat/${Date.now()}_${safeName}`;
       const up=await sb.storage.from('salaries-docs').upload(path,r.file,{contentType:'application/pdf',upsert:false});
       if(!up.error){
-        await sb.from('salarie_documents').insert({salarie_id,type:'contrat',nom:r.file.name,path,taille:r.file.size,content_type:'application/pdf'});
+        await EatimeScope.from('salarie_documents').insert({salarie_id,type:'contrat',nom:r.file.name,path,taille:r.file.size,content_type:'application/pdf'});
         results.docs++;
       }
     }catch(_){}
@@ -447,7 +450,7 @@ function resetAll(){
   document.getElementById('step3').classList.add('hidden');
   document.getElementById('globalProgress').classList.add('hidden');
   // Reload des salariés pour le prochain import
-  sb.from('salaries').select('id,nom,prenom,actif').eq('organization_id',ORG.id).then(({data})=>{SALARIES=data||[];});
+  EatimeScope.from('salaries').select('id,nom,prenom,actif').eq('organization_id',ORG.id).then(({data})=>{SALARIES=data||[];});
 }
 
 sb.auth.getSession().then(({data})=>{
