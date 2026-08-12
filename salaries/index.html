@@ -10,6 +10,7 @@
 <title>Raya — Gestion Salariés</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
+<script src="../orgscope.js?v=1"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
@@ -236,7 +237,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.20 · permissions individuelles : l\'accès au module tient compte des exceptions par utilisateur';
+const VERSION='v0.21 · portée de l\'organisation active : toutes les lectures et écritures sont bornées, et une écriture visant une autre organisation est refusée';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -320,7 +321,12 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('loginErr').textContent='Profil introuvable. Réessaye dans 2 secondes (création en cours).';await sb.auth.signOut();return;}
   ME=profile;
-  const{data:org}=await sb.from('organizations').select('couleur_primaire,logo_url,permissions').eq('id',profile.organization_id).maybeSingle();
+  const{data:org}=await sb.from('organizations').select('nom,couleur_primaire,logo_url,permissions').eq('id',profile.organization_id).maybeSingle();
+  // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (loadAll suit showApp).
+  // Sans ce point, un super_admin basculé sur une autre organisation voit s'additionner les salariés
+  // des deux : RLS ne filtre plus rien pour lui (« OR auth_role() = 'super_admin' »), et les requêtes
+  // ne filtraient pas non plus. Cf. orgscope.js.
+  await EatimeScope.init(sb, profile.organization_id, {nom:(org&&org.nom)||'', role:profile.role});
   // Accès contrôlé par la config org (access.js), plus de liste de rôles codée en dur.
   if(!EatimeAccess.canAccessModule('salaries', profile, org?.permissions)){document.body.innerHTML=EatimeAccess.renderAccessDenied('Gestion Salariés');return;}
   if(org?.couleur_primaire) document.documentElement.style.setProperty('--gold',org.couleur_primaire);
@@ -347,16 +353,16 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 async function loadAll(){
   const d90=new Date(Date.now()-90*86400000);
   const [r,s,ro,d,c,p,dx,pt,or,rt]=await Promise.all([
-    sb.from('restaurants').select('*').eq('actif',true).order('nom'),
-    sb.from('salaries').select('*').order('nom'),
-    sb.from('salarie_roles').select('*'),
-    sb.from('salarie_dispos').select('*'),
-    sb.from('salarie_contraintes').select('*'),
-    sb.from('salarie_paires').select('*'),
-    sb.from('salarie_documents').select('*').order('created_at',{ascending:false}),
-    sb.from('pointages').select('*').gte('ts',d90.toISOString()).order('ts',{ascending:false}),
-    sb.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre'),
-    sb.from('retards').select('*').gte('date',d90.toISOString().slice(0,10)).order('date',{ascending:false})
+    EatimeScope.from('restaurants').select('*').eq('actif',true).order('nom'),
+    EatimeScope.from('salaries').select('*').order('nom'),
+    EatimeScope.from('salarie_roles').select('*'),
+    EatimeScope.from('salarie_dispos').select('*'),
+    EatimeScope.from('salarie_contraintes').select('*'),
+    EatimeScope.from('salarie_paires').select('*'),
+    EatimeScope.from('salarie_documents').select('*').order('created_at',{ascending:false}),
+    EatimeScope.from('pointages').select('*').gte('ts',d90.toISOString()).order('ts',{ascending:false}),
+    EatimeScope.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre'),
+    EatimeScope.from('retards').select('*').gte('date',d90.toISOString().slice(0,10)).order('date',{ascending:false})
   ]);
   S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.orgRoles=or.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.data||[];S.retards=rt.data||[];
   // Filtre rôles dynamique
@@ -473,7 +479,7 @@ function generatePin(){
 }
 async function setPinAndSave(id){
   const pin=generatePin();if(!pin){toast('Aucun code libre');return;}
-  const{error}=await sb.from('salaries').update({pin_badgeuse:pin}).eq('id',id);
+  const{error}=await EatimeScope.from('salaries').update({pin_badgeuse:pin}).eq('id',id);
   if(error){toast('Erreur: '+error.message);return;}
   toast('Code généré : '+pin);await loadAll();currentFiche=S.salaries.find(x=>x.id===id);renderFiche();
 }
@@ -482,7 +488,7 @@ const TYPL_PT={arrivee:'Arrivée',sortie:'Sortie',pause_debut:'Pause début',pau
 // ===== GESTION DES RÔLES DE L'ÉTABLISSEMENT =====
 function slugify(s){return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)||('role'+Date.now());}
 async function reloadOrgRoles(){
-  const{data}=await sb.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre');
+  const{data}=await EatimeScope.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre');
   S.orgRoles=data||[];
   const fR=document.getElementById('fRole');
   if(fR){const cur=fR.value;fR.innerHTML='<option value="">Tous les rôles</option>'+S.orgRoles.map(x=>`<option value="${x.cle}">${escH(x.nom)}</option>`).join('');fR.value=cur;}
@@ -525,14 +531,14 @@ async function addRole(){
   if(S.orgRoles.some(r=>r.cle===cle)) cle=cle+'_'+Math.floor(Math.random()*1000);
   const palette=['#e8a06a','#e0c46a','#6ab0e8','#7fd1a0','#c08be8','#e88b8b','#8be8d1','#d1a0e8'];
   const couleur=palette[S.orgRoles.length%palette.length];
-  const{error}=await sb.from('org_roles').upsert({organization_id:ME.organization_id,cle,nom,couleur,ordre:S.orgRoles.length,actif:true},{onConflict:'organization_id,cle'});
+  const{error}=await EatimeScope.from('org_roles').upsert({organization_id:ME.organization_id,cle,nom,couleur,ordre:S.orgRoles.length,actif:true},{onConflict:'organization_id,cle'});
   if(error){toast('Erreur: '+error.message);return;}
   await reloadOrgRoles(); renderRolesBody(); render();
 }
 async function updateRole(id,field,el){
   const v=(el.value||'').trim();
   if(field==='nom'&&!v){el.value=el.dataset.prev||'';return;}
-  const{error}=await sb.from('org_roles').update({[field]:v}).eq('id',id);
+  const{error}=await EatimeScope.from('org_roles').update({[field]:v}).eq('id',id);
   if(error){toast('Erreur: '+error.message);return;}
   await reloadOrgRoles(); render();
 }
@@ -540,7 +546,7 @@ async function deleteRole(id,cle,btn){
   const nom=btn.dataset.nom||'ce rôle';
   const used=S.roles.filter(x=>x.role===cle).length;
   if(!confirm(`Retirer le rôle « ${nom} » ?`+(used?`\n\n⚠ ${used} salarié(s) ont ce rôle. L'historique des plannings est CONSERVÉ — le rôle est seulement retiré de la liste des rôles assignables.`:''))) return;
-  const{error}=await sb.from('org_roles').update({actif:false}).eq('id',id);
+  const{error}=await EatimeScope.from('org_roles').update({actif:false}).eq('id',id);
   if(error){toast('Erreur: '+error.message);return;}
   await reloadOrgRoles(); renderRolesBody(); render();
 }
@@ -549,7 +555,7 @@ async function importLegacyRoles(){
     {organization_id:ME.organization_id,cle:'cuisine',nom:'Cuisine',couleur:'#e8a06a',ordre:0,actif:true},
     {organization_id:ME.organization_id,cle:'caisse',nom:'Réception',couleur:'#e0c46a',ordre:1,actif:true},
   ];
-  const{error}=await sb.from('org_roles').upsert(rows,{onConflict:'organization_id,cle'});
+  const{error}=await EatimeScope.from('org_roles').upsert(rows,{onConflict:'organization_id,cle'});
   if(error){toast('Erreur: '+error.message);return;}
   await reloadOrgRoles(); renderRolesBody(); render();
   toast('Rôles importés ✓ Tu peux les renommer.');
@@ -622,7 +628,7 @@ async function doExport(){
   if(!from||!to){toast('Choisis une période');return;}
   const restos=[...document.querySelectorAll('.ex_resto:checked')].map(c=>c.value);
   if(!restos.length){toast('Coche au moins un snack');return;}
-  let q=sb.from('pointages').select('*').gte('ts',from+'T00:00:00').lte('ts',to+'T23:59:59').in('restaurant_id',restos).order('ts');
+  let q=EatimeScope.from('pointages').select('*').gte('ts',from+'T00:00:00').lte('ts',to+'T23:59:59').in('restaurant_id',restos).order('ts');
   const{data,error}=await q;
   if(error){toast('Erreur: '+error.message);return;}
   downloadPointagesCSV(data||[],`pointages_${from}_${to}`);
@@ -632,7 +638,7 @@ async function doExport(){
 
 async function exportSalarieCSV(){
   if(!currentFiche.id)return;
-  let q=sb.from('pointages').select('*').eq('salarie_id',currentFiche.id);
+  let q=EatimeScope.from('pointages').select('*').eq('salarie_id',currentFiche.id);
   if(selectedMonth){q=q.gte('ts',selectedMonth+'-01T00:00:00').lt('ts',nextMonthISO(selectedMonth));}
   if(selectedSnack){q=q.eq('restaurant_id',selectedSnack);}
   const{data,error}=await q.order('ts');
@@ -677,7 +683,7 @@ function openDemandes(){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:600px">${html}</div></div>`;
 }
 async function decideDispo(id,decision){
-  const{error}=await sb.from('salarie_dispos').update({statut_demande:decision,decided_at:new Date().toISOString()}).eq('id',id);
+  const{error}=await EatimeScope.from('salarie_dispos').update({statut_demande:decision,decided_at:new Date().toISOString()}).eq('id',id);
   if(error){toast('Erreur: '+error.message);return;}
   toast(decision==='validee'?'Demande validée ✓':'Demande refusée');
   await loadAll();openDemandes();
@@ -809,7 +815,7 @@ async function applyColorBackfill(){
   closeModal(); toast('Attribution des couleurs…');
   let done=0;
   for(const p of plan){
-    const{error}=await sb.from('salaries').update({couleur:p.to}).eq('id',p.id);
+    const{error}=await EatimeScope.from('salaries').update({couleur:p.to}).eq('id',p.id);
     if(error){toast('Erreur: '+error.message);return;}
     const s=S.salaries.find(x=>x.id===p.id); if(s)s.couleur=p.to; done++;
   }
@@ -1219,13 +1225,18 @@ async function saveSalarie(){
     if(!payload.nom){toast('Va dans Informations et renseigne au moins le nom');setTab('infos');return;}
   }
 
+  // GARDE-FOU INTER-ORGANISATION. La fiche ouverte peut appartenir à une AUTRE organisation si un
+  // super_admin a basculé entre-temps. Sans ce contrôle, l'update part avec la borne .eq() de
+  // l'organisation active et n'affecte simplement AUCUNE ligne — ce qui se lit comme un succès
+  // partout dans ce code. Refus VISIBLE plutôt qu'écriture au mauvais endroit.
+  if(!EatimeScope.verifierAppartenance(currentFiche.id?currentFiche:null,'Ce salarié')) return;
   let sid=currentFiche.id;
   if(sid){
     if(Object.keys(payload).length===0){/* rien à update côté salaries */}
-    else{const{error}=await sb.from('salaries').update(payload).eq('id',sid);if(error){toast('Erreur: '+error.message);return;}}
+    else{const{error}=await EatimeScope.from('salaries').update(payload).eq('id',sid);if(error){toast('Erreur: '+error.message);return;}}
   } else {
     if(!payload.pin_badgeuse) payload.pin_badgeuse=generatePin();
-    const{data,error}=await sb.from('salaries').insert(payload).select().single();
+    const{data,error}=await EatimeScope.from('salaries').insert(payload).select().single();
     if(error){toast('Erreur: '+error.message);return;}
     sid=data.id;currentFiche.id=sid;
   }
@@ -1233,10 +1244,10 @@ async function saveSalarie(){
   // rôles + niveau d'expérience (assignation dynamique)
   const raChks=document.querySelectorAll('.ra-chk');
   if(raChks.length){
-    await sb.from('salarie_roles').delete().eq('salarie_id',sid).is('restaurant_id',null);
+    await EatimeScope.from('salarie_roles').delete().eq('salarie_id',sid).is('restaurant_id',null);
     const rows=[];
     raChks.forEach(chk=>{ if(chk.checked){ const cle=chk.dataset.cle; const sel=document.querySelector('.ra-niv[data-cle="'+cle+'"]'); rows.push({salarie_id:sid,role:cle,niveau:(sel&&sel.value)||'experimente'}); } });
-    if(rows.length) await sb.from('salarie_roles').insert(rows);
+    if(rows.length) await EatimeScope.from('salarie_roles').insert(rows);
   }
   toast('Enregistré ✓');await loadAll();
   currentFiche=S.salaries.find(x=>x.id===sid);
@@ -1279,14 +1290,15 @@ function sortirSalarie(){
 }
 async function doSortie(){
   if(!currentFiche.id)return;
+  if(!EatimeScope.verifierAppartenance(currentFiche,'Ce salarié')) return;   // désactivation
   const date=val('so_date',false);
   if(!date){toast('Choisis une date de sortie');return;}
   let motif=document.getElementById('so_motif').value;
   if(motif==='Autre') motif=val('so_autre')||'Autre';
-  const{error}=await sb.from('salaries').update({date_sortie:date,motif_sortie:motif||null,actif:false}).eq('id',currentFiche.id);
+  const{error}=await EatimeScope.from('salaries').update({date_sortie:date,motif_sortie:motif||null,actif:false}).eq('id',currentFiche.id);
   if(error){toast('Erreur: '+error.message);return;}
   // Propagation planning : on retire les créneaux planifiés À PARTIR de la date de sortie (l'historique d'avant reste intact)
-  await sb.from('planning_creneaux').delete().eq('salarie_id',currentFiche.id).gte('date',date);
+  await EatimeScope.from('planning_creneaux').delete().eq('salarie_id',currentFiche.id).gte('date',date);
   closeModal();
   toast('Salarié sorti des effectifs ✓');await loadAll();
   currentFiche=S.salaries.find(x=>x.id===currentFiche.id);
@@ -1295,8 +1307,9 @@ async function doSortie(){
 
 async function reintegrerSalarie(){
   if(!currentFiche.id)return;
+  if(!EatimeScope.verifierAppartenance(currentFiche,'Ce salarié')) return;   // réintégration
   if(!confirm('Réintégrer ce salarié ? (la date et le motif de sortie seront effacés)'))return;
-  const{error}=await sb.from('salaries').update({date_sortie:null,motif_sortie:null,actif:true}).eq('id',currentFiche.id);
+  const{error}=await EatimeScope.from('salaries').update({date_sortie:null,motif_sortie:null,actif:true}).eq('id',currentFiche.id);
   if(error){toast('Erreur: '+error.message);return;}
   toast('Réintégré ✓');await loadAll();
   currentFiche=S.salaries.find(x=>x.id===currentFiche.id);
@@ -1331,9 +1344,10 @@ function delSalarie(){
 }
 async function doDelSalarie(){
   if(!currentFiche.id)return;
+  if(!EatimeScope.verifierAppartenance(currentFiche,'Ce salarié')) return;   // suppression définitive
   // Nettoie les créneaux de planning rattachés avant suppression (évite toute ligne orpheline résiduelle)
-  await sb.from('planning_creneaux').delete().eq('salarie_id',currentFiche.id);
-  const{error}=await sb.from('salaries').delete().eq('id',currentFiche.id);
+  await EatimeScope.from('planning_creneaux').delete().eq('salarie_id',currentFiche.id);
+  const{error}=await EatimeScope.from('salaries').delete().eq('id',currentFiche.id);
   if(error){toast('Erreur: '+error.message);return;}
   closeModal();toast('Salarié supprimé');await loadAll();closeFiche();
 }
@@ -1345,11 +1359,11 @@ async function addDispo(){
     motif:val('nd_motif'),heure_debut:val('nd_hd',false),heure_fin:val('nd_hf',false)};
   if(type==='ponctuelle')row.date_specifique=val('nd_date',false);
   else row.jour_semaine=parseInt(document.getElementById('nd_jour').value);
-  const{error}=await sb.from('salarie_dispos').insert(row);
+  const{error}=await EatimeScope.from('salarie_dispos').insert(row);
   if(error){toast('Erreur: '+error.message);return;}
-  const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();toast('Ajoutée');
+  const{data}=await EatimeScope.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();toast('Ajoutée');
 }
-async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await sb.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const{data}=await sb.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
+async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await EatimeScope.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const{data}=await EatimeScope.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
 async function addContrainte(){
   const id=currentFiche.id;
   const cle=document.getElementById('nc_cle').value;
@@ -1360,11 +1374,11 @@ async function addContrainte(){
   if(m.input==='bool') valeur=document.getElementById('nc_val_chk').checked?'true':'false';
   else valeur=(document.getElementById('nc_val').value||'').trim();
   if(m.input!=='bool' && !valeur){ toast('Renseigne une valeur'); return; }
-  const{error}=await sb.from('salarie_contraintes').insert({salarie_id:id,cle,valeur,active:true});
+  const{error}=await EatimeScope.from('salarie_contraintes').insert({salarie_id:id,cle,valeur,active:true});
   if(error){toast('Erreur: '+error.message);return;}
-  const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();toast('Ajoutée');
+  const{data}=await EatimeScope.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();toast('Ajoutée');
 }
-async function delContrainte(cid){if(!confirm('Supprimer cette contrainte ?'))return;const{error}=await sb.from('salarie_contraintes').delete().eq('id',cid);if(error){toast('Erreur : '+error.message);return;}const{data}=await sb.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();}
+async function delContrainte(cid){if(!confirm('Supprimer cette contrainte ?'))return;const{error}=await EatimeScope.from('salarie_contraintes').delete().eq('id',cid);if(error){toast('Erreur : '+error.message);return;}const{data}=await EatimeScope.from('salarie_contraintes').select('*');S.contraintes=data||[];renderContrList();render();}
 
 let _uploadingDoc=false;
 async function uploadDoc(){
@@ -1391,9 +1405,9 @@ async function uploadDoc(){
     const path=`${id}/${type}/${Date.now()}_${f.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
     const up=await sb.storage.from('salaries-docs').upload(path,f,{contentType:f.type||'application/octet-stream'});
     if(up.error){toast('Upload: '+up.error.message);return;}
-    const{error}=await sb.from('salarie_documents').insert({salarie_id:id,type,nom:f.name,path,taille:f.size,content_type:f.type});
+    const{error}=await EatimeScope.from('salarie_documents').insert({salarie_id:id,type,nom:f.name,path,taille:f.size,content_type:f.type});
     if(error){toast('DB: '+error.message);return;}
-    const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
+    const{data}=await EatimeScope.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
     renderFiche();render();
     toast(`✓ ${typeLabel} ajouté${typeLabel.toLowerCase().endsWith('e')?'':'e'} : ${f.name}`);
   }catch(err){
@@ -1422,8 +1436,8 @@ async function dlDoc(path,filename){
 async function delDoc(did,path){
   if(!confirm('Supprimer ce document ?'))return;
   await sb.storage.from('salaries-docs').remove([path]);
-  await sb.from('salarie_documents').delete().eq('id',did);
-  const{data}=await sb.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
+  await EatimeScope.from('salarie_documents').delete().eq('id',did);
+  const{data}=await EatimeScope.from('salarie_documents').select('*').order('created_at',{ascending:false});S.docs=data||[];
   renderFiche();render();toast('Supprimé');
 }
 
@@ -1453,10 +1467,10 @@ function onAltYearChange(){ ALT.annee=document.getElementById('alt_annee').value
 function markAltDirty(){ const b=document.getElementById('altDirty'); if(b)b.style.display=ALT.dirty?'inline-flex':'none'; }
 async function loadAltCal(salId){
   const annee=ALT.annee;
-  const {data:cal}=await sb.from('alternance_calendrier').select('*').eq('salarie_id',salId).eq('annee_scolaire',annee).maybeSingle();
+  const {data:cal}=await EatimeScope.from('alternance_calendrier').select('*').eq('salarie_id',salId).eq('annee_scolaire',annee).maybeSingle();
   ALT.cal=cal||null; const cfa=document.getElementById('alt_cfa'); if(cfa)cfa.value=cal?.cfa_nom||'';
   ALT.period=(cal&&cal.date_debut&&cal.date_fin)?{debut:cal.date_debut,fin:cal.date_fin}:altPeriod(annee);
-  const {data:jours}=await sb.from('alternance_jours').select('*').eq('salarie_id',salId).gte('date',ALT.period.debut).lte('date',ALT.period.fin);
+  const {data:jours}=await EatimeScope.from('alternance_jours').select('*').eq('salarie_id',salId).gte('date',ALT.period.debut).lte('date',ALT.period.fin);
   ALT.jours={}; (jours||[]).forEach(j=>ALT.jours[j.date]={id:j.id,type:j.type,source:j.source});
   ALT.dirty=false; markAltDirty(); renderAltCalendar();
   // calendrier vierge → pré-remplit automatiquement les week-ends en repos (saisie semi-manuelle : l'admin n'a plus qu'à peindre l'école).
@@ -1505,7 +1519,7 @@ function clearAltCal(){ if(!confirm('Vider tout le calendrier affiché ?\n\n(Rie
 async function saveAltConfig(){
   const sal=currentFiche.id, annee=ALT.annee, p=ALT.period||altPeriod(annee);
   const payload={salarie_id:sal,organization_id:ME.organization_id,annee_scolaire:annee,cfa_nom:val('alt_cfa'),date_debut:p.debut,date_fin:p.fin};
-  const {error}=await sb.from('alternance_calendrier').upsert(payload,{onConflict:'salarie_id,annee_scolaire'}).select().single();
+  const {error}=await EatimeScope.from('alternance_calendrier').upsert(payload,{onConflict:'salarie_id,annee_scolaire'}).select().single();
   if(error){toast('Erreur: '+error.message);return false;}
   return true;
 }
@@ -1513,18 +1527,18 @@ async function saveAltConfig(){
 async function applyAltCal(){
   const sal=currentFiche.id, annee=ALT.annee, p=ALT.period||altPeriod(annee);
   if(!await saveAltConfig())return;
-  await sb.from('alternance_jours').delete().eq('salarie_id',sal).gte('date',p.debut).lte('date',p.fin);
+  await EatimeScope.from('alternance_jours').delete().eq('salarie_id',sal).gte('date',p.debut).lte('date',p.fin);
   const rows=Object.entries(ALT.jours).filter(([d])=>d>=p.debut&&d<=p.fin).map(([date,j])=>({salarie_id:sal,organization_id:ME.organization_id,date,type:j.type,source:j.source||'manuel'}));
-  for(let i=0;i<rows.length;i+=200){ const {error}=await sb.from('alternance_jours').insert(rows.slice(i,i+200)); if(error){toast('Erreur: '+error.message);return;} }
-  await sb.from('alternance_calendrier').update({statut:'valide',validated_at:new Date().toISOString()}).eq('salarie_id',sal).eq('annee_scolaire',annee);
+  for(let i=0;i<rows.length;i+=200){ const {error}=await EatimeScope.from('alternance_jours').insert(rows.slice(i,i+200)); if(error){toast('Erreur: '+error.message);return;} }
+  await EatimeScope.from('alternance_calendrier').update({statut:'valide',validated_at:new Date().toISOString()}).eq('salarie_id',sal).eq('annee_scolaire',annee);
   // events examens (rappel J-7) + rentrée — purge/recrée les events auto CFA de la période
   const nm=[currentFiche.prenom,currentFiche.nom].filter(Boolean).join(' ').trim()||currentFiche.nom||'Alternant';
-  await sb.from('calendar_events').delete().eq('salarie_id',sal).gte('date_debut',p.debut).lte('date_debut',p.fin).like('description','%[alternance-auto]%');
+  await EatimeScope.from('calendar_events').delete().eq('salarie_id',sal).gte('date_debut',p.debut).lte('date_debut',p.fin).like('description','%[alternance-auto]%');
   const exas=rows.filter(r=>r.type==='examen').map(r=>r.date).sort();
   const evs=exas.map(d=>({titre:`🎓 Examen — ${nm}`,type:'formation',salarie_id:sal,date_debut:d,all_day:true,description:'[alternance-auto] Jour d\'examen CFA',color:'#2e5496',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id}));
   const ecoles=rows.filter(r=>r.type==='ecole').map(r=>r.date).sort();
   if(ecoles.length) evs.push({titre:`📚 Rentrée CFA — ${nm}`,type:'formation',salarie_id:sal,date_debut:ecoles[0],all_day:true,description:'[alternance-auto] Début de formation',color:'#5b9cff',reminder_days:7,organization_id:ME.organization_id,created_by:ME.id});
-  if(evs.length){ const {error}=await sb.from('calendar_events').insert(evs); if(error)toast('Events: '+error.message); }
+  if(evs.length){ const {error}=await EatimeScope.from('calendar_events').insert(evs); if(error)toast('Events: '+error.message); }
   const bloc=rows.filter(r=>['ecole','examen'].includes(r.type)).length;
   await loadAltCal(sal);
   toast(`✅ Appliqué — ${bloc} jour(s) bloquant(s) au planning · ${exas.length} examen(s) au Calendrier RH`);
@@ -1934,7 +1948,7 @@ let _cfaMappings=[];
 const CFA_MATCH_DELTAE=24;   // tolérance de match d'un cluster à un mapping mémorisé (> seuil de clustering)
 async function cfaLoadMappings(){
   try{
-    const {data}=await sb.from('cfa_color_mappings').select('id,source_label,rgb,categorie').eq('organization_id',ME.organization_id);
+    const {data}=await EatimeScope.from('cfa_color_mappings').select('id,source_label,rgb,categorie').eq('organization_id',ME.organization_id);
     _cfaMappings=(data||[]).map(m=>{ const rgb=(m.rgb||'').split(',').map(Number); return {id:m.id,source:m.source_label||null,rgb,lab:cfaRgb2lab(rgb[0]||255,rgb[1]||255,rgb[2]||255),categorie:m.categorie}; });
   }catch(e){ _cfaMappings=[]; }
   return _cfaMappings;
@@ -1957,8 +1971,8 @@ async function cfaSaveMappings(map){
       const cat=map[c.id]; if(!cat||cat==='ignore')continue;
       const lab=cfaRgb2lab(c.rgb[0],c.rgb[1],c.rgb[2]);
       let near=null,bd=1e9; for(const m of _cfaMappings){ if(m.source!=null && m.source!==source)continue; const d=cfaDE(lab,m.lab); if(d<bd){bd=d;near=m;} }
-      if(near && bd<16){ ops.push(sb.from('cfa_color_mappings').update({rgb:c.rgb.join(','),categorie:cat,source_label:source,updated_at:new Date().toISOString()}).eq('id',near.id)); near.categorie=cat; near.lab=lab; }
-      else { ops.push(sb.from('cfa_color_mappings').insert({organization_id:ME.organization_id,source_label:source,rgb:c.rgb.join(','),categorie:cat})); _cfaMappings.push({id:null,source,rgb:c.rgb,lab,categorie:cat}); }
+      if(near && bd<16){ ops.push(EatimeScope.from('cfa_color_mappings').update({rgb:c.rgb.join(','),categorie:cat,source_label:source,updated_at:new Date().toISOString()}).eq('id',near.id)); near.categorie=cat; near.lab=lab; }
+      else { ops.push(EatimeScope.from('cfa_color_mappings').insert({organization_id:ME.organization_id,source_label:source,rgb:c.rgb.join(','),categorie:cat})); _cfaMappings.push({id:null,source,rgb:c.rgb,lab,categorie:cat}); }
     }
     if(ops.length) await Promise.allSettled(ops);
   }catch(e){ console.warn('[cfa] sauvegarde mapping:',e); }
