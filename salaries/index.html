@@ -237,7 +237,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.21 · portée de l\'organisation active : toutes les lectures et écritures sont bornées, et une écriture visant une autre organisation est refusée';
+const VERSION='v0.22 · import du calendrier CFA : la couleur est lue dans le PDF (plus échantillonnée à l\'écran), seule l\'année scolaire choisie est reprise, et le résultat est confronté au total que le document annonce — un écart bloque le pré-remplissage au lieu de le proposer en silence';
 let ME=null;
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -1840,9 +1840,148 @@ function cfaFinalize(samples,clusters,fmt){
   const vals=Object.values(byDate); const low=vals.filter(v=>v.conf<CFA_CONF_SEUIL).length;
   return {byDate,clusters:clusterList,fmt,lowRate:vals.length?low/vals.length:0};
 }
+// ══ PDF VECTORIEL : la couleur est LUE dans le PDF, pas échantillonnée à l'écran ═══════════════
+//
+// POURQUOI CE CHEMIN EXISTE (mesuré sur « BTS MCO 26-28.pdf », 12/08/2026)
+// Dans ces calendriers, chaque jour occupe TROIS cases côte à côte :
+//     [ 17 pt : le numéro ][ 13 pt : la lettre du jour ][ 65 pt : LE STATUT ]
+// La couleur qui distingue école / entreprise / week-end est dans la TROISIÈME. L'ancien chemin
+// (cfaFromPdfText, conservé plus bas) échantillonne les pixels AUTOUR DU NUMÉRO — donc toujours
+// la première case, uniformément grise. Il ne pouvait donc pas, structurellement, distinguer un
+// jour d'école d'un jour en entreprise : quel que soit le réglage, le compte était faux.
+// Ici on lit les rectangles remplis du PDF lui-même (getOperatorList) : couleurs exactes, sans
+// rastérisation ni anti-crénelage. Sur le fichier de référence, cela retombe au jour près sur le
+// total que le document annonce (93 pour l'année 1, 91 pour l'année 2).
+//
+// Extraction BRUTE d'une page : textes positionnés + rectangles remplis avec leur couleur exacte.
+async function cfaVectorPage(page){
+  const OPS=pdfjsLib.OPS, NOM={}; for(const k in OPS) NOM[OPS[k]]=k;
+  const ol=await page.getOperatorList(), tc=await page.getTextContent();
+  const mul=(a,b)=>[a[0]*b[0]+a[2]*b[1],a[1]*b[0]+a[3]*b[1],a[0]*b[2]+a[2]*b[3],a[1]*b[2]+a[3]*b[3],a[0]*b[4]+a[2]*b[5]+a[4],a[1]*b[4]+a[3]*b[5]+a[5]];
+  const app=(m,x,y)=>[m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5]];
+  const rects=[]; let ctm=[1,0,0,1,0,0], fill=[0,0,0]; const pile=[];
+  for(let i=0;i<ol.fnArray.length;i++){
+    const nm=NOM[ol.fnArray[i]], a=ol.argsArray[i];
+    if(nm==='save') pile.push({ctm:ctm.slice(),fill:fill.slice()});
+    else if(nm==='restore'){ const s=pile.pop(); if(s){ctm=s.ctm;fill=s.fill;} }
+    else if(nm==='transform') ctm=mul(ctm,a);
+    else if(nm==='setFillRGBColor') fill=[a[0],a[1],a[2]];
+    else if(nm==='constructPath'){
+      const [ops,args]=a; if(!/Fill/i.test(NOM[ol.fnArray[i+1]]||'')) continue;   // tracé non rempli → ignoré
+      let k=0;
+      for(const o of ops){
+        if(o===OPS.rectangle){ const x=args[k],y=args[k+1],w=args[k+2],h=args[k+3]; k+=4;
+          const c1=app(ctm,x,y), c2=app(ctm,x+w,y+h);
+          rects.push({x0:Math.min(c1[0],c2[0]),y0:Math.min(c1[1],c2[1]),x1:Math.max(c1[0],c2[0]),y1:Math.max(c1[1],c2[1]),rgb:fill.slice()}); }
+        else if(o===OPS.moveTo||o===OPS.lineTo) k+=2;
+        else if(o===OPS.curveTo) k+=6;
+        else if(o===OPS.curveTo2||o===OPS.curveTo3) k+=4;
+      }
+    }
+  }
+  const items=(tc.items||[]).map(it=>({str:(it.str||'').trim(),x:it.transform[4],y:it.transform[5],w:it.width||0})).filter(i=>i.str);
+  return {items,rects};
+}
+// ANALYSE PURE (aucun pdf.js, aucune E/S) — c'est CETTE fonction que le harnais rejoue sur une
+// extraction du fichier réel (tests/fixtures/cfa_bts_mco_26-28.json). pages = [{items,rects}].
+function cfaVectorAnalyse(pages,annee){
+  const bornes=(a=>{const y=parseInt(String(a||'').split('-')[0]); return isNaN(y)?null:{d:`${y}-09-01`,f:`${y+1}-08-31`};})(annee);
+  const mode=vals=>{ const h={}; vals.forEach(v=>{const k=Math.round(v); h[k]=(h[k]||0)+1;}); const e=Object.entries(h).sort((a,b)=>b[1]-a[1])[0]; return e?+e[0]:0; };
+  const out={samples:[],annonce:null,pagesGardees:[],pagesIgnorees:[],numeros:0,apparies:0};
+  pages.forEach((pg,idx)=>{
+    const numPage=idx+1;
+    const items=pg.items||[], rects=pg.rects||[];
+    const txt=items.map(i=>i.str).join(' ').replace(/\s+/g,' ');
+    // Le document annonce son propre total : « Année 1 : Période Ecole 93 jours - 744 heures ».
+    // C'est le seul contrôle qui vaille, quelle que soit la méthode de lecture.
+    const mT=txt.match(/(\d{2,3})\s*jours?\s*[-–]\s*(\d{3,4})\s*heures?/i);
+    const mA=txt.match(/ann[ée]e\s*(\d)\s*:/i);
+    const annonce=mT?{jours:+mT[1],heures:+mT[2],annee:mA?+mA[1]:null}:null;
+    // En-têtes de mois. cfaParseMonth normalise déjà (NFD, minuscules, espaces retirés).
+    const heads=[]; for(const it of items){ const pm=cfaParseMonth(it.str); if(pm&&pm.y!=null) heads.push({mi:pm.mi,y:pm.y,cx:it.x+(it.w||0)/2,cy:it.y}); }
+    if(!heads.length){ out.pagesIgnorees.push({page:numPage,raison:'aucun en-tête de mois daté'}); return; }
+    // Cases : on écarte les filets (hauteur ≈ 1 pt) qui ne sont pas des cellules.
+    const cells=rects.filter(r=>(r.y1-r.y0)>5 && (r.x1-r.x0)>2);
+    const wNum=mode(cells.filter(r=>(r.x1-r.x0)<40).map(r=>r.x1-r.x0));   // largeur type de la case-numéro
+    if(!wNum){ out.pagesIgnorees.push({page:numPage,raison:'grille illisible'}); return; }
+    const statuts=cells.filter(r=>(r.x1-r.x0)>=wNum*1.8);                 // la case de statut est nettement plus large
+    const nums=items.filter(it=>/^\d{1,2}$/.test(it.str)&&+it.str>=1&&+it.str<=31);
+    // Appariement : pour chaque case de STATUT, le jour est le numéro le plus proche À SA GAUCHE
+    // sur la même ligne. Ce sens de recherche (statut → numéro) évite d'avoir à deviner la largeur
+    // du groupe : la légende et le bandeau de titre n'ont aucun numéro à leur gauche, donc ils
+    // s'éliminent d'eux-mêmes.
+    const pris=new Map();
+    for(const r of statuts){
+      let g=null;
+      for(const t of nums){ if(t.y>=r.y0 && t.y<=r.y1 && t.x<r.x0 && (!g||t.x>g.x)) g=t; }
+      if(!g || pris.has(g)) continue;
+      pris.set(g,r);
+    }
+    // Jour → mois. Dans ces calendriers chaque mois est une COLONNE VERTICALE : tous les numéros
+    // d'un même mois partagent la même abscisse, et l'en-tête coiffe la colonne. On regroupe donc
+    // les numéros par abscisse, puis on apparie colonnes et en-têtes PAR RANG (de gauche à droite).
+    // L'ancienne règle — « l'en-tête le plus proche au-dessus » — confondait les colonnes voisines
+    // et produisait des dates en double : mesuré à 88 doublons et 65 jours manquants sur ce fichier.
+    const colsX=[];
+    for(const t of pris.keys()){ const c=colsX.find(c=>Math.abs(c.x-t.x)<12); if(c){c.n++;} else colsX.push({x:t.x,n:1}); }
+    colsX.sort((a,b)=>a.x-b.x);
+    const hx=heads.slice().sort((a,b)=>a.cx-b.cx);
+    const parRang=colsX.length===hx.length;   // cas nominal : autant de colonnes que d'en-têtes
+    const enTete=t=>{
+      let i=0,bd=1e9; colsX.forEach((c,k)=>{ const d=Math.abs(c.x-t.x); if(d<bd){bd=d;i=k;} });
+      return parRang?hx[i]:heads.reduce((a,b)=>(Math.abs(b.cx-t.x)<Math.abs(a.cx-t.x)?b:a));
+    };
+    const parPage=[];
+    for(const [t,r] of pris){
+      const h=enTete(t); if(!h) continue;
+      const n=+t.str, dernier=new Date(h.y,h.mi+1,0).getDate(); if(n>dernier) continue;   // 31 février & co
+      const date=`${h.y}-${String(h.mi+1).padStart(2,'0')}-${String(n).padStart(2,'0')}`;
+      parPage.push({date,rgb:r.rgb.slice(),d:n});
+    }
+    // Garde-fou : une date vue deux fois signifie que l'appariement colonne↔mois a dérapé.
+    // On préfère refuser la page que proposer un calendrier faux.
+    const vues=new Set(), dbl=[];
+    for(const s of parPage){ if(vues.has(s.date)) dbl.push(s.date); else vues.add(s.date); }
+    if(dbl.length){ out.pagesIgnorees.push({page:numPage,raison:`grille incohérente (${dbl.length} dates en double)`}); return; }
+    out.numeros+=nums.length; out.apparies+=parPage.length;
+    // Le document couvre plusieurs années scolaires : on ne retient QUE celle qui est demandée.
+    const dedans=bornes?parPage.filter(s=>s.date>=bornes.d&&s.date<=bornes.f):parPage;
+    const libelle=(()=>{ const ds=parPage.map(s=>s.date).sort(); return ds.length?`${ds[0].slice(0,7)} → ${ds[ds.length-1].slice(0,7)}`:'—'; })();
+    if(!dedans.length){ out.pagesIgnorees.push({page:numPage,raison:`couvre ${libelle}, hors de ${annee}`,annonce}); return; }
+    out.samples.push(...dedans);
+    out.pagesGardees.push({page:numPage,periode:libelle,jours:dedans.length,annonce});
+    if(annonce && !out.annonce) out.annonce=annonce;   // total annoncé de la (première) page retenue
+  });
+  return out;
+}
+// Orchestration : lit toutes les pages, analyse, puis réutilise le regroupement de couleurs et la
+// finalisation communes (cfaCluster / cfaFinalize) pour que la suite du parcours reste identique.
+async function cfaFromPdfVector(file,onStep){
+  onStep&&onStep('Lecture du PDF (couleurs vectorielles)…',30,true);
+  let pdf; try{ pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise; }catch(_){ return {error:'__novector__'}; }
+  const pages=[];
+  for(let p=1;p<=pdf.numPages;p++){ try{ pages.push(await cfaVectorPage(await pdf.getPage(p))); }catch(_){ /* page illisible : ignorée */ } }
+  if(!pages.length) return {error:'__novector__'};
+  onStep&&onStep('Association des jours et des couleurs…',70,true);
+  const annee=ALT.annee||schoolYears()[1];
+  const a=cfaVectorAnalyse(pages,annee);
+  if(!a.samples.length){
+    // Distinguer « ce PDF n'est pas un calendrier vectoriel » (→ on essaie les autres chemins) de
+    // « c'en est un, mais il ne couvre pas l'année demandée » (→ le dire, ne PAS retomber en
+    // silence sur une méthode moins fiable qui produirait un calendrier faux).
+    const hors=(a.pagesIgnorees||[]).filter(p=>/hors de/.test(p.raison||''));
+    if(hors.length) return {error:`Ce calendrier ne couvre pas ${annee} : ${hors.map(p=>p.raison.replace(/^couvre /,'')).join(' ; ')}. Change l'année scolaire ci-dessus, ou remplis au pinceau.`};
+    return {error:'__novector__'};
+  }
+  const r=cfaFinalize(a.samples,cfaCluster(a.samples),'PDF vectoriel — couleurs lues dans le fichier');
+  r.annonce=a.annonce; r.pagesGardees=a.pagesGardees; r.pagesIgnorees=a.pagesIgnorees;
+  r.integrite={numeros:a.numeros,apparies:a.apparies};
+  return r;
+}
 // PDF VECTORIEL avec couche texte : on lit les positions des mois/jours via pdf.js getTextContent()
 // (fiable, AUCUN OCR), on déduit la grille (mini-mois en 2D), et on échantillonne la couleur de fond
 // de chaque case sur le rendu canvas. Tesseract n'est gardé qu'en fallback (PDF scanné, sans texte).
+// CONSERVÉ EN SECOURS : couvre les calendriers dont la couleur EST le fond de la case du numéro.
 async function cfaFromPdfText(file,onStep){
   onStep&&onStep('Lecture du PDF (couche texte)…',30,true);
   const buf=await file.arrayBuffer(); const pdf=await pdfjsLib.getDocument({data:buf}).promise; const page=await pdf.getPage(1);
@@ -1934,9 +2073,11 @@ async function cfaDetect(file,onStep){
     const tt=await cfaFromTimetable(file,onStep);        // 0) emploi du temps TEXTUEL (jours d'école)
     if(tt && tt.timetable) return tt;
     if(tt && tt.error && tt.error!=='__notimetable__') return tt;   // emploi du temps lu mais vide → erreur claire
-    const r=await cfaFromPdfText(file,onStep);          // 1) calendrier couleur, couche texte (vectoriel) — sans OCR
+    const v=await cfaFromPdfVector(file,onStep);        // 1) couleurs LUES dans le PDF (le plus fiable)
+    if(!(v&&v.error==='__novector__')) return v;
+    const r=await cfaFromPdfText(file,onStep);          // 2) secours : couleur échantillonnée sur le rendu
     if(!(r&&r.error==='__notext__')) return r;
-    onStep&&onStep('PDF scanné — OCR…',20,true);         // 2) fallback : PDF image → Tesseract
+    onStep&&onStep('PDF scanné — OCR…',20,true);         // 3) dernier recours : PDF image → Tesseract
     const id=await cfaPdfToImageData(file); return await cfaFromImage(id,onStep);
   }
   onStep&&onStep('Chargement de l\'image…',20,true);
@@ -2110,6 +2251,18 @@ function prefillWeekends(silent){
   if(!silent) toast(n?`✓ ${n} week-ends pré-remplis en repos`:'Week-ends déjà remplis');
   return n;
 }
+// ── Contrôle contre le total que le document annonce lui-même ─────────────────────────────────
+// Ces calendriers portent leur propre compte (« Année 1 : Période Ecole 93 jours - 744 heures »).
+// C'est la SEULE garantie qui vaille, quelle que soit la méthode de lecture : si l'extraction
+// retombe dessus, on peut proposer ; sinon il faut le dire et ne rien pré-remplir en silence.
+// Un import qui propose un résultat faux sans le signaler est pire qu'un import qui échoue : le
+// patron valide, et un alternant se retrouve placé en entreprise un jour d'école toute l'année.
+// Fonction PURE (testée par tests/cfa_vector_test.js). Renvoie null si le document n'annonce rien.
+function cfaControleTotal(det,map){
+  const a=det&&det.annonce; if(!a||!a.jours) return null;
+  let n=0; for(const v of Object.values(det.byDate||{})){ const t=map[v.cluster]; if(t==='ecole'||t==='examen') n++; }
+  return {annonce:a.jours,heures:a.heures||null,trouve:n,ecart:n-a.jours,ok:n===a.jours};
+}
 // Modale d'association CLUSTER DE COULEUR DÉTECTÉ → catégorie (l'humain donne le sens).
 const CFA_MAP_TYPES=[['ecole','🎓 École'],['examen','📝 Examen'],['entreprise','🏢 Entreprise'],['vacances','🏖️ Vacances'],['ferie','🎌 Férié'],['repos','😴 Repos'],['ignore','— Ignorer —']];
 function showCfaClusters(det){
@@ -2123,24 +2276,66 @@ function showCfaClusters(det){
     const auto=(c.id==='weekend'||c.id==='ferie'); const guess=!auto?cfaGuessCategory(c.rgb,src):null; if(guess)nMem++;
     const def=guess||(c.id==='weekend'?'repos':(c.id==='ferie'?'ferie':(CFA_MAP_TYPES.find(t=>t[0]===c.id)?c.id:'ignore')));
     const lowPct=Math.round((1-(c.conf||1))*100);
+    // Repère visuel : la couleur dont l'effectif tombe pile sur le total annoncé est, sauf
+    // surprise, celle de l'école. On le SIGNALE sans le décider à la place de l'utilisateur.
+    const colle=(det.annonce&&det.annonce.jours===c.n)?' <span style="color:#2e9e5b;font-weight:600" title="Cet effectif correspond exactement au total annoncé par le document">✅ = total annoncé</span>':'';
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)">
       <span style="width:24px;height:24px;border-radius:6px;border:1px solid var(--line-2);background:${rgbCss(c.rgb)}"></span>
-      <span style="flex:1;font-size:13px">${c.id==='weekend'?'Week-end / férié':(c.id==='ferie'?'🎌 Jours « FERIE »':'Couleur détectée')}${guess?' <span style="color:var(--gold)" title="Pré-rempli depuis ce que tu as déjà mappé">✨ mémorisé</span>':''} <span style="color:var(--muted)">(${c.n} j${lowPct>20?` · ⚠ ${lowPct}% incertain`:''})</span></span>
+      <span style="flex:1;font-size:13px">${c.id==='weekend'?'Week-end / férié':(c.id==='ferie'?'🎌 Jours « FERIE »':'Couleur détectée')}${guess?' <span style="color:var(--gold)" title="Pré-rempli depuis ce que tu as déjà mappé">✨ mémorisé</span>':''} <span style="color:var(--muted)">(${c.n} j${lowPct>20?` · ⚠ ${lowPct}% incertain`:''})</span>${colle}</span>
       <select class="cfa-map" data-c="${c.id}" style="background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:7px;padding:6px 8px">${CFA_MAP_TYPES.map(t=>`<option value="${t[0]}" ${def===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select>
     </div>`;}).join('');
   const lowRate=Math.round((det.lowRate||0)*100);
+  // Bandeau : ce que le document annonce, et quelles pages ont été retenues. Un calendrier qui
+  // couvre plusieurs années scolaires ne doit pas être agrégé en silence.
+  const a=det.annonce;
+  const cible=a?`<div style="background:var(--surface-2,#0002);border:1px solid var(--line-2);border-radius:8px;padding:9px 11px;margin:0 0 12px;font-size:12.5px;line-height:1.55">
+      📄 Le document annonce <b>${a.jours} jours d'école</b>${a.heures?` (${a.heures} h)`:''}${a.annee?` pour son « Année ${a.annee} »`:''}.
+      Choisis la couleur qui compte <b>${a.jours} j</b> ci-dessous — c'est celle de l'école.
+    </div>`:`<div class="orange-box" style="margin:0 0 12px;font-size:12.5px">⚠ Ce document <b>n'annonce aucun total</b> : impossible de vérifier automatiquement le résultat. Relis le calendrier avant de valider.</div>`;
+  const gard=(det.pagesGardees||[]), ign=(det.pagesIgnorees||[]);
+  const pages=(gard.length||ign.length)?`<div style="color:var(--muted);font-size:12px;margin:-6px 0 12px;line-height:1.5">
+      ${gard.map(p=>`✅ page ${p.page} retenue (${p.periode}, ${p.jours} j)`).join(' · ')}
+      ${ign.length?`<br>⤫ ${ign.map(p=>`page ${p.page} ignorée — ${p.raison}`).join(' · ')}`:''}
+    </div>`:'';
   const dbgBanner=(CFA_DEBUG&&det.debug)?`<div style="background:#b8860b22;border:1px solid var(--gold);border-radius:8px;padding:8px 10px;margin:0 0 12px;font-size:11.5px;font-family:monospace;line-height:1.5">🐞 <b>DEBUG</b> · colonnes-mois: <b>${det.debug.nblocks}</b> · lignes-jours: <b>${det.debug.rows}</b> · jours: ${det.debug.days} · <b>NON-VIDES: ${det.debug.nonEmpty}</b><br>séparateurs V: ${(det.debug.vlines||[]).length} · H: ${(det.debug.hlines||[]).length} · pas mois: ${det.debug.monthPitch}px · sous-cols/mois: ${det.debug.subsPer}<br>clusters: ${Object.entries(det.debug.perCluster).map(([k,v])=>k+'×'+v).join(' · ')}<br><span style="color:var(--muted)">détail par jour → console (console.table) + <code>window._cfaDebug</code></span></div>`:'';
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:520px">
     <h2 style="margin-top:0">🎓 Détection du planning CFA <span style="font-size:12px;color:var(--muted);font-weight:400">(${det.fmt})</span></h2>
     ${dbgBanner}
+    ${cible}
+    ${pages}
     <div style="color:var(--muted);font-size:12.5px;margin:-8px 0 14px;line-height:1.5">Chaque <b style="color:var(--text)">couleur</b> de ton planning a été regroupée. Indique ce qu'elle représente. <b style="color:var(--text)">Rien n'est appliqué au planning</b> — tu corriges au pinceau puis tu valides.${nMem?` <span style="color:var(--gold)">✨ ${nMem} couleur(s) pré-remplie(s) depuis tes imports précédents.</span>`:''}${lowRate>0?` <span style="color:var(--warn)">~${lowRate}% des cases sont incertaines (surlignées à corriger).</span>`:''}</div>
     ${rows||'<div style="color:var(--muted)">Aucune couleur détectée.</div>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="applyCfaClusters()">Pré-remplir le calendrier (aperçu)</button></div>
   </div></div>`;
 }
-function applyCfaClusters(){
-  const map={}; document.querySelectorAll('.cfa-map').forEach(s=>map[s.dataset.c]=s.value);
-  const det=window._cfaDet; closeModal(); if(!det||!det.byDate){toast('Aucune donnée.');return;}
+function applyCfaClusters(forcer){
+  const map=window._cfaMapForce||{}; if(!window._cfaMapForce) document.querySelectorAll('.cfa-map').forEach(s=>map[s.dataset.c]=s.value);
+  const det=window._cfaDet;
+  // ── Contrôle contre le total annoncé, AVANT toute écriture dans l'aperçu ──
+  // On ne pré-remplit jamais un résultat qui contredit le document sans l'avoir dit.
+  if(!forcer && det){
+    const ctl=cfaControleTotal(det,map);
+    if(ctl && !ctl.ok){
+      window._cfaMapForce=map;   // on garde le choix de l'utilisateur pour le bouton « quand même »
+      document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:520px">
+        <h2 style="margin-top:0">⚠️ Le compte ne tombe pas juste</h2>
+        <div style="font-size:13.5px;line-height:1.65;margin-bottom:14px">
+          Le document annonce <b>${ctl.annonce} jours d'école</b>${ctl.heures?` (${ctl.heures} h)`:''}, mais la couleur que tu as désignée en compte <b>${ctl.trouve}</b>
+          — soit <b>${ctl.ecart>0?'+':''}${ctl.ecart} jour(s)</b> d'écart.<br><br>
+          Le plus probable est que la couleur choisie ne soit pas la bonne. <b>Rien n'a été pré-rempli.</b>
+          Reviens en arrière pour corriger l'association, ou remplis au pinceau — il reste disponible dans tous les cas.
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" onclick="closeModal();window._cfaMapForce=null">Annuler</button>
+          <button class="btn ghost" onclick="window._cfaMapForce=null;showCfaClusters(window._cfaDet)">← Corriger l'association</button>
+          <button class="btn" onclick="applyCfaClusters(true)">Pré-remplir quand même</button>
+        </div>
+      </div></div>`;
+      return;
+    }
+  }
+  window._cfaMapForce=null;
+  closeModal(); if(!det||!det.byDate){toast('Aucune donnée.');return;}
   const dates=Object.keys(det.byDate); if(!dates.length){ toast('Aucun jour détecté.'); return; }
   // cadre la vue sur la plage réellement détectée
   const sorted=dates.sort(); const dMin=new Date(sorted[0]+'T00:00:00'), dMax=new Date(sorted[sorted.length-1]+'T00:00:00');
@@ -2150,7 +2345,9 @@ function applyCfaClusters(){
     const verify=(v.conf||0)<CFA_CONF_SEUIL; ALT.jours[date]={type,source:'ocr',conf:v.conf,verify}; n++; if(verify)low++; });
   ALT.dirty=true; markAltDirty(); renderAltCalendar();
   cfaSaveMappings(map);   // mémorise couleur→catégorie pour cette org (le prochain import sera auto-rempli)
-  toast(`✓ ${n} jours pré-remplis (aperçu, ${det.fmt})${low?` · ${low} à vérifier`:''} — corrige au pinceau puis « Valider & appliquer »`);
+  const ctlOk=cfaControleTotal(det,map);
+  const sceau=ctlOk?(ctlOk.ok?` · ✅ conforme au total annoncé (${ctlOk.annonce} j)`:` · ⚠ ${ctlOk.ecart>0?'+':''}${ctlOk.ecart} j vs total annoncé, forcé`):' · ⚠ aucun total annoncé à vérifier';
+  toast(`✓ ${n} jours pré-remplis (aperçu, ${det.fmt})${low?` · ${low} à vérifier`:''}${sceau} — corrige au pinceau puis « Valider & appliquer »`);
 }
 
 // ===== OCR / Pré-remplissage =====
