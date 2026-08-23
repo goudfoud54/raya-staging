@@ -29,6 +29,9 @@ const FNS = [
   'dayJourType', 'getShifts', 'posteEnvelope',   // bornes des POSTES : ce que l'auto-fill a le droit de produire
   '_endCapState', '_endCapMin', 'capCoverageGaps', // plafond d'heure de fin, un par jour-type (7 jours couverts)
   'horsPosteOf',                      // constat « créneau hors des postes » — appelé par revalidateWeek
+  // Pas de relève en plein service : la frontière midi↔soir déduite des postes, le prédicat sur le
+  // point de coupe, et le constat balayé par revalidateWeek.
+  'jonctionService', '_postesDuRole', 'releveInterdite', '_relaisEn', 'relevesOf',
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];

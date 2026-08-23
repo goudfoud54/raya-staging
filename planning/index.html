@@ -303,7 +303,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.65 · portée de l\'organisation active : les 55 lectures et écritures du planning sont bornées explicitement, en plus de la sécurité de la base';
+const VERSION='v0.66 · plus de relève en plein service : l\'auto-fill ne coupe un poste qu\'à la frontière entre le midi et le soir, et la revalidation remonte les relèves déjà en place';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -354,6 +354,69 @@ function posteEnvelope(jt,svc,role){
     if(d<mn)mn=d; if(f>mx)mx=f;
   }
   return mn===Infinity?null:{mn,mx};
+}
+// ── PAS DE RELÈVE EN PLEIN SERVICE — un poste ne se coupe pas en deux ────────────────────────────
+// Constat du patron : l'auto-fill avait découpé le soir de Lobau en 18:00→21:00 puis 21:00→00:00, deux
+// personnes sur un seul poste de caisse. Résultat : plus personne de libre en caisse à Carnot le même
+// soir — l'auto-fill signalait un poste non comblé qu'il avait lui-même provoqué. Une coupure au milieu
+// d'un service ne coûte pas seulement l'inélégance : elle consomme DEUX salariés là où UN suffit.
+//
+// Les deux garde-fous précédents (transfert ≥ 30 min, créneau CRÉÉ ≥ 3 h) ne l'attrapent pas : les deux
+// morceaux font 3 h chacun. La cause commune est ailleurs — le solveur fait coïncider des totaux
+// d'heures sans juger si le découpage est tenable en salle. D'où une règle sur le POINT DE RELÈVE
+// lui-même, et non sur la durée des morceaux.
+//
+// ── FRONTIÈRE ENTRE LE MIDI ET LE SOIR, déduite des POSTES (jamais d'heure codée en dur) ──────────
+// Intervalle borné par la FIN des postes du midi et le DÉBUT des postes du soir de CE RÔLE, pris dans
+// un sens ou dans l'autre — ce qui règle le cas où les deux services se CHEVAUCHENT :
+//   • midi → 18:00 et soir 17:00 → …  ⇒ frontière = [17:00, 18:00] (le chevauchement lui-même) ;
+//   • midi → 14:30 et soir 18:30 → …  ⇒ frontière = [14:30, 18:30] (le creux entre les deux).
+// PAR RÔLE et non tous rôles confondus : c'est la leçon de posteEnvelope en v0.63 (la caisse peut
+// fermer bien avant la cuisine, emprunter la borne de l'autre rôle donne une frontière fausse).
+// null = ce rôle n'a de postes que d'un seul côté ⇒ aucune frontière ⇒ aucune coupure interne permise.
+function jonctionService(jt,role){
+  const m=posteEnvelope(jt,'midi',role), s=posteEnvelope(jt,'soir',role);
+  if(!m||!s) return null;
+  return {lo:Math.min(m.mx,s.mn), hi:Math.max(m.mx,s.mn)};
+}
+// Tous les postes configurés d'un (jour-type, rôle), LES DEUX SERVICES CONFONDUS, en minutes absolues.
+function _postesDuRole(jt,role){
+  const out=[];
+  for(const svc of ['midi','soir']) for(const v of (getShifts(jt,svc,role)||[])){
+    const d=_pmin(v.deb); let f=_pmin(v.fin);
+    if(d==null||f==null) continue; if(f<=d) f+=1440;
+    out.push({svc,deb:d,fin:f});
+  }
+  return out;
+}
+// Un point de RELÈVE en T (minutes absolues) est-il ILLÉGITIME pour ce rôle ce jour-là ? PURE.
+// Légitime dans deux cas seulement, tous deux LUS DANS LA CONFIGURATION de l'utilisateur :
+//   (a) T tombe dans la frontière midi↔soir → la coupure correspond à un vrai changement de service ;
+//   (b) T est la JOINTURE de deux postes configurés (fin de l'un = début de l'autre) → le restaurateur
+//       a lui-même demandé une relève à cet instant : on ne la lui interdit pas, et on ne la fait pas
+//       DÉRIVER non plus (une relève réglée à 21:00 ne doit pas glisser à 21:30).
+// Aucun poste configuré ⇒ rien à quoi comparer ⇒ pas de jugement (false), même posture que horsPosteOf.
+function releveInterdite(jt,role,T){
+  if(T==null) return false;
+  const postes=_postesDuRole(jt,role); if(!postes.length) return false;
+  const j=jonctionService(jt,role);
+  if(j && T>=j.lo && T<=j.hi) return false;                                     // (a) frontière de service
+  return !(postes.some(p=>p.fin===T) && postes.some(p=>p.deb===T));             // (b) jointure de postes
+}
+// Un AUTRE salarié prend-il le relais EXACTEMENT en T sur ce (date, service, rôle) du restaurant courant ?
+// cote='fin'   → on pose une FIN en T : quelqu'un COMMENCE-t-il en T ?
+// cote='debut' → on pose un DÉBUT en T : quelqu'un FINIT-il en T ?
+// Lecture volontairement LOCALE (restaurant courant) : une relève est un fait de SALLE — deux personnes
+// sur le même poste du même restaurant. Ce n'est pas une règle temporelle portant sur la personne, donc
+// pas de S.allCreneauxWeek ici (la revalidation, elle, balaie bien tous les restaurants — cf. relevesOf).
+function _relaisEn(date,svc,role,sid,T,cote){
+  return (S.creneaux||[]).some(c=>{
+    if(c.salarie_id===sid||c.date!==date||c.service!==svc||c.role!==role) return false;
+    if(c.restaurant_id!==SNACK.id||!c.heure_debut||!c.heure_fin) return false;
+    let d=_pmin(c.heure_debut), f=_pmin(c.heure_fin);
+    if(d==null||f==null) return false; if(f<=d) f+=1440;
+    return cote==='fin' ? d===T : f===T;
+  });
 }
 // ── Profil de BESOIN HORAIRE (projection des vagues déjà en base) ───────────────────────────────
 // nb_cible='2' + vagues [10:30→18:00, 11:30→14:30] N'EST PAS « 2 personnes tout le service » : c'est un
@@ -2989,7 +3052,7 @@ function sortCandidates(ids, h){
 //   presque toutes les fermetures normales alors que le repos légal était respecté.)
 // F2H_MATIN_MIN : un shift commençant avant cette heure est un « matin » (900 = 15:00).
 const F2H_SEUIL_DEF='00:30', F2H_MATIN_MIN=15*60;
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_lu_me:'fin trop tardive (lun→mer)', fin_je:'fin trop tardive (jeudi)', fin_ve:'fin trop tardive (vendredi)', fin_sa:'fin trop tardive (samedi)', fin_di:'fin trop tardive (dimanche)', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', hors_poste:'horaire en dehors des postes définis', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_lu_me:'fin trop tardive (lun→mer)', fin_je:'fin trop tardive (jeudi)', fin_ve:'fin trop tardive (vendredi)', fin_sa:'fin trop tardive (samedi)', fin_di:'fin trop tardive (dimanche)', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', hors_poste:'horaire en dehors des postes définis', releve:'relève en plein service', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
 // ── Contraintes individuelles (salarie_contraintes) ─────────────────────────────────────────────
 // Longtemps configurables sur la fiche salarié mais JAMAIS lues côté planning → purement décoratives.
 // Désormais branchées dans checkPlacement (donc auto-fill ET saisie manuelle, dérogeables à la main).
@@ -3006,7 +3069,7 @@ const RULE_SETTING_OF={
   coupure_min:'coupure_min', repos_quot:'repos_quotidien_h', amplitude_max:'amplitude_max',
   jour_off_min:'jour_off_min', fin_2h_pas_matin:'fin_2h_pas_matin', plafond:'plafond_hebdo',
   fin_lu_me:'fin_lu_me', fin_je:'fin_je', fin_ve:'fin_ve', fin_sa:'fin_sa', fin_di:'fin_di',
-  fin_semaine:'fin_semaine', fin_weekend:'fin_weekend', hors_poste:null,
+  fin_semaine:'fin_semaine', fin_weekend:'fin_weekend', hors_poste:null, releve:null,
   fin_veille_ecole:'fin_veille_ecole', fin_veille_examen:'fin_veille_examen',
   inter_snack:'doublon_inter_snack',
   roster:null, resto:null, role:null, exp:null, dbl_svc:null, indispo:null, cfa:null,
@@ -3015,6 +3078,7 @@ const RULE_SETTING_OF={
 // Où corriger quand ce n'est PAS un réglage du planning.
 const RULE_SOURCE_OF={
   hors_poste:'Réglages → Effectifs & postes (bouton ⏱ « Définir l\'heure exacte de chaque poste »)',
+  releve:'Réglages → Effectifs & postes (bouton ⏱ « Définir l\'heure exacte de chaque poste ») — ou fusionne les deux créneaux sur une seule personne',
   indispo:'Disponibilités du salarié (🔔 demandes) ou absence saisie',
   cfa:'Fiche du salarié → calendrier d\'alternance',
   role:'Fiche du salarié → rôles maîtrisés', exp:'Fiche du salarié → niveau par rôle',
@@ -3102,6 +3166,17 @@ function explainViolation(v, ctx){
       why = p.cote==='fin'
         ? `Ce créneau finit à ${p.fin}, alors que le poste le plus tardif de ce rôle ce jour-là s'arrête à ${_absTxt(p.mx)} (postes définis : ${bornes}).`
         : `Ce créneau commence à ${p.deb}, alors que le poste le plus matinal de ce rôle ce jour-là ouvre à ${_absTxt(p.mn)} (postes définis : ${bornes}).`;
+      break;
+    }
+    // Relève en plein service : deux personnes se passent le poste au milieu du coup de feu. Constat de
+    // la revalidation (pas une règle de checkPlacement — une relève exceptionnelle reste posable à la
+    // main). La phrase dit OÙ la coupure aurait été légitime, pour que la correction soit évidente.
+    case 'releve': {
+      const p=v._releve; if(!p) break;
+      const ou = p.jonction
+        ? `Ce jour-là, la seule coupure légitime pour ce rôle se situe entre ${_absTxt(p.jonction.lo)} et ${_absTxt(p.jonction.hi)} — la frontière entre le service du midi et celui du soir.`
+        : `Ce rôle n'a de postes que sur un seul service ce jour-là : il n'y a aucune frontière midi↔soir, donc aucune coupure interne légitime.`;
+      why=`${p.partant} finit à ${_absTxt(p.T)} et ${p.arrivant} prend la suite à ${_absTxt(p.T)} : deux personnes se relaient au milieu du service, là où une seule suffirait. ${ou}`;
       break;
     }
     case 'fin_veille_ecole': case 'fin_veille_examen': {
@@ -3756,6 +3831,42 @@ function horsPosteOf(c){
   if(deb<env.mn) return Object.assign({cote:'debut', ecart:env.mn-deb}, base);
   return null;
 }
+// RELÈVES EN PLEIN SERVICE déjà en place — fonction PURE, même posture que horsPosteOf : ce n'est pas
+// une règle de checkPlacement (une relève exceptionnelle posée à la main — un remplacement en urgence —
+// doit rester possible), c'est un CONSTAT que la revalidation remonte. L'auto-fill, lui, n'en produit
+// jamais : il est gardé en amont par releveInterdite.
+// Deux salariés DIFFÉRENTS dont l'un finit exactement là où l'autre commence, même restaurant, même
+// jour, même rôle — en un point qui n'est ni la frontière midi↔soir ni une jointure de postes.
+// ⚠ Balaie TOUS les restaurants (rows = S.allCreneauxWeek), et juge chaque groupe DANS LE CONTEXTE de
+// son restaurant : getShifts lit SNACK.id, donc sans _withSnack les postes de Lobau seraient comparés
+// à ceux du restaurant affiché. Le service n'entre PAS dans le regroupement : un midi qui s'enchaîne
+// sur un soir est justement le cas que la frontière doit trancher.
+function relevesOf(rows){
+  const groupes=new Map();
+  for(const c of (rows||[])){
+    if(!c||!c.heure_debut||!c.heure_fin||!c.restaurant_id||!c.date) continue;
+    const k=`${c.restaurant_id}|${c.date}|${c.role}`;
+    if(!groupes.has(k)) groupes.set(k,{rid:c.restaurant_id, date:c.date, role:c.role, lot:[]});
+    groupes.get(k).lot.push(c);
+  }
+  const out=[];
+  for(const g of groupes.values()){
+    if(g.lot.length<2) continue;
+    const di=(new Date(g.date+'T00:00:00').getDay()+6)%7, jt=dayJourType(di);
+    const bornes=g.lot.map(c=>{ const d=_pmin(c.heure_debut); let f=_pmin(c.heure_fin);
+      if(d==null||f==null) return null; if(f<=d) f+=1440; return {c,d,f}; }).filter(Boolean);
+    _withSnack(g.rid, ()=>{
+      for(const a of bornes) for(const b of bornes){
+        if(a.c===b.c || a.c.salarie_id===b.c.salarie_id) continue;
+        if(a.f!==b.d) continue;                                  // pas adjacents → pas une relève
+        if(!releveInterdite(jt, g.role, a.f)) continue;           // relève LÉGITIME (frontière / jointure)
+        out.push({restaurant_id:g.rid, date:g.date, role:g.role, jt, T:a.f,
+                  jonction:jonctionService(jt,g.role), partant:a.c, arrivant:b.c});
+      }
+    });
+  }
+  return out;
+}
 // Rejoue TOUTES les règles sur TOUS les créneaux de la semaine, TOUS restaurants confondus.
 // PURE (aucune requête, aucun DOM). → {infractions, derogees, total}
 function revalidateWeek(){
@@ -3822,6 +3933,34 @@ function revalidateWeek(){
       horaire:`${hp.deb}→${hp.fin}`, cle:'hors_poste', label:v.label,
       why:(expl&&expl.why)||v.label, reglage:(expl&&expl.reglage)||'', semaine:false,
       derog: der ? {motif:der.motif||'', regle:der.regle_label||der.regle_cle||''} : null});
+  }
+  // ── Troisième passe : RELÈVES EN PLEIN SERVICE ───────────────────────────────────────────────
+  // Comme le hors-poste, ce n'est pas une règle de checkPlacement : il faut donc une passe dédiée,
+  // sinon une relève posée par une ancienne version de l'auto-fill resterait invisible à jamais.
+  // UNE entrée par relève (pas une par créneau) : c'est un fait qui concerne la PAIRE. On la rattache
+  // au créneau ARRIVANT — c'est lui qu'on supprime ou qu'on fusionne pour corriger.
+  for(const rv of relevesOf(rows)){
+    const sal=salById(rv.arrivant.salarie_id), part=salById(rv.partant.salarie_id);
+    if(!sal||!part) continue;
+    const k=`releve|${rv.restaurant_id}|${rv.date}|${rv.role}|${rv.T}|${_creKey(rv.partant)}~${_creKey(rv.arrivant)}`;
+    if(seen.has(k)) continue; seen.add(k);
+    const di=(new Date(rv.date+'T00:00:00').getDay()+6)%7;
+    const v={cle:'releve', label:PLACE_RULES.releve,
+             _releve:{T:rv.T, jonction:rv.jonction, partant:fullName(part), arrivant:fullName(sal)}};
+    const expl=explainViolation(v,{shift:{deb:(rv.arrivant.heure_debut||'').slice(0,5),
+                                          fin:(rv.arrivant.heure_fin||'').slice(0,5), role:rv.role},
+                                   date:rv.date, svc:rv.arrivant.service});
+    // Dérogation assumée : posée sur l'UN OU L'AUTRE des deux créneaux de la paire (même logique que
+    // les règles de paire plus haut — le manager n'en force qu'un seul des deux).
+    const derFor=x=>derogs.find(d=>d.salarie_id===x.salarie_id && d.date===x.date
+                          && (d.service||null)===(x.service||null) && d.restaurant_id===x.restaurant_id);
+    const der=derFor(rv.arrivant)||derFor(rv.partant);
+    (der?derogees:infractions).push({
+      sid:rv.arrivant.salarie_id, name:fullName(sal), date:rv.date, jour:JOURS[di], svc:rv.arrivant.service,
+      restaurant:_restoNom(rv.restaurant_id), restaurantId:rv.restaurant_id,
+      horaire:`${(rv.arrivant.heure_debut||'').slice(0,5)}→${(rv.arrivant.heure_fin||'').slice(0,5)}`,
+      cle:'releve', label:v.label, why:(expl&&expl.why)||v.label, reglage:(expl&&expl.reglage)||'',
+      semaine:false, derog: der ? {motif:der.motif||'', regle:der.regle_label||der.regle_cle||''} : null});
   }
   const ordre=Object.keys(PLACE_RULES);
   const tri=(a,b)=>(ordre.indexOf(a.cle)-ordre.indexOf(b.cle))||String(a.date).localeCompare(String(b.date))||a.name.localeCompare(b.name);
@@ -4060,6 +4199,19 @@ async function autoFillCore(dayIndices, opt={}){
           }
           if(!moved)break;
         }
+        // ── Pas de relève fabriquée par un ajustement de bornes non plus (demande explicite du patron :
+        // « cela vaut pour toutes les phases qui redistribuent des heures »). Une rallonge qui vient buter
+        // EXACTEMENT sur l'arrivée d'un collègue en plein service transforme un trou de couverture en
+        // relève instituée — on recule alors de 30 min, jusqu'à renoncer à la rallonge s'il le faut.
+        // ⚠ On juge la position FINALE, pas chaque pas : PASSER par une borne adjacente pour la dépasser
+        // ensuite ne crée aucune relève (à l'arrivée les deux se chevauchent, c'est un renfort). Bloquer
+        // le pas intermédiaire priverait le salarié d'une rallonge parfaitement saine.
+        while(curDur>oldDur+0.001 && _relaisEn(row.date,row.service,row.role,sid,curFin,'fin') && releveInterdite(jt,row.role,curFin)){
+          curFin-=30; curDur=(curFin-curDeb)/60;
+        }
+        while(curDur>oldDur+0.001 && _relaisEn(row.date,row.service,row.role,sid,curDeb,'debut') && releveInterdite(jt,row.role,curDeb)){
+          curDeb+=30; curDur=(curFin-curDeb)/60;
+        }
         if(curDur>oldDur+0.001){ const w=await updateCreTimes(row,absToHHMM(curDeb),absToHHMM(curFin)); if(w){ rallongeH+=(curDur-oldDur); rallongeList.push({name:fullName(t.sal),sid,date:row.date,svc:row.service,oldDeb:absToHHMM(debM),oldFin:absToHHMM(finM),newDeb:absToHHMM(curDeb),newFin:absToHHMM(curFin),h:curDur-oldDur,snack:(SNACK&&SNACK.nom)||'',snackId:SNACK.id}); } }
       }
     }
@@ -4139,6 +4291,10 @@ async function autoFillCore(dayIndices, opt={}){
                   if(boundary==='start' && rf===fDeb) Rnew={deb:absToHHMM(rd),fin:absToHHMM(fFin)};   // R finit où le segment commence
                   else if(boundary==='end' && rd===fFin) Rnew={deb:absToHHMM(fDeb),fin:absToHHMM(rf)}; // R commence où le segment finit
                   else continue;
+                  // Le point de relève se DÉPLACE de 30 min (21:00 → 21:30). Si la nouvelle position
+                  // n'est ni la frontière midi↔soir ni une jointure de postes, on laisse la relève là
+                  // où le restaurateur l'a réglée plutôt que de la faire dériver vers le coup de feu.
+                  if(releveInterdite(jt,role,boundary==='start'?dDeb+30:dFin-30))continue;
                   if(checkPlacement(R,{deb:Rnew.deb,fin:Rnew.fin,role},date,svc,di,{rg,excludeSelf:true})!==null)continue;
                   const cand={kind:'ext',dRow,D,role,date,svc,di,boundary,Rrow,Rnew,sz:30,surplus:Dsurplus,inter:false,keepsPeak:_keepsPeak(dDeb,dFin,boundary,30,peakHH)};
                   if(_betterTransfer(cand,best))best=cand;
@@ -4153,6 +4309,12 @@ async function autoFillCore(dayIndices, opt={}){
                   const cible=(targetFor(di,svc)[role]||{cible:0}).cible;
                   if(_persons(date,svc,role) > cible)continue;                               // déjà à cible+1 → pas un 2e dépassement
                   const fDeb=boundary==='start'?dDeb:dFin-sz, fFin=boundary==='start'?dDeb+sz:dFin;
+                  // ⛔ LE CAS DU PATRON : découper 18:00→00:00 en 18:00→21:00 + 21:00→00:00 met deux
+                  // personnes sur un poste de caisse et prive Carnot de son caissier le même soir. Les
+                  // deux morceaux font 3 h, donc SEG_MIN ne l'attrape pas — c'est le POINT DE COUPE qui
+                  // est fautif, pas la durée. Le donneur reste entier ; le receveur reste sous son
+                  // minimum et sera signalé comme tel (mieux vaut ne pas combler que combler ainsi).
+                  if(releveInterdite(jt,role,boundary==='start'?dDeb+sz:dFin-sz))continue;
                   const seg={deb:absToHHMM(fDeb),fin:absToHHMM(fFin)};
                   if(checkPlacement(R,{deb:seg.deb,fin:seg.fin,role},date,svc,di,{rg})!==null)continue;
                   const cand={kind:'crea',dRow,D,role,date,svc,di,boundary,seg,sz,surplus:Dsurplus,cible,inter,keepsPeak:_keepsPeak(dDeb,dFin,boundary,sz,peakHH)};

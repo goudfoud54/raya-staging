@@ -51,6 +51,16 @@ const dur=(c)=>_pdur(c.heure_debut,c.heure_fin)/60;
 const hoursOf=id=>STORE.filter(c=>c.salarie_id===id).reduce((a,c)=>a+dur(c),0);
 const A='A', B='B'; const RESTOS2=[{id:A,nom:'SnackA'},{id:B,nom:'SnackB'}];
 const P3ONLY={silent:true,phase3only:true,globalUnfilled:[]};
+// v0.66 — POSTE DU SOIR EN DEUX VAGUES QUI SE RELAIENT À 21:00.
+// Depuis v0.66, l'auto-fill refuse de couper un poste d'un seul tenant en plein service (« pas de relève
+// au milieu du coup de feu » — cf. releve_test.js). Un donneur au poste 18:00→02:00 d'UN SEUL BLOC n'est
+// donc plus carvable, et les scénarios de transfert ci-dessous ne testeraient plus rien. On déclare donc
+// la relève de 21:00 comme le restaurateur l'aurait réglée : elle devient légitime, et le transfert
+// redevient applicable — ce qui est bien le sujet de ces tests (blocs ≥ SEG_MIN, donneur protégé, tag inter).
+// ⚠ Le PROFIL DE BESOIN est rigoureusement INCHANGÉ : getShifts renvoie les vagues telles quelles, et
+// 18:00→21:00 + 21:00→02:00 couvre exactement les mêmes demi-heures que 18:00→02:00 d'un bloc. Seule la
+// STRUCTURE DÉCLARÉE des postes change — c'est précisément ce que la nouvelle règle lit.
+const SOIR_RELAIS=fin=>[{deb:'18:00',fin:'21:00'},{deb:'21:00',fin}];
 // effectifs cuisine génériques (midi Lu-Me + Je + Ve ; soir Lu-Me + Je + Ve)
 const effFor=(rid,cible,expSoir)=>[
   {restaurant_id:rid,jour_type:'Lu-Me',service:'midi',role:'cuisine',nb_cible:cible,vagues:[{deb:'10:00',fin:'15:00',exp:false}]},
@@ -140,9 +150,9 @@ const effFor=(rid,cible,expSoir)=>[
           {id:'db',nom:'DB',roles:['cuisine'],exp:['cuisine'],heures_min:35,heures_max:45,
              snacks_priorites:[{priorite:1,restaurant_id:B}]}],
     eff:[...effFor(A,2,false),
-         {restaurant_id:B,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]},
-         {restaurant_id:B,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]},
-         {restaurant_id:B,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]}],
+         {restaurant_id:B,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')},
+         {restaurant_id:B,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')},
+         {restaurant_id:B,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')}],
     store:[ // R : 15h sur A (midis Lu-Me), libre le soir + Je/Ve. DB : 45h à B, soirs 8h (≥6h → carvables), surplus 10
       {restaurant_id:A,salarie_id:'r',date:D(0),service:'midi',role:'cuisine',heure_debut:'10:00',heure_fin:'15:00'},
       {restaurant_id:A,salarie_id:'r',date:D(1),service:'midi',role:'cuisine',heure_debut:'10:00',heure_fin:'15:00'},
@@ -170,8 +180,8 @@ const effFor=(rid,cible,expSoir)=>[
           {id:'hd',nom:'Haider',roles:['cuisine'],exp:['cuisine'],heures_min:35,heures_max:45}],
     eff:[{restaurant_id:B,jour_type:'Lu-Me',service:'midi',role:'cuisine',nb_cible:1,vagues:[{deb:'10:00',fin:'15:00'}]},
          {restaurant_id:B,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'00:00'}]},
-         {restaurant_id:B,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]},
-         {restaurant_id:B,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]}],
+         {restaurant_id:B,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')},
+         {restaurant_id:B,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')}],
     store:[
       {restaurant_id:B,salarie_id:'nd',date:D(0),service:'midi',role:'cuisine',heure_debut:'10:00',heure_fin:'15:00'}, // 5
       {restaurant_id:B,salarie_id:'nd',date:D(0),service:'soir',role:'cuisine',heure_debut:'18:00',heure_fin:'00:00'}, // 6
@@ -197,7 +207,9 @@ const effFor=(rid,cible,expSoir)=>[
   await run({restos:[{id:B,nom:'SnackB'}],snack:B,
     sals:[{id:'don',nom:'Don',roles:['cuisine'],exp:['cuisine'],heures_min:2,heures_max:45},
           {id:'r',nom:'R',roles:['cuisine'],exp:['cuisine'],heures_min:20,heures_max:35}],
-    eff:[{restaurant_id:B,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'23:00'}]}],
+    // Relève déclarée à 21:00 (cf. SOIR_RELAIS) : sans elle, la nouvelle règle v0.66 refuserait TOUTE
+    // coupe et ce test passerait pour la mauvaise raison, au lieu de vérifier le seuil SEG_MIN.
+    eff:[{restaurant_id:B,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('23:00')}],
     store:[
       {restaurant_id:B,salarie_id:'don',date:D(0),service:'soir',role:'cuisine',heure_debut:'18:00',heure_fin:'23:00'}, // 5h, surplus 3 mais créneau trop court pour créer 3h + résidu 3h
       {restaurant_id:B,salarie_id:'r',date:D(1),service:'soir',role:'cuisine',heure_debut:'18:00',heure_fin:'23:00'},
@@ -263,7 +275,7 @@ const effFor=(rid,cible,expSoir)=>[
     regles:[{cle:'duree_creneau_min_h',active:true,valeur:'2'},{cle:'sureffectif_minimum',active:false}],
     sals:[{id:'don',nom:'Don',roles:['cuisine'],exp:['cuisine'],heures_min:5,heures_max:45},
           {id:'r',nom:'R',roles:['cuisine'],exp:['cuisine'],heures_min:7,heures_max:35}],
-    eff:[{restaurant_id:B,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'23:00'}]}],
+    eff:[{restaurant_id:B,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('23:00')}],
     store:[
       {restaurant_id:B,salarie_id:'don',date:D(0),service:'soir',role:'cuisine',heure_debut:'18:00',heure_fin:'23:00'},
       {restaurant_id:B,salarie_id:'don',date:D(1),service:'soir',role:'cuisine',heure_debut:'18:00',heure_fin:'23:00'}, // 10h, surplus 5

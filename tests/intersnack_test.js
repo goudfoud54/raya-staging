@@ -53,6 +53,16 @@ const effFor=(rid,cible)=>[
   {restaurant_id:rid,jour_type:'Je',service:'midi',role:'cuisine',nb_cible:cible,vagues:[{deb:'10:00',fin:'15:00',exp:false}]},
   {restaurant_id:rid,jour_type:'Ve',service:'midi',role:'cuisine',nb_cible:cible,vagues:[{deb:'10:00',fin:'15:00',exp:false}]},
 ];
+// v0.66 — LES POSTES DU SOIR DÉCLARENT DEUX VAGUES QUI SE RELAIENT À 21:00.
+// Depuis v0.66, couper un poste d'un seul tenant en plein service est refusé (« pas de relève au milieu
+// du coup de feu » — cf. releve_test.js). Un donneur au poste 18:00→02:00 d'UN SEUL BLOC n'est donc plus
+// carvable du tout, et ces scénarios ne testeraient plus rien. On déclare donc la relève de 21:00 comme
+// le restaurateur l'aurait fait dans ses réglages : elle devient légitime, et le transfert redevient
+// applicable — ce qui est bien le sujet de ces tests (intra vs inter, tag, encart d'avertissement).
+// ⚠ Le PROFIL DE BESOIN est rigoureusement INCHANGÉ : getShifts renvoie les vagues telles quelles, et
+// 18:00→21:00 + 21:00→02:00 couvre exactement les mêmes demi-heures que 18:00→02:00 d'un bloc. Seule la
+// STRUCTURE DÉCLARÉE des postes change — c'est précisément ce que la nouvelle règle lit.
+const SOIR_RELAIS=fin=>[{deb:'18:00',fin:'21:00'},{deb:'21:00',fin}];
 // Config Moumouni/Haider : Moumouni multi (P1=GC, P2=Lobau) 15h à GC (manque 5), Haider donneur à Lobau, surplus.
 const moumouniScn=(regles)=>({restos:RESTOS,snack:LO,regles,
   sals:[{id:'mou',nom:'Moumouni',roles:['cuisine'],exp:['cuisine'],heures_min:20,heures_max:25,est_multi:true,
@@ -60,9 +70,9 @@ const moumouniScn=(regles)=>({restos:RESTOS,snack:LO,regles,
         {id:'hai',nom:'Haider',roles:['cuisine'],exp:['cuisine'],heures_min:35,heures_max:45,
            snacks_priorites:[{priorite:1,restaurant_id:LO}]}],
   eff:[...effFor(GC,2),
-       {restaurant_id:LO,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]},
-       {restaurant_id:LO,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]},
-       {restaurant_id:LO,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]}],
+       {restaurant_id:LO,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')},
+       {restaurant_id:LO,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')},
+       {restaurant_id:LO,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')}],
   store:[
     {restaurant_id:GC,salarie_id:'mou',date:D(0),service:'midi',role:'cuisine',heure_debut:'10:00',heure_fin:'15:00'},
     {restaurant_id:GC,salarie_id:'mou',date:D(1),service:'midi',role:'cuisine',heure_debut:'10:00',heure_fin:'15:00'},
@@ -94,8 +104,8 @@ const P3ONLY={silent:true,phase3only:true,globalUnfilled:[]};
     sals:[{id:'kal',nom:'Kalifa',roles:['cuisine'],exp:['cuisine'],heures_min:20,heures_max:35},
           {id:'said',nom:'Said',roles:['cuisine'],exp:['cuisine'],heures_min:25,heures_max:45}], // 31h → surplus 6
     eff:[{restaurant_id:LO,jour_type:'Lu-Me',service:'midi',role:'cuisine',nb_cible:2,vagues:[{deb:'10:00',fin:'15:00'}]},
-         {restaurant_id:LO,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]},
-         {restaurant_id:LO,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:[{deb:'18:00',fin:'02:00'}]}],
+         {restaurant_id:LO,jour_type:'Je',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')},
+         {restaurant_id:LO,jour_type:'Ve',service:'soir',role:'cuisine',nb_cible:2,vagues:SOIR_RELAIS('02:00')}],
     store:[
       {restaurant_id:LO,salarie_id:'kal',date:D(0),service:'midi',role:'cuisine',heure_debut:'10:00',heure_fin:'15:00'},
       {restaurant_id:LO,salarie_id:'kal',date:D(1),service:'midi',role:'cuisine',heure_debut:'10:00',heure_fin:'15:00'},
