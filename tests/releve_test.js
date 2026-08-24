@@ -364,9 +364,9 @@ await_(async()=>{
       {deb:'17:00',fin:'00:30',exp:true},{deb:'18:30',fin:'22:30',exp:false},{deb:'19:00',fin:'23:30',exp:false}]},
   ];
   const scnSemaine=()=>({restos:RESTOS3,snack:GC,eff:EFF_REEL,roles:[{cle:'cuisine',nom:'Cuisine'}],
-    sals:[{id:'d1',prenom:'Donneur',nom:'Un',  roles:['cuisine'],exp:['cuisine'],heures_min:10,heures_max:48},
-          {id:'d2',prenom:'Donneur',nom:'Deux',roles:['cuisine'],exp:['cuisine'],heures_min:10,heures_max:48},
-          {id:'r1',prenom:'Receveur',nom:'Un', roles:['cuisine'],exp:['cuisine'],heures_min:20,heures_max:35}],
+    sals:[{id:'d1',prenom:'Donneur',nom:'DUPONT',roles:['cuisine'],exp:['cuisine'],heures_min:10,heures_max:48},
+          {id:'d2',prenom:'Donneur',nom:'MARTIN',roles:['cuisine'],exp:['cuisine'],heures_min:10,heures_max:48},
+          {id:'r1',prenom:'Receveur',nom:'BERNARD',roles:['cuisine'],exp:['cuisine'],heures_min:20,heures_max:35}],
     store:[
       {restaurant_id:GC,salarie_id:'d1',date:D(5),service:'soir',role:'cuisine',heure_debut:'18:00',heure_fin:'02:00'},
       {restaurant_id:GC,salarie_id:'d1',date:D(6),service:'soir',role:'cuisine',heure_debut:'17:00',heure_fin:'00:30'},
@@ -399,6 +399,36 @@ await_(async()=>{
   t('AVANT — la semaine contenait au moins une relève illégitime', relAvant.length>0, String(relAvant.length));
   t('APRÈS — plus aucune relève illégitime dans la semaine générée', relApres.length===0,
     JSON.stringify(relApres.map(r=>r.date+' '+HH(r.T))));
+
+  // ═════════════════════════════════════════════════════════════════════════════════════════════
+  console.log('\n── 9. L\'AUTO-FILL COMPLET (PHASES 1+2+3), PAS SEULEMENT LA DISTRIBUTION ──');
+  // ═════════════════════════════════════════════════════════════════════════════════════════════
+  // Tout ce qui précède tourne en `phase3only` : ça ne prouve la règle que pour la DISTRIBUTION.
+  // Les phases 1 et 2 sont saines par construction — un trou vient de computeHoles, donc ses bornes
+  // SONT celles d'une vague, et la réparation de la phase 2 REPLACE un créneau existant sans le couper —
+  // mais « par construction » n'est pas une preuve. Ici : semaine VIDE, postes réels, remplissage complet.
+  await run(Object.assign(scnSemaine(),{store:[]}),()=>autoFillCore([0,1,2,3,4,5,6]));
+  const relComplet=relevesOf(STORE.slice());
+  console.log('  Créneaux générés :',STORE.length,'· relèves illégitimes :',relComplet.length);
+  STORE.slice().sort((a,b)=>(a.date+a.salarie_id).localeCompare(b.date+b.salarie_id))
+       .forEach(c=>console.log(`    ${c.date} ${c.salarie_id} ${c.heure_debut.slice(0,5)}→${c.heure_fin.slice(0,5)}`));
+  t('l\'auto-fill COMPLET place bien des créneaux (le scénario n\'est pas vide)', STORE.length>0, String(STORE.length));
+  t('… et n\'y produit AUCUNE relève illégitime (phases 1 et 2 comprises)',
+    relComplet.length===0, JSON.stringify(relComplet.map(r=>r.date+' '+HH(r.T))));
+  // Et sur un poste dont les vagues déclarent VOLONTAIREMENT une relève, l'auto-fill la produit toujours :
+  // la règle n'empêche pas de couvrir deux postes qui se relaient, elle empêche d'en INVENTER la coupure.
+  await run({restos:RESTOS,snack:LOB,roles:[{cle:'caisse',nom:'Caisse'}],store:[],
+    eff:[{restaurant_id:LOB,jour_type:'Lu-Me',service:'soir',role:'caisse',nb_cible:2,
+          vagues:[{deb:'18:00',fin:'21:00'},{deb:'21:00',fin:'00:00'}]}],
+    sals:[{id:'p1',prenom:'P',nom:'UN',  roles:['caisse'],exp:['caisse'],heures_min:0,heures_max:48},
+          {id:'p2',prenom:'P',nom:'DEUX',roles:['caisse'],exp:['caisse'],heures_min:0,heures_max:48}]},
+    ()=>autoFillCore([0]));
+  const lun=STORE.filter(c=>c.date===D(0));
+  console.log('  Postes qui se relaient à 21:00 →',lun.map(c=>`${c.salarie_id} ${c.heure_debut.slice(0,5)}→${c.heure_fin.slice(0,5)}`).join(' | '));
+  t('une relève VOULUE (deux postes configurés) est bien couverte par deux personnes',
+    lun.length===2 && lun.some(c=>c.heure_debut.slice(0,5)==='18:00') && lun.some(c=>c.heure_debut.slice(0,5)==='21:00'),
+    JSON.stringify(lun.map(c=>c.heure_debut+'→'+c.heure_fin)));
+  t('… et elle n\'est PAS comptée comme une infraction', relevesOf(STORE.slice()).length===0);
 
   console.log('\n'+(ok?'ALL PASS':'SOME FAILED')+`  (${n} vérifications)`);
   process.exit(ok?0:1);
