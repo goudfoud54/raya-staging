@@ -29,6 +29,10 @@ const FNS = [
   'dayJourType', 'getShifts', 'posteEnvelope',   // bornes des POSTES : ce que l'auto-fill a le droit de produire
   '_endCapState', '_endCapMin', 'capCoverageGaps', // plafond d'heure de fin, un par jour-type (7 jours couverts)
   'horsPosteOf',                      // constat « créneau hors des postes » — appelé par revalidateWeek
+  // Indisponibilités : SOURCE UNIQUE (grille + PDF + moteur) et journée d'exploitation. _indispoBlocking
+  // et renderTable les appellent tous les deux — sans elles ici, tout harnais qui extrait l'un ou
+  // l'autre casse sur « indisposOf is not defined ».
+  'indisposOf', '_cutMin', '_jourExploitation', '_indispoSegments', '_couvreToute', 'indispoServiceEtat',
   // Pas de relève en plein service : la frontière midi↔soir déduite des postes, le prédicat sur le
   // point de coupe, et le constat balayé par revalidateWeek.
   'jonctionService', '_postesDuRole', 'releveInterdite', '_relaisEn', 'relevesOf',
@@ -96,8 +100,20 @@ function installScopeStub() {
   };
 }
 
+// utils.js — socle partagé (cutoffToMinutes, ymdLocal…). Depuis v0.67, _indispoBlocking en dépend pour
+// la bascule de journée d'exploitation. Sans ce chargement, _cutMin() retomberait sur son défaut et les
+// harnais « verraient » un réglage d'organisation qui n'est jamais lu — exactement le trou qu'on teste.
+// Le fichier est une IIFE navigateur : un shim `window` suffit, aucune API DOM n'est touchée au load.
+function installUtils() {
+  if (global.cutoffToMinutes) return;
+  if (!global.window) global.window = global;
+  require(path.join(__dirname, '..', 'utils.js'));
+  if (global.window.cutoffToMinutes && !global.cutoffToMinutes) global.cutoffToMinutes = global.window.cutoffToMinutes;
+}
+
 function installPlanningPrims(src) {
   installScopeStub();
+  installUtils();
   const h = src || fs.readFileSync(path.join(__dirname, '..', 'planning/index.html'), 'utf8');
   for (const c of CONST_LINES) {
     const m = h.match(new RegExp('const ' + c.first + '\\s*=[^\\n]*'));
@@ -115,4 +131,4 @@ function installPlanningPrims(src) {
   }
 }
 
-module.exports = { installPlanningPrims, installScopeStub, grabObj };
+module.exports = { installPlanningPrims, installScopeStub, installUtils, grabObj };

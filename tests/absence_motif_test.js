@@ -28,7 +28,8 @@ eval("global._pdur="+(h.match(/const _pdur\s*=[^\n]*/)[0].replace(/^const _pdur\
 eval("global.fmtH1="+(h.match(/const fmtH1\s*=[^\n]*/)[0].replace(/^const fmtH1\s*=/,'').replace(/;$/,''))+";");
 eval("global.INDISPO_ICONS="+h.match(/const INDISPO_ICONS=\[[^\n]*\]/)[0].replace(/^const INDISPO_ICONS=/,'')+";");
 eval("global.ABSENCE_NEUTRE="+h.match(/const ABSENCE_NEUTRE=\{[^\n]*\}/)[0].replace(/^const ABSENCE_NEUTRE=/,'')+";");
-for(const fn of ['indispoBadge','voirMotifAbsence','hasIndispo','_hexToRgb','_relLum','textColorFor','_rgbArr',
+// indisposOf : source unique dont hasIndispo dérive depuis v0.67 (grille + PDF + moteur).
+for(const fn of ['indispoBadge','voirMotifAbsence','indisposOf','hasIndispo','_hexToRgb','_relLum','textColorFor','_rgbArr',
                  '_tintRgb','shortSnack','altDayType','drawSnackPage','_pdfHeader','isoWeek']){
   try{ eval("global."+fn+"="+grab(fn)+";"); }catch(e){ console.log('MISS',fn,(''+e).split('\n')[0]); }
 }

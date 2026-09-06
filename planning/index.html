@@ -14,6 +14,7 @@
      SUPPRIMÉE au profit de celle-ci, pour ne pas maintenir deux moteurs de bulles. -->
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
+<script src="../utils.js?v=1"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
@@ -119,6 +120,10 @@ table.plan td.oth-full{background-image:linear-gradient(rgba(200,160,53,.07),rgb
 table.plan td.oth-corner.oth-full{background-image:linear-gradient(225deg,rgba(200,160,53,.8) 0 7px,transparent 7px),linear-gradient(rgba(200,160,53,.07),rgba(200,160,53,.07))}
 table.plan td.oth-corner.oth-part{background-image:linear-gradient(225deg,rgba(200,160,53,.42) 0 6px,transparent 6px)}
 table.plan td.oth-busy{background-repeat:no-repeat}
+/* Indispo HORAIRE qui mord sur ce service sans le rendre impossible : hachures très pâles, saisie
+   conservée. À ne pas confondre avec .indispo-block (journée entière ou service impossible), dont les
+   hachures sont franches et qui remplace les champs — une plage de 19h à minuit n'est pas un congé. */
+table.plan td.indispo-part{background-image:repeating-linear-gradient(45deg,transparent,transparent 5px,rgba(150,150,162,.13) 5px,rgba(150,150,162,.13) 10px)}
 /* Rapport → grille : la ligne cliquée surligne brièvement sa cible (cellule ou ligne salarié). */
 .rep-row:hover{background:rgba(255,255,255,.05)}
 @keyframes repFlash{0%,100%{box-shadow:inset 0 0 0 0 rgba(200,160,53,0)}20%,80%{box-shadow:inset 0 0 0 2px var(--gold)}}
@@ -303,7 +308,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.66 · plus de relève en plein service : l\'auto-fill ne coupe un poste qu\'à la frontière entre le midi et le soir, et la revalidation remonte les relèves déjà en place';
+const VERSION='v0.67 · indisponibilités : une seule source pour la grille, le PDF et le moteur — les heures d\'une plage sont respectées, et une journée déclarée ne bloque plus le service de la veille qui finit après minuit';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -578,6 +583,88 @@ function overlaps(aDeb,aFin,bDeb,bFin){
   return a1<b2 && b1<a2;
 }
 function _overlap(a,b){ return overlaps(a.heure_debut,a.heure_fin,b.heure_debut,b.heure_fin); }
+// ── SOURCE UNIQUE : « cette personne est-elle indisponible ce jour-là, et sur quelle plage ? » ────
+// Trois fonctions répondaient à cette même question de trois façons différentes — la grille (date
+// seule), le PDF (date + test des heures) et le moteur (chevauchement réel). C'est le piège « deux
+// fonctions qui écrivent le même rendu » de CLAUDE.md, en pire : il y en avait trois.
+//
+// Renvoie DEUX listes SÉPARÉES, surtout pas une seule fusionnée : depuis v0.67 une indispo SANS heures
+// et une indispo AVEC heures ne se jugent plus par la même règle — la première porte sur la JOURNÉE
+// D'EXPLOITATION, la seconde sur un vrai chevauchement horaire. Les fusionner obligerait chaque
+// appelant à les re-séparer, et c'est exactement comme ça que les trois versions ont divergé.
+//
+// ⚠ TOUTES les lignes qui correspondent, jamais la première : un même jour peut en porter plusieurs.
+// Constaté en production le 2026-09-06 — 5 dates concernées, dont Ahmad NEHME le 11/09 qui porte À LA
+// FOIS une journée entière ET un 19:00→00:00. L'ancien hasIndispo() faisait un `.find()` et en retenait
+// UNE, au hasard de l'ordre de chargement.
+function indisposOf(sid, date){
+  const di=(new Date(date).getDay()+6)%7;
+  const full=[], horaires=[];
+  for(const d of (S.dispos||[])){
+    if(d.salarie_id!==sid || d.statut!=='indispo' || (d.statut_demande||'validee')!=='validee') continue;
+    const match=(d.type==='recurrente' && d.jour_semaine===di) || (d.type==='ponctuelle' && d.date_specifique===date);
+    if(!match) continue;
+    if(d.heure_debut||d.heure_fin) horaires.push(d); else full.push(d);
+  }
+  return {full, horaires};
+}
+// Heure de bascule de la JOURNÉE D'EXPLOITATION, en minutes (défaut 05:00 = 300).
+// Même notion que pour le stock (organizations.journee_exploitation_debut, migration v6.28) — surtout
+// pas une seconde définition du « jour », les deux finiraient par diverger.
+// cutoffToMinutes vit dans utils.js (socle partagé) — on ne le recopie pas ici : deux analyses de la
+// même heure finiraient par diverger. Repli à 300 si le socle n'a pas pu être chargé, MAIS avec un
+// avertissement en console : un réglage d'organisation silencieusement ignoré serait pire qu'une panne.
+// Le drapeau d'avertissement est porté par la FONCTION elle-même : les harnais extraient _cutMin seule,
+// une variable de fichier à côté d'elle les casserait sur « _cutWarned is not defined ».
+function _cutMin(){
+  try{ return cutoffToMinutes(ORG.journee_exploitation_debut); }
+  catch(e){
+    if(!_cutMin._warned){ _cutMin._warned=true; console.warn('[planning] utils.js absent — journée d\'exploitation forcée à 05:00'); }
+    return 300;
+  }
+}
+// Jour d'EXPLOITATION auquel appartient un shift commençant à `a1` (minutes) sur la ligne `date`/`di`.
+// Un service du vendredi 18:00→02:00 est un service du VENDREDI : le salarié a travaillé vendredi.
+// Seul un shift qui démarre AVANT la bascule (ex. 02:00) appartient à la journée de la veille.
+function _jourExploitation(date, di, a1){
+  if(a1>=_cutMin()) return {date, di};
+  const v=fmtDate(new Date(new Date(date).getTime()-86400000));
+  return {date:v, di:(di+6)%7};
+}
+// Segments horaires occupés par des indispos AVEC heures, fusionnés, en minutes absolues (fin ≤ début
+// ⇒ +1440). Sert l'affichage : savoir si un service est partiellement gêné ou totalement impossible.
+function _indispoSegments(horaires){
+  const segs=(horaires||[]).map(h=>{ const a=_toMin(h.heure_debut); let b=h.heure_fin?_toMin(h.heure_fin):null;
+      if(a==null) return null; if(b==null) b=a+30; else if(b<=a) b+=1440; return [a,b]; })
+    .filter(Boolean).sort((x,y)=>x[0]-y[0]);
+  const out=[];
+  for(const s of segs){ const last=out[out.length-1];
+    if(last && s[0]<=last[1]) last[1]=Math.max(last[1],s[1]); else out.push([s[0],s[1]]); }
+  return out;
+}
+// La fenêtre [wS,wE) est-elle ENTIÈREMENT couverte par ces segments ? (→ service réellement impossible)
+function _couvreToute(segs, wS, wE){
+  let cur=wS;
+  for(const [a,b] of (segs||[])){ if(a>cur) return false; if(b>cur) cur=b; if(cur>=wE) return true; }
+  return cur>=wE;
+}
+// Verdict d'AFFICHAGE d'un service, pour des indispos horaires déjà fusionnées en segments. PURE.
+//   'libre'      : la plage ne touche pas ce service ;
+//   'gene'       : elle mord dessus sans le rendre impossible → saisie CONSERVÉE + marque discrète.
+//                  Une indispo de 19:00 à minuit laisse un midi parfaitement saisissable : griser la
+//                  case priverait le patron d'une saisie légitime, et l'écran n'a pas à interdire plus
+//                  que checkPlacement, qui reste l'autorité à l'enregistrement ;
+//   'impossible' : toute la fenêtre du service est couverte → aucun horaire n'y serait accepté.
+// ⚠ La fenêtre vient des POSTES CONFIGURÉS (_svcWindow), jamais de DEF_TIME. DEF_TIME est un défaut
+// codé en dur (11:00–14:30 / 18:30–23:30) : à Grand Cœur, dont le midi va de 10:30 à 18:00, une indispo
+// 15:00→17:00 ne grisait rien alors que le placement la refusait — c'est là que la grille et le moteur
+// se contredisaient réellement.
+function indispoServiceEtat(date, svc, segs){
+  if(!segs || !segs.length) return 'libre';
+  const w=_svcWindow(date, svc);
+  if(_couvreToute(segs, w.wS, w.wE)) return 'impossible';
+  return segs.some(([a,b])=>a<w.wE && w.wS<b) ? 'gene' : 'libre';
+}
 // Indispo VALIDÉE bloquant un shift — TIME-AWARE (via overlaps, semi-ouvert). Gère les indispos
 // PARTIELLES (heures) vs journée entière (sans heures → bloque tout le jour), ET le franchissement de
 // minuit : la portion du shift APRÈS minuit est confrontée aux indispos du LENDEMAIN. Retourne l'indispo
@@ -587,19 +674,29 @@ function _indispoBlocking(sid, deb, fin, date, di){
   const a1=_toMin(deb); if(a1==null) return null;
   let a2=fin?_toMin(fin):a1+30; if(a2<=a1) a2+=1440;
   const crosses=a2>1440, nextEnd=a2-1440;                 // minutes retombant dans le lendemain
-  const nextDate=crosses?fmtDate(new Date(new Date(date).getTime()+86400000)):null, nextDi=(di+1)%7;
-  const isFull=d=>!(d.heure_debut||d.heure_fin);
-  for(const d of S.dispos){
-    if(d.salarie_id!==sid || d.statut!=='indispo' || (d.statut_demande||'validee')!=='validee') continue;
-    const sameDay=(d.type==='recurrente'&&d.jour_semaine===di)||(d.type==='ponctuelle'&&d.date_specifique===date);
-    if(sameDay && (isFull(d) || overlaps(deb,fin,d.heure_debut,d.heure_fin))) return d;
-    if(crosses){
-      const nextDay=(d.type==='recurrente'&&d.jour_semaine===nextDi)||(d.type==='ponctuelle'&&d.date_specifique===nextDate);
-      if(nextDay){
-        if(isFull(d)) return d;                            // journée entière du lendemain : le shift y déborde
-        let nb1=_toMin(d.heure_debut), nb2=d.heure_fin?_toMin(d.heure_fin):nb1+30; if(nb2<=nb1)nb2+=1440;
-        if(nb1<nextEnd) return d;                          // [0,nextEnd) ∩ [nb1,nb2) (nb2>0 toujours)
-      }
+  const nextDate=crosses?fmtDate(new Date(new Date(date).getTime()+86400000)):null;
+  // ── (1) INDISPO JOURNÉE ENTIÈRE → JOURNÉE D'EXPLOITATION, pas jour civil ────────────────────────
+  // Un créneau du vendredi 18:00→02:00 est un créneau du VENDREDI : le salarié a travaillé vendredi.
+  // Déclarer quelqu'un indisponible le SAMEDI ne doit pas l'empêcher de finir son service du vendredi.
+  // Avant v0.67, le débordement après minuit était confronté aux indispos du lendemain CIVIL et une
+  // journée entière du samedi refusait le vendredi 18:00→02:00 — cohérent techniquement, faux en salle.
+  // On rattache donc le shift à sa journée d'exploitation (bascule org, 05:00 par défaut) et on ne
+  // regarde QUE les journées entières de CE jour-là. Vaut pour le récurrent comme pour le ponctuel :
+  // `indisposOf` recalcule le jour de semaine à partir de la date d'exploitation.
+  const je=_jourExploitation(date, di, a1);
+  const full=indisposOf(sid, je.date).full;
+  if(full.length) return full[0];
+  // ── (2) INDISPO HORAIRE → chevauchement RÉEL, quel que soit le jour de rattachement ─────────────
+  // « Je ne suis pas là cette nuit-là » doit rester exprimable : une indispo samedi 00:00→06:00 bloque
+  // ce qu'elle chevauche vraiment, y compris la fin d'un service du vendredi qui déborde sur samedi.
+  // C'est le seul moyen d'exprimer ce cas, et le retirer priverait le patron d'un besoin légitime.
+  for(const d of indisposOf(sid, date).horaires){
+    if(overlaps(deb, fin, d.heure_debut, d.heure_fin)) return d;
+  }
+  if(crosses){
+    for(const d of indisposOf(sid, nextDate).horaires){
+      let nb1=_toMin(d.heure_debut), nb2=d.heure_fin?_toMin(d.heure_fin):nb1+30; if(nb2<=nb1)nb2+=1440;
+      if(nb1<nextEnd) return d;                            // [0,nextEnd) ∩ [nb1,nb2) (nb2>0 toujours)
     }
   }
   return null;
@@ -656,7 +753,10 @@ async function loadProfileAndShow(){
   const{data:profile,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
   if(error||!profile){document.getElementById('pwerr').textContent='Profil introuvable.';await sb.auth.signOut();return;}
   ME=profile;
-  const{data:org}=await sb.from('organizations').select('id,couleur_primaire,coef_charges,permissions,logo_url,nom').eq('id',profile.organization_id).maybeSingle();
+  // journee_exploitation_debut : bascule du jour d'EXPLOITATION (migration v6.28, défaut 05:00). Sans
+  // elle dans le select, _cutMin() retomberait toujours sur 300 et le réglage de l'écran Paramètres
+  // n'aurait aucun effet ici — un réglage configurable jamais lu, le piège nº1 de CLAUDE.md.
+  const{data:org}=await sb.from('organizations').select('id,couleur_primaire,coef_charges,permissions,logo_url,nom,journee_exploitation_debut').eq('id',profile.organization_id).maybeSingle();
   // Portée de l'ORGANISATION ACTIVE — à borner AVANT toute lecture (cf. orgscope.js). Sans ce point,
   // un super_admin basculé sur une autre organisation voit s'additionner les données des deux : RLS ne
   // filtre plus rien pour lui (« OR auth_role() = 'super_admin' ») et les requêtes ne filtraient pas.
@@ -942,27 +1042,28 @@ function renderTable(){
         colIdx+=4; return;
       }
       // Indisponibilité validée (absence ajoutée OU indispo déclarée par le salarié) → signalée
-      // visuellement (AFFICHAGE UNIQUEMENT — checkPlacement bloque déjà, hasIndispo() est réutilisée
-      // telle quelle). Journée entière (pas d'heures) → toute la ligne du jour ; indispo partielle
-      // (heures renseignées) → seuls le(s) service(s) chevauché(s) sont grisés, le reste reste éditable.
-      const ind=hasIndispo(s.id,date);
-      let indBad=null, indObj=null;
-      if(ind){
-        indBad=indispoBadge(ind, voirMotifAbsence(s.id));
-        if(!(ind.heure_debut||ind.heure_fin)){
-          tbody+=`<td colspan="4" class="alt-block indispo-block" data-tip="${escP(indBad.full)}">${indBad.ic} ${escP(indBad.lbl)}</td>`;
-          colIdx+=4; return;
-        }
-        indObj={heure_debut:ind.heure_debut, heure_fin:ind.heure_fin};
+      // visuellement. Depuis v0.67 la grille lit la SOURCE UNIQUE (indisposOf) et distingue nettement
+      // une JOURNÉE ENTIÈRE — barrée comme un congé — d'une PLAGE HORAIRE, qui laisse la saisie ouverte
+      // partout où elle ne mord pas. checkPlacement reste l'autorité au moment d'enregistrer.
+      const _ind=indisposOf(s.id,date);
+      const ind=_ind.full[0]||_ind.horaires[0]||null;
+      const indBad=ind?indispoBadge(ind, voirMotifAbsence(s.id)):null;
+      // JOURNÉE ENTIÈRE (au moins une ligne sans heures) → toute la ligne du jour, non éditable.
+      if(_ind.full.length){
+        tbody+=`<td colspan="4" class="alt-block indispo-block" data-tip="${escP(indBad.full)}">${indBad.ic} ${escP(indBad.lbl)}</td>`;
+        colIdx+=4; return;
       }
+      // INDISPOS HORAIRES : segments fusionnés, confrontés à la fenêtre RÉELLE du service.
+      const indSegs=_indispoSegments(_ind.horaires);
+      const indTxt=_ind.horaires.map(x=>`${(x.heure_debut||'').slice(0,5)}→${(x.heure_fin||'').slice(0,5)}`).join(' · ');
       ['midi','soir'].forEach(svc=>{
-        // Service chevauché par une indispo partielle → cellule grisée (2 colonnes) au lieu des inputs
-        if(indObj){
-          const dt=DEF_TIME(svc);
-          if(_overlap(indObj,{heure_debut:dt[0],heure_fin:dt[1]})){
-            tbody+=`<td colspan="2" class="alt-block indispo-block" data-tip="${escP(indBad.full+' · '+(ind.heure_debut||'').slice(0,5)+'→'+(ind.heure_fin||'').slice(0,5))}">${indBad.ic}</td>`;
-            colIdx+=2; return;
-          }
+        // Verdict produit par la fonction PURE partagée (indispoServiceEtat) — la grille ne refait
+        // pas le test, elle le lit. C'est ce qui permet au harnais de vérifier le VRAI code.
+        const indEtat=indispoServiceEtat(date, svc, indSegs);
+        const indImpossible=(indEtat==='impossible'), indGene=(indEtat==='gene');
+        if(indImpossible){
+          tbody+=`<td colspan="2" class="alt-block indispo-block" data-tip="${escP(indBad.full+' · '+indTxt)}">${indBad.ic}</td>`;
+          colIdx+=2; return;
         }
         const cr=getCreneau(s.id,date,svc)||{};
         const cls=svc;
@@ -975,12 +1076,15 @@ function renderTable(){
         // Case VIDE uniquement : marque « déjà pris ailleurs ». Sur une case remplie, un vrai
         // chevauchement est déjà signalé en rouge — inutile d'empiler deux signaux.
         const busy = cr.heure_debut ? {state:'none',tip:''} : otherSnackBusy(s.id,date,svc);
-        const busyCls = busy.state==='none' ? '' : ` oth-busy oth-${busy.state}`;
+        const busyCls = (busy.state==='none' ? '' : ` oth-busy oth-${busy.state}`) + (indGene?' indispo-part':'');
+        // Info-bulle de la plage indisponible — prioritaire sur « déjà pris ailleurs » : c'est la
+        // contrainte DURE (checkPlacement refusera), l'autre n'est qu'une information.
+        const indTip = indGene ? `${indBad.ic} Indisponible ${indTxt}\nLe reste du service ${svc==='midi'?'du midi':'du soir'} est saisissable — un horaire qui mord sur cette plage sera refusé.` : '';
         // baseTip = l'info-bulle de la cellule HORS conflit. updateConflictsUI superpose la sienne quand
         // la cellule passe en rouge, puis restaure celle-ci — sinon le recalcul effacerait l'explication.
-        const baseTip = cr.sureffectif
+        const baseTip = indTip || (cr.sureffectif
           ? 'Sureffectif auto (au-delà de la cible) — ajouté pour atteindre le minimum d\'heures ; vide la cellule pour le retirer'
-          : busy.tip;
+          : busy.tip);
         const tipAttr = (isConf?` data-tip="${escP(conflictTip(s.id,date))}"`:(baseTip?` data-tip="${escP(baseTip)}"`:''))
                       + (baseTip?` data-base-tip="${escP(baseTip)}"`:'');
         const c1=colIdx++,c2=colIdx++;
@@ -1695,9 +1799,9 @@ function _mvSvcBlock(s,date,svc){
 }
 function _mvEditPanel(s,date){
   // Journée entière bloquée (école/indispo sans heures) → pas d'édition, on explique.
-  const adt=altDayType(s.id,date), ind=hasIndispo(s.id,date);
+  const adt=altDayType(s.id,date), _i=indisposOf(s.id,date), ind=_i.full[0]||_i.horaires[0]||null;
   if(adt==='ecole'||adt==='examen') return `<div class="edit"><div class="blocked">${adt==='examen'?'📝 Examen':'🎓 École'} — alternant indisponible ce jour.</div></div>`;
-  if(ind && !(ind.heure_debut||ind.heure_fin)) return `<div class="edit"><div class="blocked">${_ibM(ind,s.id).ic} ${escP(_ibM(ind,s.id).lbl)} — journée entière, non modifiable ici.</div></div>`;
+  if(_i.full.length) return `<div class="edit"><div class="blocked">${_ibM(_i.full[0],s.id).ic} ${escP(_ibM(_i.full[0],s.id).lbl)} — journée entière, non modifiable ici.</div></div>`;
   let h='<div class="edit">';
   for(const svc of ['midi','soir']){
     const cr=getCreneau(s.id,date,svc)||{}; const hd=(cr.heure_debut||'').slice(0,5), hf=(cr.heure_fin||'').slice(0,5);
@@ -2506,16 +2610,13 @@ function voirMotifAbsence(sid){
 }
 // Raccourci d'affichage : badge d'indispo déjà filtré selon le droit du lecteur sur CE salarié.
 function _ibM(ind, sid){ return indispoBadge(ind, voirMotifAbsence(sid)); }
+// Ligne d'indispo à AFFICHER pour ce jour (badge, info-bulle). DÉRIVÉE de la source unique — le test
+// n'est pas réécrit ici. La journée entière prime : c'est elle qui décide du rendu de la ligne.
+// Conservée parce qu'une quinzaine d'appelants n'ont besoin que du badge ; ceux qui doivent DÉCIDER
+// (grille, PDF, moteur) appellent indisposOf() et lisent les deux listes.
 function hasIndispo(sid,date){
-  const di=(new Date(date).getDay()+6)%7;
-  return S.dispos.find(d=>{
-    if(d.salarie_id!==sid)return false;
-    if(d.statut!=='indispo')return false;
-    if((d.statut_demande||'validee')!=='validee')return false;
-    if(d.type==='recurrente' && d.jour_semaine===di)return true;
-    if(d.type==='ponctuelle' && d.date_specifique===date)return true;
-    return false;
-  });
+  const c=indisposOf(sid,date);
+  return c.full[0]||c.horaires[0]||undefined;
 }
 // Salarié sous le coup d'une mise à pied (disciplinary_actions) couvrant `date` → suspendu ce jour,
 // donc légitimement absent. Bornes incluses (mise_a_pied_debut ≤ date ≤ mise_a_pied_fin).
@@ -4878,8 +4979,10 @@ function drawSnackPage(doc,resto,creneaux,ctx){
       const date=fmtDate(dateOfDay(i));
       // Absence journée entière : congé/arrêt (indispo validée sans heures) ou école/examen CFA → 1 cellule ×4.
       const adt=altDayType(s.id,date);
-      const ind=hasIndispo(s.id,date);
-      const fullDayAbs = (adt==='ecole'||adt==='examen') || (ind && !(ind.heure_debut||ind.heure_fin));
+      // Source UNIQUE (indisposOf) : une journée entière est une ligne SANS heures, et il peut y en
+      // avoir plusieurs pour la même date — l'ancien test portait sur la seule ligne rendue par
+      // hasIndispo(), donc sur un tirage au sort quand le jour en portait deux.
+      const fullDayAbs = (adt==='ecole'||adt==='examen') || indisposOf(s.id,date).full.length>0;
       if(fullDayAbs){
         // ⚠ PDF : « Absent », SANS CONDITION et quel que soit le lecteur. Ce document est imprimé et
         // affiché en salle : il n'existe pas de lecteur « autorisé » pour un papier punaisé au mur.

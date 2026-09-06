@@ -2,6 +2,9 @@ const fs=require("fs");
 const h=fs.readFileSync(require("path").join(__dirname,"..","planning/index.html"),"utf8");
 function grab(name){const re=new RegExp("function "+name+"\\s*\\(");const i=h.search(re);let d=0,s=h.indexOf("{",i),j=s;for(;j<h.length;j++){if(h[j]==="{")d++;else if(h[j]==="}"){d--;if(d===0){j++;break;}}}return h.slice(i,j);}
 global.S={dispos:[],miseAPied:[]};
+// hasIndispo ne réécrit plus le test : depuis v0.67 il DÉLÈGUE à indisposOf (source unique grille/PDF/
+// moteur). Extraire l'un sans l'autre casse sur « indisposOf is not defined ».
+eval("global.indisposOf="+grab("indisposOf")+";");
 eval("global.hasIndispo="+grab("hasIndispo").replace(/^function/,'function')+";");
 eval("global.isSuspended="+grab("isSuspended").replace(/^function/,'function')+";");
 const fmtDate=d=>{const x=new Date(d);return x.toISOString().slice(0,10);};
