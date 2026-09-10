@@ -1288,7 +1288,12 @@ function updateBLLigne(i,field,v){
       if(BL_LIGNES[i].tva===''||BL_LIGNES[i].tva==null) BL_LIGNES[i].tva=pf.tva;
     }
   } else if(field==='tva'){ BL_LIGNES[i].tva=v; }
-  else { BL_LIGNES[i][field]=parseFloat(String(v).replace(',','.'))||0; }
+  else {
+    BL_LIGNES[i][field]=parseFloat(String(v).replace(',','.'))||0;
+    // L'étiquette dit « ces valeurs viennent de X ». Dès que l'utilisateur retouche un prix, elle
+    // deviendrait fausse — l'écran affirmerait une origine que la donnée contredit. On l'efface.
+    if(field==='a'||field==='r') BL_LIGNES[i]._src='';
+  }
   renderBLLignes();
 }
 function addBLLigne(){ BL_LIGNES.push({nom:'',qte:1,a:0,r:0,tva:''}); renderBLLignes(); }

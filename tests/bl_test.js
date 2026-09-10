@@ -104,6 +104,10 @@ const FORMATION = CATALOGUE[0].nom;
   t('le rapprochement tolère un espace double (comme en base), là où une égalité stricte échouerait', !!s && s.r === 525);
   t('casse et espaces de bord tolérés aussi', !!blSourcePrix('  sauce soja ', {}, CATALOGUE));
   t('désignation inconnue → aucune proposition', blSourcePrix('Produit qui n\'existe pas', {}, CATALOGUE) === null);
+  // CHOIX ASSUMÉ : une fiche catalogue sans prix de revente n'a rien d'utile à proposer. Un seul
+  // produit est dans ce cas en base (« Frais de Livraison », 0/0) — il faudra saisir son taux à la main.
+  t('une fiche catalogue à revente 0 ne propose rien (choix assumé, cas « Frais de Livraison »)',
+    blSourcePrix('Frais de Livraison', {}, [{ nom: 'Frais de Livraison', prix_achat: 0, prix_revente: 0, tva: 5.5 }]) === null);
   t('désignation vide → aucune proposition (pas de plantage)', blSourcePrix('', {}, CATALOGUE) === null && blSourcePrix(null, {}, CATALOGUE) === null);
 }
 // ── UNE SOURCE INEXPLOITABLE EST ÉCARTÉE EN ENTIER (cas DYMA ACADEMY, 10/09, achat 1500 / revente 0) ──
@@ -178,6 +182,11 @@ t('saveBL demande confirmation avant d\'enregistrer un bon suspect',
 t('la confirmation est bien un confirm() et non un blocage (return sans enregistrement)',
   !/blLignesSuspectes[\s\S]{0,200}toast\('Refus/.test(h));
 t('l\'origine du prix est affichée dans la ligne', /l\._src\?`<div[^`]*↩ \$\{String\(l\._src\)/.test(h));
+// L'étiquette affirme « ces valeurs viennent de X ». Si l'utilisateur retouche un prix, elle devient
+// fausse : l'écran affirmerait une origine que la donnée contredit (même faute que la grille du
+// planning annonçant une absence journée entière). Elle doit donc disparaître à la première retouche.
+t('l\'étiquette d\'origine est EFFACÉE dès que l\'utilisateur retouche un prix',
+  /if\(field==='a'\|\|field==='r'\) BL_LIGNES\[i\]\._src='';/.test(h));
 t('`_src` n\'est jamais enregistré en base (saveBL reconstruit la ligne champ par champ)',
   /const lignes=BL_LIGNES\.map\(l=>\{const t=blLineTotals\(l\);return \{nom:[^}]*\};\}\);/.test(h) &&
   !/_src[^\n]*payload|payload[^\n]*_src/.test(h));
