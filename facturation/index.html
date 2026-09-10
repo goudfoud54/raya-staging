@@ -97,7 +97,7 @@ table.tbl tfoot td{background:var(--surface);font-weight:700}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Facturation · v0.9 — mercuriale : export Excel et PDF (interne ou tarif client) + alerte sur les prix qui ont dérivé</small></div>
+    <div class="brand">Eatime360 <small>· Facturation · v0.10 — le bon de livraison reprend le catalogue quand le client n'a rien été livré, dit d'où vient chaque prix, et demande confirmation sur une ligne qui semble inversée</small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a href="../" class="btn ghost sm">Portail</a>
       <button class="btn ghost sm" onclick="logout()">↩</button>
@@ -1065,6 +1065,82 @@ function validateBLLignes(lignes){
   });
   return errs;
 }
+// ─── D'OÙ VIENT LE PRIX PROPOSÉ ────────────────────────────────────────────────────────────────
+// Ordre imposé, et AFFICHÉ à l'utilisateur (sur un document commercial, savoir si un prix vient de
+// l'historique du client ou du tarif général change la décision) :
+//   1. une valeur déjà saisie à la main — jamais écrasée ; c'est l'appelant qui ne remplit que les
+//      champs vides (cf. updateBLLigne), cette fonction ne connaît pas la saisie en cours ;
+//   2. le dernier bon de livraison de CE client — le prix réellement pratiqué avec lui ;
+//   3. à défaut, le CATALOGUE — ce qui manquait, et qui a produit la facture à 0 € du 31/08 :
+//      trois formations jamais livrées auparavant, donc aucun pré-remplissage, alors que le catalogue
+//      portait les bons prix. L'application proposait le produit dans la liste puis se taisait.
+//
+// ⚠ Une source n'est retenue QUE si elle porte un prix de revente exploitable (r > 0). Sans ce filtre,
+// une ligne déjà inversée en base se re-proposerait à l'identique et propagerait l'erreur de bon en
+// bon — ce n'est pas théorique : le bon DYMA ACADEMY du 10/09 porte achat 1500 / revente 0.
+//
+// ⚠ On retient une source ENTIÈRE, jamais un panachage champ par champ. Deux raisons : l'étiquette
+// d'origine resterait vraie (« repris de la livraison du 12/07 » ne doit pas désigner des valeurs
+// venues d'ailleurs), et l'achat aberrant d'une ligne inversée ne fuit pas vers le bon suivant.
+// Le rapprochement passe par _cleProduit — la normalisation déjà vérifiée en base (76 produits sur
+// 78) : les désignations réelles portent des doubles espaces qu'une égalité stricte manquerait.
+function blSourcePrix(nom, prefill, produits){
+  const k=_cleProduit(nom); if(!k) return null;
+  const p=prefill ? (prefill instanceof Map ? prefill.get(k) : prefill[k]) : null;
+  if(p && Number(p.r)>0)
+    return {a:Number(p.a)||0, r:Number(p.r)||0, tva:(p.tva==null?'':String(p.tva)), source:'livraison', date:p.date||null};
+  const c=(produits||[]).find(x=>_cleProduit(x&&x.nom)===k);
+  if(c && Number(c.prix_revente)>0)
+    return {a:Number(c.prix_achat)||0, r:Number(c.prix_revente)||0, tva:(c.tva==null?'':String(c.tva)), source:'catalogue', date:null};
+  return null;
+}
+// Étiquette affichée sous la désignation. Dit la source ET la date quand il y en a une.
+function blSourceLabel(src){
+  if(!src) return '';
+  if(src.source==='catalogue') return 'repris du catalogue';
+  if(!src.date) return 'repris de la dernière livraison';
+  const [,m,d]=String(src.date).split('-');
+  return 'repris de la dernière livraison du '+((d&&m)?`${d}/${m}`:src.date);
+}
+// ─── LIGNES MANIFESTEMENT INVERSÉES ────────────────────────────────────────────────────────────
+// L'écran affichait « Total HT : 0,00 € » et « Marge : −525,00 € » sur trois lignes et laissait
+// enregistrer sans un mot. On ne BLOQUE pas — une vente à perte ou un geste commercial existent —
+// mais on ne laisse plus passer en silence (échec silencieux proscrit par CLAUDE.md, appliqué ici à
+// une facture client). Deux natures, deux messages : accuser l'inversion là où elle est probable,
+// se contenter de signaler ailleurs.
+//   'inversion' : revente NULLE alors que l'achat ne l'est pas → colonnes saisies à l'envers dans la
+//                 quasi-totalité des cas (les 3 formations à 525 €, puis DYMA ACADEMY à 1 500 €) ;
+//   'perte'     : revente < achat sans être nulle → peut être délibéré, on n'accuse pas.
+function blLignesSuspectes(lignes){
+  const out=[];
+  (lignes||[]).forEach((l,i)=>{
+    const t=blLineTotals(l);
+    const base={i, nom:String((l&&l.nom)||'').trim(), tA:t.tA, tR:t.tR, marge:t.marge};
+    if(t.tR===0 && t.tA>0) out.push(Object.assign({type:'inversion'}, base));
+    else if(t.tR>0 && t.marge<0) out.push(Object.assign({type:'perte'}, base));
+  });
+  return out;
+}
+// Même contrôle au niveau du BON : total de revente nul alors que le total d'achat ne l'est pas.
+// Attrape le cas où aucune ligne prise isolément ne semble fautive (achats répartis, reventes à zéro).
+function blBonSuspect(lignes){
+  const t=blTotals(lignes);
+  return (t.total_revente===0 && t.total_achat>0)
+    ? {type:'inversion_bon', total_achat:t.total_achat, total_revente:t.total_revente} : null;
+}
+// Texte de la demande de confirmation — formulation UNIQUE, partagée par l'écran et le harnais, pour
+// qu'on ne puisse pas corriger le message d'un côté sans que le test le voie.
+function blSuspicionTexte(susp, bon){
+  const L=[];
+  for(const s of (susp||[])){
+    L.push(s.type==='inversion'
+      ? `Ligne ${s.i+1} « ${s.nom} » : elle se vend ${eur(s.tR)} et coûte ${eur(s.tA)} — les deux colonnes sont-elles inversées ?`
+      : `Ligne ${s.i+1} « ${s.nom} » : vendue à perte (marge ${eur(s.marge)}).`);
+  }
+  if(bon) L.push(`Au total, ce bon se vend ${eur(bon.total_revente)} alors qu'il coûte ${eur(bon.total_achat)}.`);
+  if(!L.length) return '';
+  return L.join('\n')+'\n\nEnregistrer quand même ?';
+}
 // ═══ FIN BL pures ═══════════════════════════════════════════════════════════════════════════════
 
 // ─────── BL ───────
@@ -1123,12 +1199,24 @@ function openBLDetail(id){
 }
 function editBLFromDetail(id){ const b=(S.bls||[]).find(x=>x.id===id); if(b) openBLForm(b); }
 
-// Pré-remplissage depuis les lignes DÉJÀ FACTURÉES du même client (ce qui a réellement été livré/facturé),
-// PAS depuis le catalogue produits (qui a dérivé depuis mars → taux faux). Désignation → {a,r,tva} le plus récent.
+// Dernier prix pratiqué avec CE client, par désignation (le plus récent gagne). C'est la PRIORITÉ 2 ;
+// le catalogue est la priorité 3, appliquée par blSourcePrix quand il n'y a rien ici.
+//
+// Historique : ce pré-remplissage excluait délibérément le catalogue, dont les TAUX DE TVA avaient
+// dérivé en mars. Vérifié en base le 10/09 avant de l'y réintroduire : sur les 52 produits qu'on peut
+// rapprocher d'une livraison, 51 portent le MÊME taux que le catalogue, et l'unique divergence est
+// justement une ligne inversée. La raison de l'exclusion n'a plus lieu d'être.
+//
+// La clé est normalisée par _cleProduit (comme la mercuriale) : les désignations réelles portent des
+// doubles espaces (« …réseaux sociaux  - NEHME AHMAD ») qu'une égalité stricte manquerait.
+// La DATE est conservée : elle est affichée à l'utilisateur (« repris de la livraison du 12/07 »).
 function buildBLPrefill(clientId){
   BL_PREFILL={};
   (S.bls||[]).filter(b=>b.client_id===clientId).sort((a,b)=>String(b.date_livraison||'').localeCompare(String(a.date_livraison||''))).forEach(b=>{
-    (Array.isArray(b.lignes)?b.lignes:[]).forEach(l=>{ if(l.nom && !(l.nom in BL_PREFILL)) BL_PREFILL[l.nom]={a:Number(l.a)||0,r:Number(l.r)||0,tva:(l.tva==null?'':String(l.tva))}; });
+    (Array.isArray(b.lignes)?b.lignes:[]).forEach(l=>{
+      const k=_cleProduit(l&&l.nom);
+      if(k && !(k in BL_PREFILL)) BL_PREFILL[k]={a:Number(l.a)||0,r:Number(l.r)||0,tva:(l.tva==null?'':String(l.tva)),date:b.date_livraison||null};
+    });
   });
 }
 function openBLForm(bl){
@@ -1162,14 +1250,15 @@ function onBLClientChange(){ buildBLPrefill(val('bl_cl')); }
 function renderBLLignes(){
   const c=document.getElementById('bl_lignes'); if(!c) return;
   const COLS='style="display:grid;grid-template-columns:2.2fr .8fr 1fr 1fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:3px 0"';
-  let html=`<div ${COLS} class="bl-head" style="display:grid;grid-template-columns:2.2fr .8fr 1fr 1fr 1fr 1fr 1fr auto;gap:6px;font-size:10.5px;color:var(--muted);text-transform:uppercase;font-weight:600;padding:2px 0"><div>Désignation</div><div>Qté</div><div>PU achat</div><div>PU revente</div><div>TVA</div><div style="text-align:right">Total HT</div><div style="text-align:right">Marge</div><div></div></div>`;
+  let html=`<div ${COLS} class="bl-head" style="display:grid;grid-template-columns:2.2fr .8fr 1fr 1fr 1fr 1fr 1fr auto;gap:6px;font-size:10.5px;color:var(--muted);text-transform:uppercase;font-weight:600;padding:2px 0"><div>Désignation</div><div>Qté</div><div>PU achat<br><span style="text-transform:none;font-weight:400;opacity:.75">ce qu'il coûte</span></div><div>PU revente<br><span style="text-transform:none;font-weight:400;opacity:.75">ce qu'on facture</span></div><div>TVA</div><div style="text-align:right">Total HT</div><div style="text-align:right">Marge</div><div></div></div>`;
   BL_LIGNES.forEach((l,i)=>{
     const t=blLineTotals(l);
     html+=`<div ${COLS}>
-      <input type="text" value="${String(l.nom||'').replace(/"/g,'&quot;')}" onchange="updateBLLigne(${i},'nom',this.value)" list="blProdList" placeholder="Désignation">
+      <div><input type="text" value="${String(l.nom||'').replace(/"/g,'&quot;')}" onchange="updateBLLigne(${i},'nom',this.value)" list="blProdList" placeholder="Désignation" style="width:100%">
+        ${l._src?`<div style="font-size:10px;color:var(--muted);margin-top:2px">↩ ${String(l._src).replace(/</g,'&lt;')}</div>`:''}</div>
       <input type="number" step="0.01" value="${l.qte}" onchange="updateBLLigne(${i},'qte',this.value)">
-      <input type="number" step="0.0001" value="${l.a}" onchange="updateBLLigne(${i},'a',this.value)">
-      <input type="number" step="0.0001" value="${l.r}" onchange="updateBLLigne(${i},'r',this.value)">
+      <input type="number" step="0.0001" value="${l.a}" onchange="updateBLLigne(${i},'a',this.value)" data-tip="PU achat — ce que ce produit vous COÛTE (0 est normal pour une prestation)" aria-label="PU achat — ce que ce produit vous COÛTE (0 est normal pour une prestation)">
+      <input type="number" step="0.0001" value="${l.r}" onchange="updateBLLigne(${i},'r',this.value)" data-tip="PU revente — ce que vous FACTUREZ au client" aria-label="PU revente — ce que vous FACTUREZ au client">
       <select onchange="updateBLLigne(${i},'tva',this.value)"><option value="">— TVA —</option>${TVA_TAUX.map(x=>`<option value="${x}" ${String(l.tva)===String(x)?'selected':''}>${x}%</option>`).join('')}</select>
       <div style="text-align:right;font-weight:600">${eur(t.tR)}</div>
       <div style="text-align:right;color:${t.marge>=0?'var(--ok)':'var(--warn)'}">${eur(t.marge)}</div>
@@ -1187,8 +1276,17 @@ function renderBLLignes(){
 function updateBLLigne(i,field,v){
   if(field==='nom'){
     BL_LIGNES[i].nom=v;
-    const pf=BL_PREFILL[v]; // pré-remplissage depuis les lignes passées du client (n'écrase pas une valeur déjà saisie)
-    if(pf){ if(!Number(BL_LIGNES[i].a)) BL_LIGNES[i].a=pf.a; if(!Number(BL_LIGNES[i].r)) BL_LIGNES[i].r=pf.r; if(BL_LIGNES[i].tva===''||BL_LIGNES[i].tva==null) BL_LIGNES[i].tva=pf.tva; }
+    // Priorité 2 (dernière livraison du client) puis 3 (catalogue) — cf. blSourcePrix.
+    // Priorité 1 : une valeur DÉJÀ SAISIE n'est jamais écrasée, d'où les tests champ par champ.
+    // `_src` sert uniquement à afficher d'où vient le prix ; il n'est jamais enregistré (saveBL
+    // reconstruit chaque ligne à partir des seuls nom/qte/a/r/tva).
+    const pf=blSourcePrix(v, BL_PREFILL, S.produits);
+    BL_LIGNES[i]._src=pf?blSourceLabel(pf):'';
+    if(pf){
+      if(!Number(BL_LIGNES[i].a)) BL_LIGNES[i].a=pf.a;
+      if(!Number(BL_LIGNES[i].r)) BL_LIGNES[i].r=pf.r;
+      if(BL_LIGNES[i].tva===''||BL_LIGNES[i].tva==null) BL_LIGNES[i].tva=pf.tva;
+    }
   } else if(field==='tva'){ BL_LIGNES[i].tva=v; }
   else { BL_LIGNES[i][field]=parseFloat(String(v).replace(',','.'))||0; }
   renderBLLignes();
@@ -1201,6 +1299,12 @@ async function saveBL(){
   // Verrou AU MOMENT de l'enregistrement (re-dérivé de bl_ids) — pas seulement à l'affichage.
   if(BL_EDIT_ID && BL_INDEX && BL_INDEX.get(BL_EDIT_ID)){ const f=BL_INDEX.get(BL_EDIT_ID); toast('Ce bon est désormais sur la facture '+(f.numero||'')+' — enregistrement refusé.'); return; }
   const errs=validateBLLignes(BL_LIGNES); if(errs.length){ toast(errs[0]); return; }
+  // Colonnes probablement inversées → CONFIRMATION explicite, jamais un blocage : une vente à perte ou
+  // un geste commercial existent. Ce qui n'est plus permis, c'est de passer en silence — c'est ainsi
+  // qu'une facture à 0 € et −1 575 € de marge a été enregistrée sans un mot le 31/08.
+  { const susp=blLignesSuspectes(BL_LIGNES), bon=blBonSuspect(BL_LIGNES);
+    const txt=blSuspicionTexte(susp,bon);
+    if(txt && !confirm(txt)) return; }
   // Recalcul SYSTÉMATIQUE des totaux de ligne et du bon (jamais les valeurs saisies/stockées).
   const lignes=BL_LIGNES.map(l=>{const t=blLineTotals(l);return {nom:String(l.nom).trim(),qte:Number(l.qte),a:Number(l.a),r:Number(l.r),tA:t.tA,tR:t.tR,tva:Number(l.tva)};});
   const tot=blTotals(BL_LIGNES);
