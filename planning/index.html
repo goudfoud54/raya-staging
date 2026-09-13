@@ -3998,10 +3998,16 @@ function origineOf(c, posed){
 //   • jamais un salarié sorti de l'effectif.
 function movablePool(dates, posed){
   const dset=new Set(dates||[]);
+  // Restaurants RÉELLEMENT en service. S.allCreneauxWeek est borné par EatimeScope, qui ne filtre pas
+  // sur `actif` : il contient donc aussi les créneaux d'un restaurant mis en pause. L'auto-fill n'a
+  // rien à réorganiser dans un établissement que le patron a fermé — et sans ce filtre, on irait y
+  // écrire un remplaçant.
+  const vivants=new Set((S.restos||[]).map(r=>r.id));
   const out=[];
   for(const c of (S.allCreneauxWeek||[])){
     if(!c.heure_debut || !c.heure_fin) continue;
     if(!dset.has(c.date)) continue;
+    if(!vivants.has(c.restaurant_id)) continue;
     if(c.sureffectif) continue;
     if(!onRoster(salById(c.salarie_id))) continue;
     out.push({row:c, src:origineOf(c, posed)});
@@ -4131,11 +4137,18 @@ const PLAFOND_PROCHE_PCT=0.95;
 // l'écran de Lobau, il faut donc basculer le contexte le temps de l'appel. try/finally OBLIGATOIRE : une
 // exception au milieu de la boucle laisserait la grille affichée pointée sur le mauvais restaurant, et
 // la prochaine saisie écrirait au mauvais endroit.
+// ⚠⚠ LE CONTEXTE DOIT ÊTRE ENTIER, JAMAIS MIXTE. `if(resto) SNACK=resto` laissait, pour un restaurant
+// absent de S.restos, SNACK sur le restaurant AFFICHÉ pendant que S.creneaux basculait sur l'autre —
+// checkPlacement lisait alors les créneaux de l'un et l'identité de l'autre. Or S.restos est chargé
+// avec .eq('actif',true) tandis que S.allCreneauxWeek est borné par EatimeScope, qui ne filtre PAS sur
+// `actif` : les créneaux d'un restaurant mis en pause dans les Paramètres arrivent bien ici, sans que
+// leur restaurant y soit. Conséquence mesurée : `worksAt(Y, SNACK.id)` répondait pour le mauvais site,
+// et la réparation pouvait écrire un salarié dans un restaurant où le patron ne l'a pas affecté.
+// À défaut de fiche, on FABRIQUE l'identité minimale — SNACK.id est tout ce que le moteur lit.
 function _withSnack(rid, fn){
   const prevSnack=SNACK, prevCre=S.creneaux;
   try{
-    const resto=(S.restos||[]).find(r=>r.id===rid);
-    if(resto) SNACK=resto;
+    SNACK=(S.restos||[]).find(r=>r.id===rid) || {id:rid, nom:_restoNom(rid)};
     S.creneaux=(S.allCreneauxWeek||[]).filter(c=>c.restaurant_id===rid);
     return fn();
   } finally { SNACK=prevSnack; S.creneaux=prevCre; }

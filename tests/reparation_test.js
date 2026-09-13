@@ -345,6 +345,29 @@ SAL.youcef.actif=false;
   t('un salarié hors effectif n\'est pas déplaçable', pool.length===0, pool.length); }
 SAL.youcef.actif=true;
 
+// (c bis) UN RESTAURANT MIS EN PAUSE. S.restos est chargé avec .eq('actif',true) ; S.allCreneauxWeek,
+//     lui, est borné par EatimeScope qui ne filtre PAS sur `actif`. Les créneaux d'un restaurant en
+//     pause arrivent donc dans la semaine SANS que son restaurant soit dans S.restos. Deux dégâts, tous
+//     deux corrigés ici :
+//       1. _withSnack laissait alors un contexte MIXTE (SNACK sur le restaurant affiché, S.creneaux sur
+//          l'autre) → checkPlacement jugeait « worksAt » pour le mauvais site et laissait passer un
+//          salarié non affecté ;
+//       2. la réparation allait réorganiser un établissement fermé.
+setup(scnPatron()); marquerPoses();
+{ // le contexte doit être ENTIER, même pour un restaurant absent de S.restos
+  const vu=_withSnack('r-inconnu',()=>({id:SNACK.id, cre:S.creneaux.length}));
+  t('_withSnack — contexte entier même pour un restaurant hors S.restos', vu.id==='r-inconnu', vu.id);
+  t('… et le contexte est restauré après coup', SNACK.id===CAR, SNACK.id); }
+{ // Lobau mis en pause : disparaît de S.restos, mais ses créneaux restent dans allCreneauxWeek
+  const scn=scnPatron(); setup(scn); marquerPoses();
+  S.restos=S.restos.filter(r=>r.id!==CAR? r.id!==LOB : true);   // on retire Lobau, on garde Carnot
+  const pool=movablePool([D(0)],_AF.posed);
+  t('un restaurant en pause n\'entre pas dans le vivier', pool.length===0, pool.length);
+  const RP=await autoFillCore([0],SILENT);
+  t('… aucun déplacement n\'y est exécuté', (RP.chain.list||[]).length===0);
+  t('… et personne n\'y est écrit', !STORE.some(c=>c.restaurant_id===LOB&&c.salarie_id==='matheo'),
+    JSON.stringify(STORE.filter(c=>c.restaurant_id===LOB).map(c=>c.salarie_id))); }
+
 // (d) origineOf : la table de vérité, isolée.
 { const posed=new Set(['x1']);
   t('origineOf — posé pendant la génération → « genere »', origineOf({id:'x1'},posed)==='genere');
