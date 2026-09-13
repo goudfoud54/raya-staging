@@ -453,6 +453,132 @@ t('la recherche ne fait AUCUNE écriture : planRepair n\'appelle ni placeCre ni 
 t('… et le remplaçant est cherché DANS le contexte du restaurant donneur',
   (()=>{const src=extractFn(h,'planRepair'); return /_withSnack\(moved\.restaurant_id, *\(\)=>\{[\s\S]*sortCandidates/.test(src);})());
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\n── 11. DÉFAUTS TROUVÉS EN RELECTURE ADVERSARIALE (chacun a été reproduit avant correction) ──');
+// ══════════════════════════════════════════════════════════════════════════════════════════════════
+
+// (1) L'HEURE DE DÉBUT N'IDENTIFIE PAS UN POSTE — le plus grave, et vivant en production.
+// Configuration RÉELLE de Raya Grand Cœur (planning_effectifs, soir/cuisine, lue le 2026-09-13) : deux
+// vagues démarrent à 18:00, une ordinaire et une ★ « expérimenté requis », l'ORDINAIRE EN PREMIER.
+// L'ancien `find(v=>v.deb===…)` renvoyait l'ordinaire → exp=false → le contrôle d'expérience de
+// checkPlacement n'était même pas évalué, et un débutant reprenait le poste ★, sans infraction ni
+// ligne de rapport.
+{ const VAGUES_GC=[{deb:'18:00',fin:'23:30',exp:false},{deb:'18:00',fin:'00:00',exp:true},
+                   {deb:'18:30',fin:'00:00',exp:true},{deb:'19:00',fin:'22:30',exp:false}];
+  const scn=scnPatron();
+  scn.roles=[{cle:'cuisine',nom:'Cuisine'}];
+  scn.sals=[
+    {id:'youcef',nom:'ARBOUZE',prenom:'Youcef',roles:['cuisine'],exp:['cuisine'],heures_min:0,heures_max:48,
+     est_multi:true,snacks_priorites:[{restaurant_id:LOB,priorite:1},{restaurant_id:CAR,priorite:1}]},
+    {id:'matheo',nom:'DE TAVERNIER',prenom:'Mathéo',roles:['cuisine'],exp:[],heures_min:0,heures_max:48,
+     snacks_priorites:[{restaurant_id:LOB,priorite:1}]},   // DÉBUTANT en cuisine
+  ];
+  scn.eff=[{restaurant_id:LOB,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:4,vagues:VAGUES_GC},
+           {restaurant_id:CAR,jour_type:'Lu-Me',service:'soir',role:'cuisine',nb_cible:1,
+            vagues:[{deb:'19:00',fin:'23:00',exp:false}]}];
+  // Youcef occupe la vague ★ 18:00→00:00 chez le donneur.
+  scn.store=[{restaurant_id:LOB,salarie_id:'youcef',role:'cuisine',date:D(0),service:'soir',
+              heure_debut:'18:00',heure_fin:'00:00'}];
+  setup(scn); marquerPoses();
+  const RE=await autoFillCore([0],SILENT);
+  const reprise=STORE.find(c=>c.restaurant_id===LOB&&c.salarie_id==='matheo');
+  t('un débutant ne reprend PAS un poste ★ dont seule l\'heure de début est partagée',
+    !reprise, reprise?`${reprise.heure_debut}→${reprise.heure_fin}`:'(aucune reprise)');
+  t('… donc aucune chaîne n\'est exécutée sur ce poste', (RE.chain.list||[]).length===0,
+    JSON.stringify((RE.chain.list||[]).map(c=>c.yNom)));
+  // CONTRE-TEST : sur la vague ORDINAIRE 18:00→23:30, le même débutant DOIT pouvoir reprendre —
+  // sinon la correction aurait simplement interdit toute reprise.
+  scn.store=[{restaurant_id:LOB,salarie_id:'youcef',role:'cuisine',date:D(0),service:'soir',
+              heure_debut:'18:00',heure_fin:'23:30'}];
+  setup(scn); marquerPoses();
+  const RE2=await autoFillCore([0],SILENT);
+  t('CONTRE-TEST — sur la vague ORDINAIRE de même début, le débutant reprend bien',
+    (RE2.chain.list[0]||{}).yNom==='Mathéo DE TAVERNIER', JSON.stringify(RE2.chain.suggest)); }
+
+// (2) LA COLONNE `origine` DOIT ÊTRE SONDÉE QUAND LA SEMAINE EST VIDE. Une semaine à venir est
+// toujours vide avant sa première génération : se contenter de renifler une ligne chargée revenait à
+// écrire origine=NULL au tout premier usage, et l'auto-fill se rendait lui-même non réparable.
+t('loadWeek sonde vraiment la colonne quand la semaine est vide',
+  /_AF\.sonde=true;[\s\S]{0,220}select\('origine'\)/.test(h));
+t('… et n\'écrit `origine` que si la colonne existe', /_AF\.origineCol\?\{origine:'auto'\}:\{\}/.test(h));
+
+// (3) LA PHASE 2 A SON PROPRE BUDGET. T0 démarre avant la phase 1, qui enchaîne un aller-retour réseau
+// par créneau posé : mesuré sur l'horloge de la phase 1, le budget de la phase 2 est déjà consommé en
+// conditions réelles et la réparation ne tourne jamais. Même correctif que pour la phase 3 (5f24032).
+t('la phase 2 remet son horloge à zéro (budget dédié)', /const _t2=_now\(\), over2=\(\)=>_now\(\)-_t2>\d+;/.test(h));
+t('… et c\'est bien over2, pas overTime, qui garde la boucle de réparation',
+  (()=>{ const i=h.indexOf('const _t2=_now()'), j=h.indexOf('fin PHASES 1&2');
+         return i>0 && j>i && !/overTime\(\)/.test(h.slice(i,j)); })());
+// ⚠ HONNÊTETÉ SUR CE QUI EST PROUVÉ ICI. Le garde-fou discriminant est la PAIRE STRUCTURELLE ci-dessus
+// (les deux échouent sur le code d'avant, vérifié). Le contrôle qui suit est un test de FUMÉE : pour
+// épuiser vraiment 8 s d'horloge il faudrait ~150 écritures à 60 ms, soit 9 s de suite de tests. Il
+// vérifie donc seulement que la réparation survit à une latence d'écriture, pas qu'elle survivrait à
+// celle d'une semaine complète. C'est le raisonnement — un budget mesuré sur le travail de la phase 1 —
+// qui porte la correction, pas ce chronomètre.
+{ const vraiRun=Q.prototype._run;
+  Q.prototype._run=function(){ const r=vraiRun.call(this); const t0=Date.now(); while(Date.now()-t0<60){} return r; };
+  setup(scnPatron()); marquerPoses();
+  const t0=Date.now(); const RL=await autoFillCore([0],SILENT); const dt=Date.now()-t0;
+  Q.prototype._run=vraiRun;
+  t(`FUMÉE — la réparation survit à une latence d'écriture (${dt} ms)`, (RL.chain.list||[]).length===1,
+    `chaînes=${(RL.chain.list||[]).length} · budget=${RL.chain.budget}`); }
+
+// (4) LA SUPPRESSION DU CRÉNEAU LIBÉRÉ N'EST PAS INFAILLIBLE. Si elle échoue, enchaîner sur deux
+// insertions réserve X à deux endroits en base pendant que le rapport annonce une réussite.
+t('removeCreneau rend compte de son échec', /const \{error\}=await EatimeScope\.from\('planning_creneaux'\)\.delete\(\)[\s\S]{0,60}if\(error\) return false;/.test(h));
+{ setup(scnPatron()); marquerPoses();
+  const vraiRun=Q.prototype._run;
+  Q.prototype._run=function(){ if(this.op==='delete') return {data:null,error:{message:'réseau'}}; return vraiRun.call(this); };
+  const RD=await autoFillCore([0],SILENT);
+  Q.prototype._run=vraiRun;
+  t('suppression refusée → aucune chaîne exécutée', (RD.chain.list||[]).length===0);
+  t('… et X n\'est PAS doublement réservé', STORE.filter(c=>c.salarie_id==='youcef').length===1,
+    JSON.stringify(STORE.filter(c=>c.salarie_id==='youcef').map(c=>c.restaurant_id))); }
+
+// (5) UN CRÉNEAU PERDU PAR UNE ÉCRITURE RATÉE N'EST PAS UN POSTE QUE LES RÈGLES BLOQUAIENT.
+// On fait échouer TOUTES les insertions : la suppression passe, les poses échouent, la remise en place
+// aussi. Le créneau de X est perdu — et cela doit être DIT, pas confondu avec une contrainte.
+{ setup(scnPatron()); marquerPoses();
+  const vraiRun=Q.prototype._run;
+  Q.prototype._run=function(){ if(this.op==='upsert') return {data:null,error:{message:'réseau'}}; return vraiRun.call(this); };
+  const RW=await autoFillCore([0],SILENT);
+  Q.prototype._run=vraiRun;
+  t('le créneau perdu est signalé, pas passé sous silence', (RW.chain.perdu||[]).length===1,
+    JSON.stringify(RW.chain.perdu));
+  t('… en nommant la personne et le créneau', (RW.chain.perdu[0]||{}).nom==='Youcef ARBOUZE'
+    && (RW.chain.perdu[0]||{}).horaire==='18:00→00:00', JSON.stringify(RW.chain.perdu[0]));
+  const {chainWarn}=buildChainReport(RW.chain,true);
+  t('… et le rapport le met en tête, en rouge', /N'ONT PAS PU ÊTRE REMIS EN PLACE/.test(chainWarn)); }
+
+// (6) L'ORDRE DU VIVIER DOIT ÊTRE DÉTERMINISTE. S.allCreneauxWeek vient d'un select SANS ORDER BY :
+// sans départage stable, deux générations sur les mêmes données pourraient déplacer deux personnes
+// différentes. On rejoue le MÊME scénario avec le vivier inversé — le choix doit être identique.
+{ const choix=[];
+  for(const inverse of [false,true]){
+    const scn=scnPatron();
+    scn.sals.push({id:'karim',nom:'HADDAD',prenom:'Karim',roles:['caisse'],exp:['caisse'],
+      heures_min:0,heures_max:48,est_multi:true,
+      snacks_priorites:[{restaurant_id:LOB,priorite:1},{restaurant_id:CAR,priorite:1}]});
+    scn.store.push({restaurant_id:LOB,salarie_id:'karim',role:'caisse',date:D(0),service:'soir',
+      heure_debut:'18:00',heure_fin:'00:00'});
+    scn.eff=scn.eff.map(e=>e.restaurant_id===LOB
+      ? {...e, nb_cible:2, vagues:[{deb:'18:00',fin:'00:00'},{deb:'18:00',fin:'00:00'}]} : e);
+    setup(scn); marquerPoses();
+    if(inverse){ S.allCreneauxWeek=S.allCreneauxWeek.slice().reverse(); }
+    const RO2=await autoFillCore([0],SILENT);
+    choix.push((RO2.chain.list[0]||{}).xNom||'(aucun)');
+  }
+  t('le même vivier dans l\'ordre inverse donne le MÊME déplacement',
+    choix[0]===choix[1] && choix[0]!=='(aucun)', choix.join(' vs ')); }
+
+// (7) LA PHRASE SUR L'ANNULATION DOIT ÊTRE VRAIE EN MULTI-SNACK : ↶ dépile UN lot (un par restaurant),
+// pas la génération entière.
+{ const {chainSection}=buildChainReport({list:[{snack:'Raya Carnot',jour:'Lundi',svc:'soir',role:'Caisse',
+    horaire:'18:00→00:00',xNom:'A',yNom:'B',fromSnack:'Lobau',fromJour:'Lundi',fromSvc:'soir',
+    fromHoraire:'18:00→00:00',hLen:6,pLen:6,inter:true,xSid:'x',ySid:'y'}]},true);
+  t('le rapport ne promet pas une annulation globale qui n\'existe pas',
+    !/Annulable d'un coup/.test(chainSection) && /un lot par restaurant/.test(chainSection)); }
+
 console.log('\n'+(ok?'ALL PASS':'SOME FAILED')+`  (${n} vérifications)`);
 process.exit(ok?0:1);
 })().catch(e=>{console.error(e);process.exit(1);});

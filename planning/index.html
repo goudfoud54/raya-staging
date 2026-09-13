@@ -488,11 +488,17 @@ async function redo(){
 // Suppression d'un créneau + trace undo (before=row, after=null). Fonction PARTAGÉE : l'auto-fill
 // (kick-chain) et la purge de semaine passent par ici → même comportement + undo/redo cohérent.
 // Met à jour S.creneaux ET S.allCreneauxWeek. recordAction route dans le _txn courant si ouvert.
+// Renvoie TRUE si la suppression a bien eu lieu. L'erreur était ignorée : la mémoire retirait la ligne
+// que la base gardait. Pour la réparation par déplacement c'est intenable — on enchaîne sur deux
+// insertions en croyant la place libre, et le salarié se retrouve doublement réservé en base pendant
+// que l'écran et le rapport annoncent une réussite. L'appelant DOIT regarder le retour.
 async function removeCreneau(row){
-  await EatimeScope.from('planning_creneaux').delete().eq('id',row.id);
+  const {error}=await EatimeScope.from('planning_creneaux').delete().eq('id',row.id);
+  if(error) return false;
   S.creneaux=S.creneaux.filter(c=>c.id!==row.id);
   S.allCreneauxWeek=S.allCreneauxWeek.filter(c=>c.id!==row.id);
   recordAction(row,null);
+  return true;
 }
 // Purge de TOUS les créneaux de TOUS les salariés pour la semaine affichée sur le snack courant.
 // Un seul batch undo (beginTxn/endTxn) → annulable d'un coup via ↶, comme l'auto-fill.
@@ -825,11 +831,19 @@ async function loadWeek(){
     EatimeScope.from('planning_derogations').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to).not('salarie_id','is',null)
   ]);
   S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];S.derogations=der.data||[];
-  // La colonne `origine` existe-t-elle ? Reniflée sur une ligne réellement chargée (select '*' la renvoie
-  // même à null quand elle existe). On ne l'ÉCRIT que si elle est là : l'inclure sans la colonne ferait
-  // échouer CHAQUE insertion de l'auto-fill — le pire des échecs silencieux, un remplissage qui ne
-  // remplit rien. Semaine vide : rien à écrire non plus, la valeur sera fixée au prochain chargement.
+  // La colonne `origine` existe-t-elle ? On ne l'ÉCRIT que si elle est là : l'inclure sans la colonne
+  // ferait échouer CHAQUE insertion de l'auto-fill — le pire des échecs silencieux, un remplissage qui
+  // ne remplit rien.
+  // ⚠ Se contenter de renifler une ligne chargée ne suffit PAS : une semaine à venir est VIDE tant
+  // qu'elle n'a pas été générée, or c'est précisément là qu'on va écrire. La toute première génération
+  // aurait donc marqué toutes ses lignes en `origine` NULL, définitivement classées « inconnues » —
+  // l'auto-fill se rendant lui-même non réparable au tout premier usage. On sonde donc la colonne pour
+  // de bon quand la semaine est vide (une fois par session : la réponse ne change pas en cours de route).
   if(S.allCreneauxWeek.length) _AF.origineCol=Object.prototype.hasOwnProperty.call(S.allCreneauxWeek[0],'origine');
+  else if(!_AF.sonde){ _AF.sonde=true;
+    const {error}=await EatimeScope.from('planning_creneaux').select('origine').limit(1);
+    _AF.origineCol=!error;   // colonne absente → PostgREST renvoie une erreur (42703)
+  }
   S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
   render();
 }
@@ -2999,6 +3013,7 @@ function showMultiSolveReport(results, underMin){
   // Lobau, dont le bilan était déjà figé — seul le rapport consolidé peut en rendre compte honnêtement.
   const chainAgg={ list:results.flatMap(r=>(r.chain&&r.chain.list)||[]),
                    suggest:results.flatMap(r=>(r.chain&&r.chain.suggest)||[]),
+                   perdu:results.flatMap(r=>(r.chain&&r.chain.perdu)||[]),
                    budget:results.reduce((a,r)=>a+((r.chain&&r.chain.budget)||0),0) };
   const {chainSection, chainWarn}=buildChainReport(chainAgg, true);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
@@ -3018,7 +3033,8 @@ let _autofillRunning=false;
 //   origineCol — la colonne planning_creneaux.origine existe-t-elle ? Détectée au chargement. Absente,
 //                on ne l'écrit pas (sinon chaque insertion échouerait) et la réparation se limite au
 //                vivier `posed` : dégradation visible dans le rapport, jamais une panne silencieuse.
-const _AF={posed:new Set(), origineCol:false};
+//   sonde      — la colonne a-t-elle déjà été sondée pour de bon (semaine vide) ? Une fois par session.
+const _AF={posed:new Set(), origineCol:false, sonde:false};
 function _afResetPosed(){ _AF.posed.clear(); }
 // Contexte multi-snack de l'overlay : {index,total,nom} pendant autoFillMultiWeek, sinon null. C'est une
 // variable JS → elle SURVIT aux loadWeek() intermédiaires (qui ne re-render que la grille, pas l'overlay),
@@ -3823,8 +3839,8 @@ const CHAIN_RAISON={
 };
 function buildChainReport(chain, hasPrev){
   chain=chain||{};
-  const list=chain.list||[], sugg=chain.suggest||[], budget=chain.budget||0;
-  if(!list.length && !sugg.length && !budget) return {chainSection:'', chainWarn:''};
+  const list=chain.list||[], sugg=chain.suggest||[], budget=chain.budget||0, perdu=chain.perdu||[];
+  if(!list.length && !sugg.length && !budget && !perdu.length) return {chainSection:'', chainWarn:''};
   const ligne=r=>`<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.55">`
     +`<b>${escP(String(r.snack||'').replace('Raya ',''))} · ${escP(r.jour)} ${escP(r.svc)} · ${escP(r.role)}${r.exp?' ★':''}</b> `
     +`<span style="color:var(--muted);font-family:monospace">${escP(r.horaire)}</span><br>`
@@ -3843,8 +3859,14 @@ function buildChainReport(chain, hasPrev){
   const addEur=list.reduce((a,r)=>a + _tx(r.xSid)*((r.hLen||0)-(r.pLen||0)) + _tx(r.ySid)*(r.pLen||0), 0);
   const chainSection = list.length ? `<div style="margin-top:${hasPrev?'18px':'0'};padding-top:${hasPrev?'14px':'0'};${hasPrev?'border-top:1px solid var(--line-2)':''}">
     <h3 style="margin:0 0 6px">🔁 ${list.length} poste(s) comblé(s) en réorganisant l'existant — +${fmtH1(addH)}h${addEur>0.5?` ≈ +${Math.round(addEur)} € chargé`:''}</h3>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5">Aucun candidat n'était libre : l'auto-fill a déplacé quelqu'un de déjà placé et fait reprendre sa place par un autre. Chaque créneau touché a été revérifié (règles, repos, plafonds, indisponibilités). Les heures ajoutées sont <b>exactement celles des postes comblés</b> — la reprise se fait à l'identique, aucune heure n'est créée en plus. Annulable d'un coup avec ↶.</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5">Aucun candidat n'était libre : l'auto-fill a déplacé quelqu'un de déjà placé et fait reprendre sa place par un autre. Chaque créneau touché a été revérifié (règles, repos, plafonds, indisponibilités). Les heures ajoutées sont <b>exactement celles des postes comblés</b> — la reprise se fait à l'identique, aucune heure n'est créée en plus. ↶ annule le lot du restaurant concerné (en multi-snack, un lot par restaurant).</div>
     ${list.map(ligne).join('')}</div>` : '';
+  // Un créneau perdu par une écriture ratée n'est PAS un poste que les règles empêchaient de combler.
+  // Le taire ferait passer une panne pour une contrainte — l'échec silencieux qu'on refuse partout.
+  const perduWarn = perdu.length ? `<div style="background:rgba(200,60,60,.12);border:1px solid var(--bad);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:var(--bad);font-weight:700;font-size:13.5px">⛔ ${perdu.length} créneau(x) N'ONT PAS PU ÊTRE REMIS EN PLACE après un échec d'enregistrement</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">Une réparation a échoué en cours d'écriture et la remise en place n'a pas abouti (réseau ou base). <b>Ces créneaux sont à repositionner à la main</b> — ce n'est pas une règle qui les bloque.</div>
+    ${perdu.map(x=>`<div style="padding:4px 0;border-top:1px solid var(--line);font-size:12px">⛔ <b>${escP(x.nom)}</b> · ${escP(x.snack)} · ${escP(x.jour)} ${escP(x.svc)} ${escP(x.horaire)}</div>`).join('')}</div>` : '';
   // Enchaînement trouvé mais NON exécuté : le créneau à libérer n'a pas été généré par l'auto-fill.
   const suggRows=sugg.map(r=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.5">`
     +`💡 <b>${escP(String(r.snack||'').replace('Raya ',''))} · ${escP(r.jour)} ${escP(r.svc)} · ${escP(r.role)}</b> `
@@ -3856,7 +3878,7 @@ function buildChainReport(chain, hasPrev){
     <div style="color:var(--info,#4a7fbd);font-weight:700;font-size:13.5px">💡 ${sugg.length} poste(s) comblables en réorganisant — votre accord requis</div>
     <div style="color:var(--muted);font-size:12px;margin-top:4px">L'auto-fill ne déplace jamais un créneau qu'il n'a pas posé lui-même : vous l'avez peut-être placé exprès.</div>
     ${suggRows}${budgetTxt}</div>` : '';
-  return {chainSection, chainWarn};
+  return {chainSection, chainWarn:perduWarn+chainWarn};
 }
 function buildPhase3Report(p3, hasPrev){
   p3=p3||{};
@@ -4072,10 +4094,16 @@ function planRepair(h, opt){
   // avant d'en proposer une qui demande l'accord du patron. (2) À égalité, le même critère qu'auparavant :
   // d'abord ceux qui sont déjà à leur minimum (manque le plus faible), en dernier ceux qui en ont encore
   // besoin — on évite de déshabiller quelqu'un qui est lui-même en manque.
+  // Le DÉPARTAGE FINAL est obligatoire, pas cosmétique : S.allCreneauxWeek vient d'un select SANS
+  // ORDER BY, donc l'ordre du vivier n'est pas garanti d'une exécution à l'autre. Sans clé stable, deux
+  // générations sur les mêmes données pourraient déplacer deux personnes différentes — et l'invariance
+  // à l'ordre revendiquée par l'auto-fill multi-snack tomberait.
+  const cle=p=>`${p.row.date}|${p.row.service}|${p.row.restaurant_id}|${p.row.salarie_id}`;
   const rank={genere:0, inconnu:1, manuel:2};
   const cands=(opt.pool||[])
     .filter(p=>capable(p.row.salarie_id))
-    .sort((a,b)=>((execOf(b)?1:0)-(execOf(a)?1:0)) || (rank[a.src]-rank[b.src]) || (lackOf(a.row.salarie_id)-lackOf(b.row.salarie_id)));
+    .sort((a,b)=>((execOf(b)?1:0)-(execOf(a)?1:0)) || (rank[a.src]-rank[b.src])
+              || (lackOf(a.row.salarie_id)-lackOf(b.row.salarie_id)) || (cle(a)<cle(b)?-1:cle(a)>cle(b)?1:0));
   for(const p of cands){
     const moved=p.row, src=p.src;
     const X=moved.salarie_id;
@@ -4083,10 +4111,25 @@ function planRepair(h, opt){
       // 1. X peut-il tenir le trou une fois sa place libérée ? Contexte = le restaurant DU TROU.
       if(checkPlacement(X, h.shift, h.date, h.svc, h.di, {rg})!==null) return null;
       // 2. Qui reprend la place de X ? Contexte = le restaurant DONNEUR, du filtre jusqu'au tri.
-      const pVag=_withSnack(moved.restaurant_id, ()=>
-        getShifts(dayJourType(dayIdx(moved.date)), moved.service, moved.role)
-          .find(v=>v.deb===(moved.heure_debut||'').slice(0,5)));
-      const pSh={deb:moved.heure_debut, fin:moved.heure_fin, role:moved.role, exp:!!(pVag&&pVag.exp)};
+      //
+      // ⚠ L'HEURE DE DÉBUT N'IDENTIFIE PAS UN POSTE. Chercher la vague par le seul `deb` était le
+      // défaut le plus grave de cette fonction : Grand Cœur déclare, sur soir/cuisine et sur QUATRE
+      // jour-types, deux vagues qui démarrent toutes les deux à 18:00 — une ordinaire et une ★
+      // « expérimenté requis » — l'ordinaire en PREMIER. `find` renvoyait donc l'ordinaire, exp
+      // tombait à false, et le contrôle d'expérience de checkPlacement n'était même pas évalué : un
+      // débutant pouvait reprendre le poste ★ du donneur, sans infraction, sans ligne de rapport.
+      // On apparie donc sur les DEUX bornes, et à défaut on prend la contrainte la PLUS EXIGEANTE des
+      // vagues plausibles : quand le poste ne peut pas être identifié, on ne devine pas à la baisse.
+      const exigeExp=_withSnack(moved.restaurant_id, ()=>{
+        const vs=getShifts(dayJourType(dayIdx(moved.date)), moved.service, moved.role)||[];
+        if(!vs.length) return false;                       // aucun poste défini : rien à exiger
+        const d5=(moved.heure_debut||'').slice(0,5), f5=(moved.heure_fin||'').slice(0,5);
+        const exact=vs.filter(v=>v.deb===d5 && v.fin===f5);
+        if(exact.length) return exact.some(v=>v.exp);
+        const parDeb=vs.filter(v=>v.deb===d5);
+        return (parDeb.length?parDeb:vs).some(v=>v.exp);   // ambigu ou hors poste → la plus exigeante
+      });
+      const pSh={deb:moved.heure_debut, fin:moved.heure_fin, role:moved.role, exp:exigeExp};
       const Yid=_withSnack(moved.restaurant_id, ()=>{
         const ids=S.salaries
           .filter(s=>s.id!==X && checkPlacement(s.id, pSh, moved.date, moved.service, dayIdx(moved.date), {rg})===null)
@@ -4391,7 +4434,7 @@ async function autoFillCore(dayIndices, opt={}){
   let rallongeH=0, sureffH=0, transferH=0; const sureffList=[], transferList=[], rallongeList=[], suggestList=[]; let overflowList=[]; // bilan phase 3 (transfert/rallonge/sureffectif + détail rallonge + suggestions + sur-couverture)
   // Phase 2 — réparations : celles RÉELLEMENT faites, celles seulement proposées (créneau non généré), et
   // le nombre de trous laissés sans recherche faute de temps (jamais une troncature muette).
-  const chainList=[], chainSuggest=[]; let chainBudget=0;
+  const chainList=[], chainSuggest=[], chainPerdu=[]; let chainBudget=0;
   try{
   // opt.phase3only : mode « phase 3 seule » (auto-fill MULTI, étape B globale) — on saute la purge des
   // orphelins + les holes + phases 1&2 (déjà faites à l'étape A) et on ne fait QUE la distribution.
@@ -4466,9 +4509,15 @@ async function autoFillCore(dayIndices, opt={}){
   const USE_REPAIR=rg.on('autofill_reparation',true);
   const REPAIR_INTER=rg.on('reparation_inter_snack',true);
   const _dates=dayIndices.map(i=>fmtDate(dateOfDay(i)));
+  // BUDGET DÉDIÉ, horloge remise à zéro — exactement le correctif déjà appliqué à la phase 3, et pour
+  // la même raison. T0 démarre AVANT la phase 1, qui enchaîne un aller-retour réseau par créneau posé :
+  // à 50 ms l'écriture et 150 postes, les 8 s sont déjà consommées quand la phase 2 commence, et la
+  // réparation ne s'exécute JAMAIS en conditions réelles. Le harnais, lui, écrit en mémoire et ne voit
+  // rien. Un budget mesuré sur le travail de quelqu'un d'autre n'est pas un budget.
+  const _t2=_now(), over2=()=>_now()-_t2>6000;
   for(const h of open){
-    if(!USE_REPAIR || overTime()){
-      if(USE_REPAIR && overTime()) chainBudget++;   // jamais de troncature silencieuse : comptée et dite dans le rapport
+    if(!USE_REPAIR || over2()){
+      if(USE_REPAIR && over2()) chainBudget++;   // jamais de troncature silencieuse : comptée et dite dans le rapport
       report.push(diag(h)); unfilled.push({snackId:SNACK.id,role:h.role,exp:!!h.shift.exp}); continue;
     }
     const plan=planRepair(h,{rg, interOK:REPAIR_INTER, pool:movablePool(_dates,_AF.posed)});
@@ -4479,15 +4528,23 @@ async function autoFillCore(dayIndices, opt={}){
     if(plan && !plan.exec){ chainSuggest.push(_chainRow(plan,h,dayIdxOfDate)); }
     else if(plan){
       const {moved,X,Yid,pSh}=plan;
-      await removeCre(moved);
-      const rH=await placeCre(X,h.shift,h.date,h.svc);
-      const rP=await placeCre(Yid,pSh,moved.date,moved.service,null,moved.restaurant_id);
-      if(rH&&rP){ added++; repaired=true; chainList.push(_chainRow(plan,h,dayIdxOfDate)); }
-      else{
-        // Validé en mémoire ≠ écrit. Une écriture qui échoue à mi-chaîne laisserait un poste dégarni :
-        // on défait ce qui a été écrit et on remet X exactement où il était.
-        if(rH)await removeCre(rH); if(rP)await removeCre(rP);
-        await placeCre(X,{deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role},moved.date,moved.service,null,moved.restaurant_id);
+      // Validé en mémoire ≠ écrit. Les TROIS écritures sont vérifiées, la première comprise : une
+      // suppression qui échoue laisserait X en place ET le ferait poser ailleurs — doublement réservé
+      // en base pendant que le rapport annonce une réussite.
+      if(await removeCre(moved)){
+        const rH=await placeCre(X,h.shift,h.date,h.svc);
+        const rP=await placeCre(Yid,pSh,moved.date,moved.service,null,moved.restaurant_id);
+        if(rH&&rP){ added++; repaired=true; chainList.push(_chainRow(plan,h,dayIdxOfDate)); }
+        else{
+          // Échec à mi-chaîne : on défait ce qui a été écrit et on remet X exactement où il était.
+          if(rH)await removeCre(rH); if(rP)await removeCre(rP);
+          const back=await placeCre(X,{deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role},moved.date,moved.service,null,moved.restaurant_id);
+          // Si même la remise en place échoue, X a PERDU son créneau. Se taire ferait apparaître un
+          // poste vide attribué à une règle, alors que c'est une écriture ratée. On le dit.
+          if(!back) chainPerdu.push({nom:fullName(salById(X)||{}), snack:_restoNom(moved.restaurant_id),
+            jour:JOURS[dayIdxOfDate(moved.date)], date:moved.date, svc:moved.service,
+            horaire:`${(moved.heure_debut||'').slice(0,5)}→${(moved.heure_fin||'').slice(0,5)}`});
+        }
       }
     }
     if(!repaired){ report.push(diag(h)); unfilled.push({snackId:SNACK.id,role:h.role,exp:!!h.shift.exp}); }
@@ -4818,7 +4875,7 @@ async function autoFillCore(dayIndices, opt={}){
   const phase3={rallongeH, sureffH, transferH, sureffList, transferList, rallongeList, suggestList, sureffEur, rallongeEur, overflowList};
   // Les réparations voyagent HORS de `phase3` : en multi-snack, phase3 est écrasé à l'étape B (distribution)
   // alors que la phase 2 s'exécute à l'étape A — les y ranger les ferait disparaître du rapport consolidé.
-  const chain={list:chainList, suggest:chainSuggest, budget:chainBudget};
+  const chain={list:chainList, suggest:chainSuggest, perdu:chainPerdu, budget:chainBudget};
   if(opt.silent) return {added, report, unfilled, underMin, phase3, chain, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
   const distrib=rallongeH+sureffH+transferH;
