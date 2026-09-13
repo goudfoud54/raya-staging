@@ -365,6 +365,34 @@ setup(scnPatron());
   t('… et pendant l\'appel, le créneau est bien absent', dedans===avant-1, dedans); }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\n── 8bis. QUI EST DÉPLACÉ : LE MOINS EN MANQUE D\'HEURES, JAMAIS CELUI QUI EN A BESOIN ──');
+// ══════════════════════════════════════════════════════════════════════════════════════════════════
+// C'est le critère de tri hérité de la phase 2 d'origine, et il porte une décision de gestion : on
+// déshabille en priorité quelqu'un qui a déjà ses heures. CONSÉQUENCE ASSUMÉE : celui qu'on déplace peut
+// TERMINER AVEC MOINS D'HEURES si le poste comblé est plus court que le créneau qu'il laisse. C'est
+// voulu — la phase 3 repasse ensuite pour le recompléter — mais ce doit être un choix, pas un hasard.
+// Deux candidats capables de combler le trou : l'un largement au-dessus de son minimum, l'autre en
+// dessous. Le moteur doit prendre le premier.
+// Lobau tient DEUX personnes le soir ; Youcef et Nadia y sont tous les deux, donc tous deux bloqués
+// pour Carnot. Un seul peut être libéré (Mathéo ne peut reprendre qu'une place). Le moteur doit choisir
+// Youcef (déjà à son minimum), pas Nadia (à 6 h pour un minimum de 35).
+{ const scn=scnPatron();
+  scn.sals[0].heures_min=6;                       // Youcef : déjà à ses heures (6 h posées, min 6)
+  scn.sals.push({id:'nadia',nom:'BENALI',prenom:'Nadia',roles:['caisse'],exp:['caisse'],
+    heures_min:35,heures_max:48,taux_horaire_brut:12,        // Nadia : très en manque
+    est_multi:true, snacks_priorites:[{restaurant_id:LOB,priorite:1},{restaurant_id:CAR,priorite:1}]});
+  scn.store.push({restaurant_id:LOB,salarie_id:'nadia',role:'caisse',date:D(0),service:'soir',
+    heure_debut:'18:00',heure_fin:'00:00'});
+  scn.eff=scn.eff.map(e=>e.restaurant_id===LOB
+    ? {...e, nb_cible:2, vagues:[{deb:'18:00',fin:'00:00'},{deb:'18:00',fin:'00:00'}]} : e);
+  setup(scn); marquerPoses();
+  const RN=await autoFillCore([0],SILENT);
+  t('un déplacement a bien lieu', (RN.chain.list||[]).length===1, JSON.stringify(RN.report.map(r=>r.detail)));
+  t('c\'est Youcef (à ses heures) qui est déplacé, pas Nadia (en manque)',
+    (RN.chain.list[0]||{}).xNom==='Youcef ARBOUZE', (RN.chain.list[0]||{}).xNom);
+  t('… et Nadia reste à Lobau', STORE.some(c=>c.restaurant_id===LOB&&c.salarie_id==='nadia')); }
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════
 console.log('\n── 9. LA SUBSTITUTION EST À L\'IDENTIQUE (ce qui rend relève et durée minimale sans objet) ──');
 // ══════════════════════════════════════════════════════════════════════════════════════════════════
 // Y reprend EXACTEMENT les bornes de X : aucune nouvelle frontière n'apparaît, donc releveInterdite n'a
