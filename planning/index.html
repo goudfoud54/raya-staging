@@ -308,7 +308,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.67 · indisponibilités : une seule source pour la grille, le PDF et le moteur — les heures d\'une plage sont respectées, et une journée déclarée ne bloque plus le service de la veille qui finit après minuit';
+const VERSION='v0.68 · réparation par déplacement : pour combler un poste vide, l\'auto-fill regarde désormais TOUS les restaurants de la semaine, pas seulement ce qu\'il vient de poser ici — chaque enchaînement est revérifié et expliqué en clair dans le rapport';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -825,6 +825,11 @@ async function loadWeek(){
     EatimeScope.from('planning_derogations').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to).not('salarie_id','is',null)
   ]);
   S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];S.derogations=der.data||[];
+  // La colonne `origine` existe-t-elle ? Reniflée sur une ligne réellement chargée (select '*' la renvoie
+  // même à null quand elle existe). On ne l'ÉCRIT que si elle est là : l'inclure sans la colonne ferait
+  // échouer CHAQUE insertion de l'auto-fill — le pire des échecs silencieux, un remplissage qui ne
+  // remplit rien. Semaine vide : rien à écrire non plus, la valeur sera fixée au prochain chargement.
+  if(S.allCreneauxWeek.length) _AF.origineCol=Object.prototype.hasOwnProperty.call(S.allCreneauxWeek[0],'origine');
   S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
   render();
 }
@@ -1277,7 +1282,9 @@ async function saveCell(sid,date,svc,which,el){
   el.dataset.saved=v;
   setSS('busy','Enregistrement…');
   // upsert
-  const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin};
+  // origine:'manuel' — c'est un humain qui pose ce créneau. La réparation de l'auto-fill ne le déplacera
+  // jamais toute seule : elle le proposera. Écrit seulement si la colonne existe (cf. _AF.origineCol).
+  const payload={restaurant_id:SNACK.id,salarie_id:sid,date,service:svc,role:cr.role,heure_debut:cr.heure_debut,heure_fin:cr.heure_fin,...(_AF.origineCol?{origine:'manuel'}:{})};
   const{data,error}=await EatimeScope.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
   if(error){setSS('err','Erreur: '+error.message);return;}
   S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===sid && c.date===date && c.service===svc));S.creneaux.push(data);
@@ -1954,7 +1961,7 @@ async function assignPosteCell(date,svc,role,deb,fin,newSid,oldCreneauId){
   }
   // 2) Si nouveau salarié sélectionné → upsert
   if(newSid){
-    const payload={restaurant_id:SNACK.id,salarie_id:newSid,role,date,service:svc,heure_debut:deb,heure_fin:fin};
+    const payload={restaurant_id:SNACK.id,salarie_id:newSid,role,date,service:svc,heure_debut:deb,heure_fin:fin,...(_AF.origineCol?{origine:'manuel'}:{})};
     const{data,error}=await EatimeScope.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
     if(error){setSS('err','Erreur: '+error.message);endTxn();return;}
     S.creneaux=S.creneaux.filter(c=>!(c.salarie_id===newSid&&c.date===date&&c.service===svc));S.creneaux.push(data);
@@ -2031,7 +2038,17 @@ const RULE_META={
   // defActive:false — ce réglage n'a JAMAIS eu de ligne en base : il était donc introuvable dans l'écran
   // Réglages alors que le rapport d'auto-fill invitait à le décocher. La ligne virtuelle le rend visible,
   // et elle est créée en base au premier changement (cf. _virtualRegle / saveRegle).
-  transfert_inter_snack:{lbl:'Autoriser le déplacement d\'un salarié vers un autre restaurant pour compléter ses heures',type:'bool',defActive:false,help:'ACTIVÉ : en dernier recours (après rallonge et transferts internes), l\'auto-fill peut faire venir un salarié multi-restaurant sur un site où il n\'est PAS prioritaire pour atteindre son minimum. DÉSACTIVÉ (défaut) : aucun déplacement inter-établissement n\'est posé — le salarié apparaît sous son minimum avec le créneau distant en SUGGESTION, et vous décidez. Les ajustements d\'horaires DANS un même restaurant restent toujours automatiques.'}
+  transfert_inter_snack:{lbl:'Autoriser le déplacement d\'un salarié vers un autre restaurant pour compléter ses heures',type:'bool',defActive:false,help:'ACTIVÉ : en dernier recours (après rallonge et transferts internes), l\'auto-fill peut faire venir un salarié multi-restaurant sur un site où il n\'est PAS prioritaire pour atteindre son minimum. DÉSACTIVÉ (défaut) : aucun déplacement inter-établissement n\'est posé — le salarié apparaît sous son minimum avec le créneau distant en SUGGESTION, et vous décidez. Les ajustements d\'horaires DANS un même restaurant restent toujours automatiques.'},
+  // ── Réparation par déplacement (phase 2) ────────────────────────────────────────────────────────
+  // `autofill_reparation` était interrogé par le moteur depuis longtemps SANS figurer ici : le patron ne
+  // pouvait donc pas la couper — l'inverse exact du piège habituel (un réglage affiché jamais lu), et tout
+  // aussi gênant maintenant que la réparation peut réorganiser un autre restaurant.
+  autofill_reparation:{lbl:'Réparer un poste vide en réorganisant des créneaux déjà posés',type:'bool',help:'ACTIVÉ (défaut) : quand aucun salarié conforme n\'est libre pour un poste, l\'auto-fill essaie de DÉPLACER quelqu\'un qui est déjà placé ailleurs, puis de faire reprendre sa place par un autre. Un seul maillon, et chaque créneau touché est revérifié. Chaque déplacement est listé en clair dans le rapport. DÉSACTIVÉ : le poste est simplement signalé non comblé.'},
+  // Réglage DISTINCT de `transfert_inter_snack`, et c'est délibéré : celui-là fait venir quelqu'un ailleurs
+  // POUR LUI (compléter ses heures — dépense non demandée, donc OFF par défaut) ; celui-ci comble un poste
+  // que l'établissement a lui-même déclaré vide. Les fusionner « pour simplifier » reviendrait à traiter
+  // deux décisions de gestion opposées avec le même interrupteur.
+  reparation_inter_snack:{lbl:'Autoriser cette réparation à traverser les restaurants',type:'bool',help:'ACTIVÉ (défaut) : pour combler un poste vide ici, l\'auto-fill peut libérer un salarié d\'un AUTRE restaurant et y faire reprendre sa place par quelqu\'un d\'autre. Il ne peut le faire qu\'avec un salarié que vous avez vous-même affecté aux deux établissements. Rien n\'est ajouté à la masse salariale : ce sont les heures du poste vide, ni plus ni moins. DÉSACTIVÉ : la réparation reste à l\'intérieur de chaque restaurant, et l\'enchaînement possible est affiché en SUGGESTION dans le rapport.'}
 };
 
 // ── Seuils LÉGAUX (France) ──────────────────────────────────────────────────────────────────────
@@ -2824,15 +2841,19 @@ function guardEffectifsConfigured(){
   if(confirm(`Aucun effectif cible n'est configuré pour « ${SNACK.nom} ».\n\nL'auto-fill ne peut rien générer tant que le nombre de personnes requises par jour et par service n'a pas été renseigné.\n\nOuvrir les Réglages (effectifs cibles) maintenant ?`)) openReglages();
   return false;
 }
+// _afResetPosed() à CHAQUE lancement, jamais entre deux snacks : le vivier « posé par nous » doit couvrir
+// toute la génération, c'est ce qui permet à un snack de libérer quelqu'un posé sur un autre juste avant.
 async function autoFillDay(dayIdx){
   if(!guardEffectifsConfigured())return;
   const j=JOURS[dayIdx];
   if(!confirm(`Remplir automatiquement ${j} sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
+  _afResetPosed();
   await autoFillCore([dayIdx]);
 }
 async function autoFillWeek(){
   if(!guardEffectifsConfigured())return;
   if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${SNACK.nom} ?\nLes créneaux existants ne sont pas remplacés, seuls les manquants sont ajoutés.`))return;
+  _afResetPosed();
   await autoFillCore([0,1,2,3,4,5,6]);
 }
 // ═══════════════ AUTO-FILL MULTI-SNACK (approche a : boucle séquentielle) ═══════════════
@@ -2887,6 +2908,7 @@ async function autoFillMultiWeek(ids){
   const names=ordered.map(id=>(S.restos.find(r=>r.id===id)||{}).nom).filter(Boolean);
   if(!confirm(`Remplir automatiquement TOUTE LA SEMAINE sur ${ordered.length} snacks ?\n\nOrdre (le plus contraint d'abord) : ${names.join(' → ')}\n\nLes créneaux existants ne sont pas remplacés. Chaque snack est annulable séparément (↶).`)) return;
   const originalId=SNACK.id;
+  _afResetPosed();
   const results=[];
   // UN SEUL overlay pour toute la génération (persiste au-dessus des loadWeek intermédiaires) : le
   // contexte _afMulti nomme le snack en cours et indexe la barre sur le nombre de snacks → l'utilisateur
@@ -2908,7 +2930,10 @@ async function autoFillMultiWeek(ids){
     await loadWeek(); // recharge S.creneaux/S.effectifs du snack + S.allCreneauxWeek (global, à jour)
     if(!hasEffectifsConfig()){ results.push({snackId:id, snackNom:SNACK.nom, skipped:true}); continue; }
     const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true, distribute:false})||{};
-    results.push({snackId:id, snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom})), phase3:{}});
+    // `chain` est conservé DÈS l'étape A : l'étape B écrasera `phase3`, et une réparation faite ici y
+    // serait perdue. Elle a d'ailleurs pu réorganiser un snack DÉJÀ traité — d'où un rendu consolidé,
+    // jamais un rendu par snack : le bilan d'un snack ne dit plus tout ce qui lui est arrivé.
+    results.push({snackId:id, snackNom:SNACK.nom, added:res.added||0, report:(res.report||[]).map(r=>({...r,snack:SNACK.nom})), chain:res.chain||{}, phase3:{}});
     (res.unfilled||[]).forEach(u=>globalUnfilled.push(u));
   }
   // ══ ÉTAPE B : UNE passe de DISTRIBUTION (phase 3 seule) par snack, APRÈS toutes les phases 1&2. Chaque
@@ -2970,14 +2995,31 @@ function showMultiSolveReport(results, underMin){
     sureffEur:_sum('sureffEur'), rallongeEur:_sum('rallongeEur'),
     sureffList:_cat('sureffList'), transferList:_cat('transferList'), rallongeList:_cat('rallongeList'), suggestList:_cat('suggestList'), overflowList:_cat('overflowList') };
   const {sureffWarn, overflowWarn, interWarn, phase3Section}=buildPhase3Report(p3agg, true);
+  // Réparations : agrégées sur TOUS les snacks. Une réparation lancée depuis Carnot peut avoir réorganisé
+  // Lobau, dont le bilan était déjà figé — seul le rapport consolidé peut en rendre compte honnêtement.
+  const chainAgg={ list:results.flatMap(r=>(r.chain&&r.chain.list)||[]),
+                   suggest:results.flatMap(r=>(r.chain&&r.chain.suggest)||[]),
+                   budget:results.reduce((a,r)=>a+((r.chain&&r.chain.budget)||0),0) };
+  const {chainSection, chainWarn}=buildChainReport(chainAgg, true);
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:680px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Rapport auto-fill multi-snack</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${buildLegalWarn()}${interWarn}${sureffWarn}${overflowWarn}
+    ${buildLegalWarn()}${chainWarn}${interWarn}${sureffWarn}${overflowWarn}
     <div style="font-size:13px;margin-bottom:6px">✓ <b>${totalAdded}</b> créneau(x) placé(s) sur ${results.filter(r=>!r.skipped).length} snack(s)</div>
-    ${perSnack}${phase3Section}${postesSection}${minSection}</div></div>`;
+    ${perSnack}${chainSection}${phase3Section}${postesSection}${minSection}</div></div>`;
   setSS(allReport.length||underMin.length?'warn':'ok', `✓ ${totalAdded} placé(s) sur ${results.filter(r=>!r.skipped).length} snacks — voir rapport`);
 }
 let _autofillRunning=false;
+// État partagé de l'auto-fill, en UN SEUL objet (et non deux `let` séparés) pour que les harnais le
+// reçoivent d'une seule ligne, comme les autres constantes de fichier.
+//   posed      — ids des créneaux posés pendant la génération EN COURS. C'est le vivier « sûr par
+//                construction » de la réparation : nous les avons écrits, donc personne ne les a saisis.
+//                Remis à zéro au lancement, PAS entre deux snacks d'un même multi — c'est justement ce
+//                qui permet à Carnot de libérer quelqu'un posé à Lobau quelques secondes plus tôt.
+//   origineCol — la colonne planning_creneaux.origine existe-t-elle ? Détectée au chargement. Absente,
+//                on ne l'écrit pas (sinon chaque insertion échouerait) et la réparation se limite au
+//                vivier `posed` : dégradation visible dans le rapport, jamais une panne silencieuse.
+const _AF={posed:new Set(), origineCol:false};
+function _afResetPosed(){ _AF.posed.clear(); }
 // Contexte multi-snack de l'overlay : {index,total,nom} pendant autoFillMultiWeek, sinon null. C'est une
 // variable JS → elle SURVIT aux loadWeek() intermédiaires (qui ne re-render que la grille, pas l'overlay),
 // donc l'overlay reste affiché en continu et n'a pas besoin de persistance hors cycle de vie.
@@ -3604,7 +3646,7 @@ function underMinRowHtml(u, sugg){
 function salRowHtml(sid, name, multi, droite, couleur){
   return `<div class="rep-row" onclick="goToSalarie('${escJS(sid)}')" style="${_clic}" data-tip="Aller à la ligne de ${escP(name)}"><div style="display:flex;gap:8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px"><span style="min-width:200px;font-weight:600">${escP(name)}${multi?' <span style="color:var(--muted);font-weight:400">· multi-snack</span>':''}</span><span style="color:${couleur}">${droite}</span></div></div>`;
 }
-function showSolveReport(report, underMin, phase3){
+function showSolveReport(report, underMin, phase3, chain){
   report=report||[]; underMin=underMin||[];
   const rows=report.map(r=>posteRowHtml(r)).join('');
   // Section « postes non comblés » (échecs de placement : candidat introuvable) — distincte des
@@ -3623,10 +3665,11 @@ function showSolveReport(report, underMin, phase3){
       ${umRows}
     </div>` : '';
   const {sureffWarn, overflowWarn, interWarn, phase3Section}=buildPhase3Report(phase3||{}, (report.length||underMin.length));
+  const {chainSection, chainWarn}=buildChainReport(chain||{}, (report.length||underMin.length));
   const title = report.length ? (underMin.length?'Rapport auto-fill':'Postes non comblés') : (underMin.length?'Salariés sous leur minimum':'Rapport auto-fill');
   document.getElementById('pdfModal').innerHTML=`<div class="pdf-bg" onclick="if(event.target===this)document.getElementById('pdfModal').innerHTML=''"><div class="pdf-modal" style="max-width:660px;width:92vw;max-height:85vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${title}</h3><button class="btn ghost sm" onclick="document.getElementById('pdfModal').innerHTML=''">✕ Fermer</button></div>
-    ${buildLegalWarn()}${interWarn}${sureffWarn}${overflowWarn}${phase3Section}${postesSection}${minSection}</div></div>`;
+    ${buildLegalWarn()}${chainWarn}${interWarn}${sureffWarn}${overflowWarn}${chainSection}${phase3Section}${postesSection}${minSection}</div></div>`;
 }
 // ═══ BOUTON « ANALYSER LA SEMAINE » ══════════════════════════════════════════════════════════════
 // Disponible en permanence, contrairement au rapport d'auto-fill qui n'apparaissait qu'à la fin d'un
@@ -3768,6 +3811,53 @@ function suggestLineHtml(sg){
   const list=sg.cands.map(c=>`${escP(c.jour)} ${c.svc} (${escP((c.deb||'').slice(0,5))}→${escP((c.fin||'').slice(0,5))})${_snkSuffix(c.snack)}`).join(' · ');
   return `<div style="color:var(--info,#4a7fbd);font-size:11.5px;margin-top:3px">Plaçable sur : ${list} · ≈ +${Math.round(sg.eur)} € chargé</div>`;
 }
+// ── Réparations par déplacement (phase 2) — SOURCE UNIQUE du rendu, mono ET multi ────────────────
+// Sans cette trace, le patron retrouve son planning réorganisé sans comprendre pourquoi, et perd
+// confiance dans l'outil même quand celui-ci a raison. C'est ce qui rend la fonctionnalité acceptable.
+// La phrase est délibérément narrative — qui part d'où, et qui reprend sa place.
+// Pourquoi un enchaînement trouvé n'a PAS été exécuté — une phrase par cas, et une seule.
+const CHAIN_RAISON={
+  manuel:  'Créneau saisi à la main — non déplacé sans votre accord.',
+  inconnu: 'Créneau d\'origine inconnue (antérieur au suivi) — non déplacé sans votre accord.',
+  reglage: 'Le déplacement entre restaurants est décoché dans les Réglages.'
+};
+function buildChainReport(chain, hasPrev){
+  chain=chain||{};
+  const list=chain.list||[], sugg=chain.suggest||[], budget=chain.budget||0;
+  if(!list.length && !sugg.length && !budget) return {chainSection:'', chainWarn:''};
+  const ligne=r=>`<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.55">`
+    +`<b>${escP(String(r.snack||'').replace('Raya ',''))} · ${escP(r.jour)} ${escP(r.svc)} · ${escP(r.role)}${r.exp?' ★':''}</b> `
+    +`<span style="color:var(--muted);font-family:monospace">${escP(r.horaire)}</span><br>`
+    +`comblé en déplaçant <b>${escP(r.xNom)}</b> depuis <b>${escP(r.fromSnack)}</b> `
+    +`(${escP(r.fromJour)} ${escP(r.fromSvc)} ${escP(r.fromHoraire)}) ; `
+    +`<b>${escP(r.yNom)}</b> reprend son créneau${r.inter?` à ${escP(r.fromSnack)}`:''} (${escP(r.fromHoraire)}).`
+    +`</div>`;
+  // Ce que la réparation coûte VRAIMENT. X échange sa place (pLen) contre le poste vide (hLen) ; Y reprend
+  // exactement la place laissée (pLen). Le VOLUME ajouté est donc hLen — les heures du poste que
+  // l'établissement avait lui-même déclaré nécessaire, ni plus. Le MONTANT, lui, dépend de qui travaille :
+  // Y n'a pas forcément le taux de X. On le chiffre au vrai taux de chacun plutôt que d'écrire « ±0 € ».
+  const addH=list.reduce((a,r)=>a+(r.hLen||0),0);
+  const _coefOrg=Number(ORG.coef_charges)||1.420;
+  const _tx=sid=>{ const s=salById(sid)||{}; const cp=Number(s.coef_charges_perso);
+                   return (Number(s.taux_horaire_brut)||0)*((isFinite(cp)&&cp>0)?cp:_coefOrg); };
+  const addEur=list.reduce((a,r)=>a + _tx(r.xSid)*((r.hLen||0)-(r.pLen||0)) + _tx(r.ySid)*(r.pLen||0), 0);
+  const chainSection = list.length ? `<div style="margin-top:${hasPrev?'18px':'0'};padding-top:${hasPrev?'14px':'0'};${hasPrev?'border-top:1px solid var(--line-2)':''}">
+    <h3 style="margin:0 0 6px">🔁 ${list.length} poste(s) comblé(s) en réorganisant l'existant — +${fmtH1(addH)}h${addEur>0.5?` ≈ +${Math.round(addEur)} € chargé`:''}</h3>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:8px;line-height:1.5">Aucun candidat n'était libre : l'auto-fill a déplacé quelqu'un de déjà placé et fait reprendre sa place par un autre. Chaque créneau touché a été revérifié (règles, repos, plafonds, indisponibilités). Les heures ajoutées sont <b>exactement celles des postes comblés</b> — la reprise se fait à l'identique, aucune heure n'est créée en plus. Annulable d'un coup avec ↶.</div>
+    ${list.map(ligne).join('')}</div>` : '';
+  // Enchaînement trouvé mais NON exécuté : le créneau à libérer n'a pas été généré par l'auto-fill.
+  const suggRows=sugg.map(r=>`<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.5">`
+    +`💡 <b>${escP(String(r.snack||'').replace('Raya ',''))} · ${escP(r.jour)} ${escP(r.svc)} · ${escP(r.role)}</b> `
+    +`${escP(r.horaire)} — possible en déplaçant <b>${escP(r.xNom)}</b> depuis ${escP(r.fromSnack)} `
+    +`(${escP(r.fromJour)} ${escP(r.fromSvc)} ${escP(r.fromHoraire)}), <b>${escP(r.yNom)}</b> reprenant sa place. `
+    +`<span style="color:var(--muted)">${escP(CHAIN_RAISON[r.raison]||'')}</span></div>`).join('');
+  const budgetTxt = budget ? `<div style="padding:5px 0;border-top:1px solid var(--line);font-size:12px;color:var(--warn)">⏱ ${budget} poste(s) n'ont PAS été cherchés : le temps imparti à la génération était écoulé. Relancer l'auto-fill peut en combler davantage.</div>` : '';
+  const chainWarn = (sugg.length||budget) ? `<div style="background:rgba(74,127,189,.12);border:1px solid var(--info,#4a7fbd);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:var(--info,#4a7fbd);font-weight:700;font-size:13.5px">💡 ${sugg.length} poste(s) comblables en réorganisant — votre accord requis</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:4px">L'auto-fill ne déplace jamais un créneau qu'il n'a pas posé lui-même : vous l'avez peut-être placé exprès.</div>
+    ${suggRows}${budgetTxt}</div>` : '';
+  return {chainSection, chainWarn};
+}
 function buildPhase3Report(p3, hasPrev){
   p3=p3||{};
   const rH=p3.rallongeH||0, sH=p3.sureffH||0, tH=p3.transferH||0;
@@ -3846,6 +3936,163 @@ function diagHole(h, rg){
   else { const top=Object.entries(tally).sort((a,b)=>order.indexOf(a[0])-order.indexOf(b[0]))[0]; cle=top?top[0]:'inconnu'; detail=top?`${top[1].label} (bloque ${top[1].n} candidat·s)`:'conflit combinatoire';
     if(top&&top[1].ex){ const e=explainViolation(top[1].ex,{shift:h.shift,date:h.date,svc:h.svc}); if(e){ why=e.why?`ex. ${top[1].exNom} : ${e.why}`:''; reglage=e.reglage||''; } } }
   return {...meta,cle,detail,why,reglage};
+}
+// ═══ RÉPARATION PAR DÉPLACEMENT (phase 2, profondeur 1) ══════════════════════════════════════════
+// Le mécanisme existait déjà et faisait le bon raisonnement — déplacer X de sa place P vers le trou H,
+// puis recombler P par un autre salarié Y — mais son vivier était le tableau `placed` local à
+// autoFillCore : uniquement les créneaux du snack EN COURS, posés pendant CETTE exécution. Le créneau de
+// Youcef à Lobau était donc invisible depuis Carnot, alors que c'est justement lui qu'il fallait libérer.
+// Même famille que le piège déjà documenté (« les règles temporelles doivent être inter-snack »), appliqué
+// cette fois à la phase de réparation.
+//
+// Deux principes de conception :
+//   1. DÉCISION PURE, EFFETS SÉPARÉS. Toute la recherche se fait EN MÉMOIRE (_simRemove), sans une seule
+//      écriture. L'ancien code supprimait le créneau en base « spéculativement » puis le remettait s'il
+//      ne trouvait rien : sur un vivier de la taille de la semaine entière, cela voulait dire supprimer
+//      et recréer des créneaux RÉELS des dizaines de fois par trou. Un onglet fermé au mauvais moment
+//      et le planning y laissait des trous. Ici, on n'écrit qu'une fois l'enchaînement complet validé.
+//   2. UN SEUL MOTEUR DE RÈGLES. Chaque maillon repasse par checkPlacement — celui qui part comme celui
+//      qui le remplace. Aucune règle n'est réécrite ici.
+//
+// ⚠ Le remplacement de Y est une substitution À L'IDENTIQUE (mêmes bornes, autre personne) : aucune
+// nouvelle frontière n'est créée, donc releveInterdite n'a rien à juger et la durée minimale de créneau
+// ne s'applique pas (elle ne vise que les créneaux CRÉÉS avec de nouvelles bornes). Cela cesserait d'être
+// vrai si l'on autorisait un jour Y à ne reprendre qu'une PARTIE du créneau — d'où le test dédié.
+//
+// Retrait SIMULÉ d'un créneau, le temps d'un calcul. Réassigne les tableaux (jamais de mutation en place)
+// et les restaure par référence dans le finally — même posture que _withSnack, et pour la même raison :
+// une exception au milieu laisserait S dans un état incohérent, et la prochaine écriture irait au mauvais
+// endroit. À ENVELOPPER AUTOUR de _withSnack, jamais l'inverse : _withSnack re-dérive S.creneaux depuis
+// S.allCreneauxWeek, donc filtrer allCreneauxWeek d'abord suffit à rendre la vue dérivée correcte.
+function _simRemove(row, fn){
+  const prevAll=S.allCreneauxWeek, prevCur=S.creneaux;
+  const drop=c=>c===row || (row && row.id && c.id===row.id);   // id absent (harnais) → identité d'objet
+  try{
+    S.allCreneauxWeek=(prevAll||[]).filter(c=>!drop(c));
+    S.creneaux=(prevCur||[]).filter(c=>!drop(c));
+    return fn();
+  } finally { S.allCreneauxWeek=prevAll; S.creneaux=prevCur; }
+}
+// Origine d'un créneau : 'genere' (posé par l'auto-fill) · 'manuel' (saisi par un humain) · 'inconnu'.
+// Deux sources, dans cet ordre :
+//   • `posed` — les ids posés pendant la génération EN COURS. Sûr par construction : c'est nous qui les
+//     avons écrits. Ne dépend d'AUCUNE migration, et couvre le cas du patron en multi-snack (Lobau est
+//     rempli avant Carnot dans la même exécution).
+//   • `origine` — colonne persistée, qui étend le vivier aux générations PRÉCÉDENTES. Tant que la
+//     migration n'est pas appliquée, la colonne est absente : tout est 'inconnu', et ces créneaux ne sont
+//     pas déplacés — ils sont SUGGÉRÉS. Le produit se dégrade, il ne se casse pas.
+function origineOf(c, posed){
+  if(posed && c && c.id && posed.has(c.id)) return 'genere';
+  if(c && c.origine==='auto')   return 'genere';
+  if(c && c.origine==='manuel') return 'manuel';
+  return 'inconnu';
+}
+// Vivier des créneaux déplaçables — TOUTE la semaine traitée, TOUS restaurants (S.allCreneauxWeek).
+// Bornes volontaires :
+//   • uniquement les DATES traitées : un auto-fill d'une seule journée ne doit pas réécrire le mardi pour
+//     combler le lundi (le plafond hebdomadaire, lui, porte bien sur la semaine entière — il suffirait
+//     donc de ça pour que le moteur aille chercher n'importe où) ;
+//   • jamais un créneau en SUREFFECTIF : le recombler reviendrait à offrir à Y des heures au-delà de la
+//     cible alors que le sureffectif automatique est désactivé par défaut. Le déplacement de X reste
+//     possible, la place laissée vacante ne coûte rien puisqu'elle n'était pas demandée ;
+//   • jamais un salarié sorti de l'effectif.
+function movablePool(dates, posed){
+  const dset=new Set(dates||[]);
+  const out=[];
+  for(const c of (S.allCreneauxWeek||[])){
+    if(!c.heure_debut || !c.heure_fin) continue;
+    if(!dset.has(c.date)) continue;
+    if(c.sureffectif) continue;
+    if(!onRoster(salById(c.salarie_id))) continue;
+    out.push({row:c, src:origineOf(c, posed)});
+  }
+  return out;
+}
+// Plan de réparation pour UN trou — fonction PURE (aucune écriture, aucun DOM) : elle renvoie
+// l'enchaînement à exécuter, ou null. C'est ce qui la rend rejouable dans un harnais sur le code réel,
+// au lieu d'une réplique de la boucle qui divergerait avec le temps.
+//
+// Renvoie {moved, X, Yid, pSh, src, inter} — le CHOIX, pas son exécution. `src` dit si le créneau libéré
+// avait été généré (déplaçable) ou saisi/inconnu (à suggérer, jamais à déplacer sans le dire).
+//
+// ⚠ CONTEXTE : lit le SNACK ambiant comme tout le moteur — c'est le restaurant du trou. La recherche du
+// remplaçant Y se fait ENTIÈREMENT dans le contexte du restaurant DONNEUR (_withSnack), filtre + réserve
+// de capacité + tri compris : sortCandidates s'appuie sur weekHoursOf, qui lit S.creneaux pour un
+// MONO-snack. Trier un Y mono-snack depuis le contexte du trou lui compterait les heures du mauvais
+// restaurant — typiquement 0 h — et inverserait silencieusement la priorité « le plus en manque d'abord ».
+// Ligne de rapport d'une réparation — fonction PURE, et volontairement la SEULE : la chaîne exécutée et
+// la chaîne suggérée doivent se raconter avec les mêmes mots, sinon les deux gabarits divergeront (cf.
+// renderTable / recomputeAggregates). `hLen` / `pLen` : heures du poste comblé et heures reprises par Y.
+function _chainRow(plan, h, dayIdx){
+  const m=plan.moved, X=salById(plan.X)||{}, Y=salById(plan.Yid)||{};
+  return {
+    snack:(SNACK&&SNACK.nom)||'', snackId:SNACK.id,
+    jour:JOURS[h.di], date:h.date, svc:h.svc, role:roleNom(h.role), exp:!!h.shift.exp,
+    horaire:`${(h.shift.deb||'').slice(0,5)}→${(h.shift.fin||'').slice(0,5)}`,
+    xNom:fullName(X), yNom:fullName(Y), xSid:plan.X, ySid:plan.Yid,
+    fromSnack:_restoNom(m.restaurant_id), fromJour:JOURS[dayIdx(m.date)], fromDate:m.date, fromSvc:m.service,
+    fromHoraire:`${(m.heure_debut||'').slice(0,5)}→${(m.heure_fin||'').slice(0,5)}`,
+    hLen:_pdur(h.shift.deb,h.shift.fin)/60, pLen:_pdur(m.heure_debut,m.heure_fin)/60,
+    inter:!!plan.inter, src:plan.src, exec:!!plan.exec, raison:plan.raison||null
+  };
+}
+function planRepair(h, opt){
+  opt=opt||{};
+  const rg=opt.rg||_ruleCtx();
+  const interOK=(opt.interOK!==false);
+  const hereId=SNACK.id;
+  const dayIdx=d=>(new Date(d).getDay()+6)%7;
+  // Pré-filtre PAR PERSONNE, avant tout calcul coûteux : seul un salarié capable de tenir CE poste peut
+  // aller le combler. worksAt est déjà un préalable dur de checkPlacement (cf. le contrôle 'resto') — la
+  // réparation ne peut donc JAMAIS envoyer quelqu'un dans un restaurant où le patron ne l'a pas affecté.
+  const capable=sid=>{
+    const s=salById(sid);
+    if(!s || !onRoster(s) || !worksAt(s, hereId)) return false;
+    if(!rolesOf(sid).includes(h.role)) return false;
+    if(h.shift.exp && !isExp(sid, h.role)) return false;
+    return true;
+  };
+  const lackOf=sid=>Math.max(0, ((salById(sid)||{}).heures_min||0) - weekHoursOf(sid));
+  // EXÉCUTABLE = généré par l'auto-fill ET (interne, ou l'inter-établissement est autorisé). Ce qui ne
+  // l'est pas n'est pas écarté de la recherche pour autant : c'est proposé. Écarter reviendrait à taire
+  // une solution que le patron aurait acceptée — le contraire de ce que le réglage promet.
+  const execOf=p=>(p.src==='genere') && (interOK || p.row.restaurant_id===hereId);
+  const raisonOf=p=>{
+    if(p.src==='manuel')  return 'manuel';        // créneau saisi à la main
+    if(p.src==='inconnu') return 'inconnu';       // antérieur à la colonne `origine`
+    return 'reglage';                             // enchaînement valide, mais l'inter-établissement est décoché
+  };
+  // Ordre d'essai. (1) L'exécutable AVANT le reste : on cherche une solution qu'on peut réellement poser
+  // avant d'en proposer une qui demande l'accord du patron. (2) À égalité, le même critère qu'auparavant :
+  // d'abord ceux qui sont déjà à leur minimum (manque le plus faible), en dernier ceux qui en ont encore
+  // besoin — on évite de déshabiller quelqu'un qui est lui-même en manque.
+  const rank={genere:0, inconnu:1, manuel:2};
+  const cands=(opt.pool||[])
+    .filter(p=>capable(p.row.salarie_id))
+    .sort((a,b)=>((execOf(b)?1:0)-(execOf(a)?1:0)) || (rank[a.src]-rank[b.src]) || (lackOf(a.row.salarie_id)-lackOf(b.row.salarie_id)));
+  for(const p of cands){
+    const moved=p.row, src=p.src;
+    const X=moved.salarie_id;
+    const plan=_simRemove(moved, ()=>{
+      // 1. X peut-il tenir le trou une fois sa place libérée ? Contexte = le restaurant DU TROU.
+      if(checkPlacement(X, h.shift, h.date, h.svc, h.di, {rg})!==null) return null;
+      // 2. Qui reprend la place de X ? Contexte = le restaurant DONNEUR, du filtre jusqu'au tri.
+      const pVag=_withSnack(moved.restaurant_id, ()=>
+        getShifts(dayJourType(dayIdx(moved.date)), moved.service, moved.role)
+          .find(v=>v.deb===(moved.heure_debut||'').slice(0,5)));
+      const pSh={deb:moved.heure_debut, fin:moved.heure_fin, role:moved.role, exp:!!(pVag&&pVag.exp)};
+      const Yid=_withSnack(moved.restaurant_id, ()=>{
+        const ids=S.salaries
+          .filter(s=>s.id!==X && checkPlacement(s.id, pSh, moved.date, moved.service, dayIdx(moved.date), {rg})===null)
+          .map(s=>s.id);
+        return sortCandidates(snackPriorityGate(ids).kept, {shift:pSh})[0]||null;
+      });
+      if(!Yid) return null;
+      return {moved, X, Yid, pSh, src, inter:(moved.restaurant_id!==hereId), exec:execOf(p), raison:(execOf(p)?null:raisonOf(p))};
+    });
+    if(plan) return plan;
+  }
+  return null;
 }
 // Coût d'un ensemble de créneaux (brut + chargé, coef perso sinon coef org) — SOURCE UNIQUE du pied de
 // tableau, du rapport d'analyse et de la comparaison avec la semaine précédente.
@@ -4129,6 +4376,9 @@ async function autoFillCore(dayIndices, opt={}){
   beginTxn();
   let added=0; const report=[]; const unfilled=[]; // unfilled = postes RÉELS non comblés (role cle + exp) pour la non-nuisance de la phase 3 globale
   let rallongeH=0, sureffH=0, transferH=0; const sureffList=[], transferList=[], rallongeList=[], suggestList=[]; let overflowList=[]; // bilan phase 3 (transfert/rallonge/sureffectif + détail rallonge + suggestions + sur-couverture)
+  // Phase 2 — réparations : celles RÉELLEMENT faites, celles seulement proposées (créneau non généré), et
+  // le nombre de trous laissés sans recherche faute de temps (jamais une troncature muette).
+  const chainList=[], chainSuggest=[]; let chainBudget=0;
   try{
   // opt.phase3only : mode « phase 3 seule » (auto-fill MULTI, étape B globale) — on saute la purge des
   // orphelins + les holes + phases 1&2 (déjà faites à l'étape A) et on ne fait QUE la distribution.
@@ -4148,10 +4398,18 @@ async function autoFillCore(dayIndices, opt={}){
   const _now=()=>(window.performance&&performance.now)?performance.now():0;
   const T0=_now(), TBUDGET=8000, overTime=()=>_now()-T0>TBUDGET;
   const dayIdxOfDate=d=>(new Date(d).getDay()+6)%7;
-  const placeCre=async(sid,sh,date,svc,extra)=>{
-    const payload={restaurant_id:SNACK.id,salarie_id:sid,role:sh.role,date,service:svc,heure_debut:sh.deb,heure_fin:sh.fin,...(extra||{})};
+  // `rid` : restaurant de destination. Vaut le snack courant partout SAUF pour le recomblage d'une
+  // réparation inter-établissement, qui écrit chez le restaurant DONNEUR. Deux conséquences à ne pas
+  // manquer : S.creneaux est le tableau du snack AFFICHÉ — y pousser une ligne d'un autre restaurant la
+  // ferait apparaître dans la grille et compter dans ses effectifs. Seul S.allCreneauxWeek reçoit tout.
+  const placeCre=async(sid,sh,date,svc,extra,rid)=>{
+    const payload={restaurant_id:rid||SNACK.id,salarie_id:sid,role:sh.role,date,service:svc,heure_debut:sh.deb,heure_fin:sh.fin,...(extra||{}),...(_AF.origineCol?{origine:'auto'}:{})};
     const{data,error}=await EatimeScope.from('planning_creneaux').upsert(payload,{onConflict:'restaurant_id,salarie_id,date,service'}).select().single();
-    if(error)return null; S.creneaux.push(data); S.allCreneauxWeek.push(data); if(_txn)_txn.push({before:null,after:data}); return data;
+    if(error)return null;
+    if(data.restaurant_id===SNACK.id) S.creneaux.push(data);
+    S.allCreneauxWeek.push(data);
+    if(data.id) _AF.posed.add(data.id);   // vivier de la réparation : sûr par construction, c'est nous qui l'avons écrit
+    if(_txn)_txn.push({before:null,after:data}); return data;
   };
   // Mise à jour des horaires d'un créneau EXISTANT (phase 3 rallonge) : un seul write vers la valeur
   // finale + maj mémoire des DEUX tableaux (S.creneaux/S.allCreneauxWeek peuvent contenir des objets
@@ -4178,49 +4436,46 @@ async function autoFillCore(dayIndices, opt={}){
   holes.sort((a,b)=>{const ae=a.shift.exp?0:1,be=b.shift.exp?0:1;if(ae!==be)return ae-be;return a._n-b._n;});
   const diag=h=>diagHole(h,rg);
   // ── PHASE 1 : glouton conforme — chaque pose est gardée par checkPlacement (via candFor) ──
-  const placed=[]; const open=[]; let seen=0;
+  // `placed` a disparu : le vivier de la phase 2 est désormais _AF.posed (alimenté par placeCre lui-même,
+  // donc sans oubli possible) croisé avec S.allCreneauxWeek. Garder les deux, c'était garder deux
+  // mémoires du même fait — celle qui n'est pas la source finirait par diverger.
+  const open=[]; let seen=0;
   for(const h of holes){
     seen++; if(seen%4===1){ updateAutofillProgress(seen,holes.length||1,'Placement en cours…'); await _yield(); }
     const c=candFor(h);
-    if(c.length){ const row=await placeCre(c[0],h.shift,h.date,h.svc); if(row){placed.push(row);added++;continue;} }
+    if(c.length){ const row=await placeCre(c[0],h.shift,h.date,h.svc); if(row){added++;continue;} }
     open.push(h);
   }
   // ── PHASE 2 : réparation kick-chain prof.1 (déplacer un placé compatible, recombler sa place par un autre) ──
+  // Le vivier n'est plus le tableau local `placed` (snack courant, exécution courante) mais la SEMAINE
+  // TRAITÉE sur TOUS les restaurants — c'est tout l'objet de v0.68. La décision est prise par planRepair
+  // (pure, en mémoire) ; ici on ne fait qu'exécuter, et seulement une fois l'enchaînement complet validé.
   const USE_REPAIR=rg.on('autofill_reparation',true);
+  const REPAIR_INTER=rg.on('reparation_inter_snack',true);
+  const _dates=dayIndices.map(i=>fmtDate(dateOfDay(i)));
   for(const h of open){
-    if(!USE_REPAIR || overTime()){ report.push(diag(h)); unfilled.push({snackId:SNACK.id,role:h.role,exp:!!h.shift.exp}); continue; }
+    if(!USE_REPAIR || overTime()){
+      if(USE_REPAIR && overTime()) chainBudget++;   // jamais de troncature silencieuse : comptée et dite dans le rapport
+      report.push(diag(h)); unfilled.push({snackId:SNACK.id,role:h.role,exp:!!h.shift.exp}); continue;
+    }
+    const plan=planRepair(h,{rg, interOK:REPAIR_INTER, pool:movablePool(_dates,_AF.posed)});
     let repaired=false;
-    // Ordre d'essai des salariés à déplacer : d'abord ceux déjà À/AU-DESSUS de leur minimum (manque le
-    // plus faible), en dernier ceux encore SOUS leur minimum → on évite de perturber quelqu'un qui a
-    // lui-même encore besoin d'heures. Snapshot trié à l'entrée de ce trou (état courant de placed).
-    const movedList=placed.slice().sort((m1,m2)=>{
-      const l1=Math.max(0,((salById(m1.salarie_id)||{}).heures_min||0)-weekHoursOf(m1.salarie_id));
-      const l2=Math.max(0,((salById(m2.salarie_id)||{}).heures_min||0)-weekHoursOf(m2.salarie_id));
-      return l1-l2;
-    });
-    for(const moved of movedList){
-      if(overTime()||repaired)break;
-      const X=moved.salarie_id;
-      if(!rolesOf(X).includes(h.role))continue;
-      if(h.shift.exp&&!isExp(X,h.role))continue;
-      await removeCre(moved);                                    // libère P spéculativement (capturé dans _txn → undo OK)
-      if(checkPlacement(X,h.shift,h.date,h.svc,h.di,{rg})===null){
-        const pVag=getShifts(dayJourType(dayIdxOfDate(moved.date)),moved.service,moved.role).find(v=>v.deb===(moved.heure_debut||'').slice(0,5));
-        const pSh={deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role,exp:!!(pVag&&pVag.exp)};
-        // Remplaçant Y : MÊME priorité que la phase 1 (sortCandidates : manque vs heures_min d'abord,
-        // mono>multi…) au lieu du 1er salarié valide trouvé dans S.salaries.
-        // Réserve de capacité appliquée AUSSI au backfill Y (sinon la réparation contournerait la règle
-        // en plaçant un multi secondaire là où un primaire aurait dû aller).
-        const yIds=S.salaries.filter(s=>s.id!==X && checkPlacement(s.id,pSh,moved.date,moved.service,dayIdxOfDate(moved.date),{rg})===null).map(s=>s.id);
-        const Yid=sortCandidates(snackPriorityGate(yIds).kept,{shift:pSh})[0]||null;
-        if(Yid){
-          const rH=await placeCre(X,h.shift,h.date,h.svc);
-          const rP=await placeCre(Yid,pSh,moved.date,moved.service);
-          if(rH&&rP){ const i=placed.indexOf(moved); if(i>=0)placed.splice(i,1); placed.push(rH,rP); added++; repaired=true; break; }
-          if(rH)await removeCre(rH); if(rP)await removeCre(rP);
-        }
+    // Un enchaînement dont le maillon libéré N'A PAS été généré par l'auto-fill n'est jamais exécuté : le
+    // patron a pu poser ce créneau délibérément (un remplacement convenu). Il est SIGNALÉ — « ne jamais
+    // déplacer SILENCIEUSEMENT » veut dire ça : ne pas le faire, et ne pas le taire non plus.
+    if(plan && !plan.exec){ chainSuggest.push(_chainRow(plan,h,dayIdxOfDate)); }
+    else if(plan){
+      const {moved,X,Yid,pSh}=plan;
+      await removeCre(moved);
+      const rH=await placeCre(X,h.shift,h.date,h.svc);
+      const rP=await placeCre(Yid,pSh,moved.date,moved.service,null,moved.restaurant_id);
+      if(rH&&rP){ added++; repaired=true; chainList.push(_chainRow(plan,h,dayIdxOfDate)); }
+      else{
+        // Validé en mémoire ≠ écrit. Une écriture qui échoue à mi-chaîne laisserait un poste dégarni :
+        // on défait ce qui a été écrit et on remet X exactement où il était.
+        if(rH)await removeCre(rH); if(rP)await removeCre(rP);
+        await placeCre(X,{deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role},moved.date,moved.service,null,moved.restaurant_id);
       }
-      if(!repaired){ const back=await placeCre(X,{deb:moved.heure_debut,fin:moved.heure_fin,role:moved.role},moved.date,moved.service); const i=placed.indexOf(moved); if(i>=0&&back)placed.splice(i,1,back); }
     }
     if(!repaired){ report.push(diag(h)); unfilled.push({snackId:SNACK.id,role:h.role,exp:!!h.shift.exp}); }
   }
@@ -4548,7 +4803,10 @@ async function autoFillCore(dayIndices, opt={}){
   const sureffEur=sureffList.reduce((a,x)=>a+_eurOf(x),0);
   const rallongeEur=rallongeList.reduce((a,x)=>a+_eurOf(x),0);   // la rallonge est PAYÉE plein tarif (pas ±0€)
   const phase3={rallongeH, sureffH, transferH, sureffList, transferList, rallongeList, suggestList, sureffEur, rallongeEur, overflowList};
-  if(opt.silent) return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
+  // Les réparations voyagent HORS de `phase3` : en multi-snack, phase3 est écrasé à l'étape B (distribution)
+  // alors que la phase 2 s'exécute à l'étape A — les y ranger les ferait disparaître du rapport consolidé.
+  const chain={list:chainList, suggest:chainSuggest, budget:chainBudget};
+  if(opt.silent) return {added, report, unfilled, underMin, phase3, chain, snackId:SNACK.id, snackNom:SNACK.nom};
   let msg=`✓ ${added} créneau(x) placé(s)`;
   const distrib=rallongeH+sureffH+transferH;
   if(distrib>0.05) msg+=` · +${fmtH1(distrib)}h distribuées (≈ +${Math.round(rallongeEur+sureffEur)}€ chargé)`;
@@ -4556,10 +4814,12 @@ async function autoFillCore(dayIndices, opt={}){
   if(overflowList.length) msg+=` · ▲ ${overflowList.length} dépassement(s) d'effectif`;
   if(report.length) msg+=` · ${report.length} poste(s) non comblé(s)`;
   if(underMin.length) msg+=` · ${underMin.length} sous leur minimum`;
-  if(report.length||underMin.length||distrib>0.05) msg+=' — voir rapport';
+  if(chainList.length) msg+=` · 🔁 ${chainList.length} poste(s) comblé(s) par déplacement`;
+  const _voirRapport=report.length||underMin.length||distrib>0.05||chainList.length||chainSuggest.length;
+  if(_voirRapport) msg+=' — voir rapport';
   setSS((report.length||underMin.length||sureffH>0.05||overflowList.length)?'warn':'ok', msg);
-  if(report.length||underMin.length||distrib>0.05) showSolveReport(report, underMin, phase3);
-  return {added, report, unfilled, underMin, phase3, snackId:SNACK.id, snackNom:SNACK.nom};
+  if(_voirRapport) showSolveReport(report, underMin, phase3, chain);
+  return {added, report, unfilled, underMin, phase3, chain, snackId:SNACK.id, snackNom:SNACK.nom};
   }catch(err){
     setSS('err','Erreur auto-fill : '+(err.message||err));
     endTxn();

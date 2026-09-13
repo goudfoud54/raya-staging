@@ -36,6 +36,10 @@ const FNS = [
   // Pas de relève en plein service : la frontière midi↔soir déduite des postes, le prédicat sur le
   // point de coupe, et le constat balayé par revalidateWeek.
   'jonctionService', '_postesDuRole', 'releveInterdite', '_relaisEn', 'relevesOf',
+  // Réparation par déplacement (phase 2, v0.68). autoFillCore n'exécute plus que la DÉCISION prise par
+  // planRepair : sans ces symboles, tout harnais qui extrait autoFillCore casse sur « planRepair is not
+  // defined ». _chainRow est la mise en forme partagée entre la chaîne exécutée et la chaîne suggérée.
+  '_simRemove', 'origineOf', 'movablePool', 'planRepair', '_chainRow', '_afResetPosed',
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];
@@ -61,6 +65,9 @@ const CONST_LINES = [
   { first: 'FIN_CLE_OF_JT', names: ['FIN_CLE_OF_JT'] },
   { first: 'FIN_LEGACY_OF_JT', names: ['FIN_LEGACY_OF_JT'] },
   { first: 'JT_SAMPLE_DI', names: ['JT_SAMPLE_DI'] },
+  // État partagé de l'auto-fill : vivier des créneaux posés pendant la génération en cours + présence de
+  // la colonne `origine`. placeCre l'alimente à chaque pose ; sans lui, autoFillCore casse à la 1re écriture.
+  { first: '_AF', names: ['_AF'] },
 ];
 
 // Extrait `const <name>={…}` en équilibrant les accolades. Les COMMENTAIRES sont sautés AVANT les
