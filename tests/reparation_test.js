@@ -499,8 +499,32 @@ console.log('\n── 11. DÉFAUTS TROUVÉS EN RELECTURE ADVERSARIALE (chacun a 
 // toujours vide avant sa première génération : se contenter de renifler une ligne chargée revenait à
 // écrire origine=NULL au tout premier usage, et l'auto-fill se rendait lui-même non réparable.
 t('loadWeek sonde vraiment la colonne quand la semaine est vide',
-  /_AF\.sonde=true;[\s\S]{0,220}select\('origine'\)/.test(h));
+  /_AF\.sonde=true;[\s\S]{0,400}select\('origine'\)/.test(h));
 t('… et n\'écrit `origine` que si la colonne existe', /_AF\.origineCol\?\{origine:'auto'\}:\{\}/.test(h));
+// La sonde est EXÉCUTÉE, pas seulement lue dans le texte : c'est la seule requête du module qui
+// interroge une colonne pouvant ne pas exister, donc la seule qui peut répondre 400 aujourd'hui.
+// Trois cas : colonne présente · colonne absente (erreur rendue) · client qui JETTE (le cas où une
+// détection ratée emporterait l'affichage de la grille — trois restaurants ouvrent cette page).
+// On DÉCOUPE le fragment réel de loadWeek (du sniff jusqu'à la fin de la sonde) et on l'exécute tel
+// quel : mocker les douze requêtes de loadWeek n'aurait testé que le mock.
+{ const src=h.slice(h.indexOf('  if(S.allCreneauxWeek.length) _AF.origineCol='),
+                    h.indexOf('  S.altJours={};'));
+  t('le fragment de détection a bien été retrouvé dans le fichier', /select\('origine'\)/.test(src), src.length);
+  const sonder=async(mode)=>{
+    _AF.sonde=false; _AF.origineCol=null;
+    global.S={allCreneauxWeek:[]};
+    global.EatimeScope={from:()=>({select:()=>({limit:()=>
+      mode==='jette'   ? Promise.reject(new Error('400 Bad Request'))
+    : mode==='absente' ? Promise.resolve({data:null,error:{code:'42703',message:'column planning_creneaux.origine does not exist'}})
+    :                    Promise.resolve({data:[],error:null}) })})};
+    let jete=false;
+    try{ await eval('(async()=>{'+src+'})()'); }catch(e){ jete=true; }
+    return {col:_AF.origineCol, jete};
+  };
+  const a=await sonder('presente'); t('sonde — colonne présente → on écrira `origine`', a.col===true && !a.jete, JSON.stringify(a));
+  const b=await sonder('absente');  t('sonde — colonne absente → on ne l\'écrit pas, et la page tient', b.col===false && !b.jete, JSON.stringify(b));
+  const c=await sonder('jette');    t('sonde — client qui JETTE → loadWeek ne casse PAS (la grille s\'affiche)', c.col===false && !c.jete, JSON.stringify(c));
+  global.EatimeScope={from:t=>global.sb.from(t)}; }
 
 // (3) LA PHASE 2 A SON PROPRE BUDGET. T0 démarre avant la phase 1, qui enchaîne un aller-retour réseau
 // par créneau posé : mesuré sur l'horloge de la phase 1, le budget de la phase 2 est déjà consommé en

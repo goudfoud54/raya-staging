@@ -840,9 +840,14 @@ async function loadWeek(){
   // l'auto-fill se rendant lui-même non réparable au tout premier usage. On sonde donc la colonne pour
   // de bon quand la semaine est vide (une fois par session : la réponse ne change pas en cours de route).
   if(S.allCreneauxWeek.length) _AF.origineCol=Object.prototype.hasOwnProperty.call(S.allCreneauxWeek[0],'origine');
+  // try/catch OBLIGATOIRE : c'est la seule requête du module qui interroge une colonne pouvant ne pas
+  // exister, donc la seule qui peut répondre 400 aujourd'hui. Le client rend l'échec dans {error}, mais
+  // une exception ici traverserait loadWeek et la grille ne s'afficherait PAS — trois restaurants
+  // ouvrent cette page tous les jours. Une détection ratée doit coûter une fonctionnalité, pas la page.
   else if(!_AF.sonde){ _AF.sonde=true;
-    const {error}=await EatimeScope.from('planning_creneaux').select('origine').limit(1);
-    _AF.origineCol=!error;   // colonne absente → PostgREST renvoie une erreur (42703)
+    try{ const {error}=await EatimeScope.from('planning_creneaux').select('origine').limit(1);
+         _AF.origineCol=!error;   // colonne absente → PostgREST répond 42703
+    }catch(e){ _AF.origineCol=false; }
   }
   S.altJours={}; (alt.data||[]).forEach(j=>S.altJours[`${j.salarie_id}|${j.date}`]=j.type);
   render();
