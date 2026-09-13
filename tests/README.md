@@ -34,8 +34,31 @@ node tests/run.js transfer   # seulement les harnais dont le nom contient « tra
 Ce harnais exerce une **réplique locale** de la phase 3 (il pilote le vrai `checkPlacement` mais
 réimplémente la distribution). Il ne teste donc PAS le vrai `autoFillCore`. Le vrai solveur est
 couvert par les harnais à extraction réelle : `coverage_test`, `transfer_test`, `suggest_test`,
-`undermin*`, `multi_undermin`, `intersnack_test`, `hayatou_test`, `p3_real_test`. À terme, fusionner
-`phase3_test` dans ces harnais plutôt que de maintenir une réplique en parallèle.
+`undermin*`, `multi_undermin`, `intersnack_test`, `hayatou_test`, `p3_real_test`, `releve_test`,
+`reparation_test`. À terme, fusionner `phase3_test` dans ces harnais plutôt que de maintenir une
+réplique en parallèle.
+
+## Phase 2 — la réparation par déplacement (`reparation_test.js`)
+
+Depuis v0.68, la décision de réparation vit dans une fonction **pure** de niveau fichier,
+`planRepair(h, opt)` : elle cherche entièrement en mémoire (`_simRemove`) et renvoie un plan, que
+`autoFillCore` se contente d'exécuter. C'est ce découpage qui rend la phase 2 testable sur le vrai
+code — les helpers internes à `autoFillCore` sont des `const … =>`, qu'`extractFn` ne sait pas
+attraper (il ne matche que `function NOM(`). Toute nouvelle règle de décision doit donc aller dans
+`planRepair`, pas dans la boucle appelante, sinon elle redevient intestable.
+
+Deux points de vigilance quand on y touche :
+
+- **Non-vacuité.** Un scénario où tout se place en phase 1 n'exerce PAS la réparation et rendrait
+  « tout vert » sans rien prouver. Le harnais compte explicitement les trous réellement cherchés
+  (section 7) et échoue s'ils sont trop peu nombreux.
+- **Contre-tests systématiques.** Chaque garde-fou (créneau manuel protégé, réglage décoché,
+  remplaçant introuvable) est doublé du scénario symétrique qui doit, lui, réparer. Sans ça, un
+  garde-fou qui bloque tout passerait pour un succès.
+
+`scripts/audit_reparation_prod.js` rejoue le même `autoFillCore` sur la configuration **réelle** de
+l'organisation, avec les deux viviers, et chiffre l'écart. Il est hors de `run.js` : il a besoin d'un
+jeu de données non versionné (salariés réels).
 
 ## Cas particulier — accès par module (`acces_test.js` + `cas_acces.json`)
 
