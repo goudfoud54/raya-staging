@@ -90,3 +90,17 @@ protection contre le motif « une interface configurable jamais lue à l'exécut
 Tout rapport de chantier annonce le résultat de la suite **complète** en tête (`N/N verts` ou la
 liste des échecs). Un harnais rouge est traité ou explicitement justifié dans le corps du rapport —
 jamais relégué en note de bas de page.
+
+## Sécurité de la saisie (`semaine_securite_test.js`, v0.69)
+
+Trois volets, tous sur le vrai code extrait : réouverture de la semaine de travail après rechargement
+(+ bandeau, + délai de 3 jours, + passage à l'heure d'hiver), confirmation nommée des actions
+destructrices (texte, fenêtre, purge multi-snack de bout en bout sur une table en mémoire, annulation en
+un seul ↶), et mention « aussi <restaurant> » du PDF sans heures ni motif.
+
+- **PDF réel ou enregistreur.** jsPDF n'est pas une dépendance du dépôt. Sans lui, la section PDF tourne
+  sur un moteur enregistreur. Pour le document réel :
+  `JSPDF_PATH=<dossier node_modules contenant jspdf@2.5.1 et jspdf-autotable@3.8.0> node tests/run.js`
+  (même variable pour `absence_motif_test`). Le harnais dit toujours laquelle des deux jambes a tourné.
+- **Police du PDF.** Helvetica ne connaît que le jeu WinAnsi : un seul « → » dans une chaîne la fait
+  afficher lettre par lettre. Le harnais vérifie qu'aucune chaîne émise n'en sort (`_pdfSafe`).

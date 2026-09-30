@@ -38,7 +38,10 @@ class Q{ constructor(){this.op=null;this.payload=null;this.filters={};this._in=n
 // ── env stubs ──
 global.window={performance:{now:()=>Date.now()}};
 global.document={getElementById:()=>({value:'',style:{},textContent:'',innerHTML:''}),querySelectorAll:()=>[]};
-global.confirm=()=>true; global.setSS=()=>{}; global._yield=()=>Promise.resolve();
+global.confirm=()=>true;
+// v0.69 : la confirmation de l'auto-fill est une modale (confirmDestructive) et non plus confirm(). Même
+// simulation qu'au-dessus — « l'utilisateur accepte » ; son CONTENU est testé par semaine_securite_test.
+global.autofillSpec=()=>({}); global.confirmDestructive=async()=>true; global.setSS=()=>{}; global._yield=()=>Promise.resolve();
 global.showAutofillOverlay=()=>{};global.hideAutofillOverlay=()=>{};global.updateAutofillProgress=()=>{};
 global.showSolveReport=()=>{};global.showMultiSolveReport=()=>{};global._afMulti=null;global._afTitle=null;
 global.beginTxn=()=>{global._txn=[];};global.endTxn=()=>{global._txn=null;};global.recordAction=()=>{};global.updateUndoBtns=()=>{};
