@@ -331,7 +331,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.69 · sécurité de la saisie : la page rouvre la semaine sur laquelle vous travailliez, avec un bandeau permanent quand ce n\'est pas la semaine en cours · purge, auto-fill, import et suppression multiple nomment la semaine, son statut, le nombre de créneaux et les restaurants (confirmation renforcée sur la semaine en cours ou passée) · le PDF signale qu\'un salarié travaille aussi dans un autre restaurant';
+const VERSION='v0.70 · PDF : la mention « aussi … » sous le nom est retirée, seule la marque « » GC » dans les cases des jours travaillés ailleurs reste · auto-fill sur la semaine en cours : la case à cocher n\'est exigée que s\'il peut déplacer ou supprimer des créneaux existants — s\'il ne fait qu\'ajouter, confirmation simple';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -545,7 +545,10 @@ function _restoListe(noms){ const a=(noms||[]).map(n=>shortSnack(n)).filter(Bool
 // restos:[noms], monday, now, details:[lignes], note, bouton, danger}.
 function destructiveSpec(o){
   const st=weekStatus(o.monday, o.now);
-  const fort=st.kind!=='a_venir';
+  // Renforcée sur une semaine passée, toujours. Sur la semaine en cours, par défaut aussi — sauf si
+  // l'appelant sait que l'action ne fait qu'AJOUTER (o.fortSiEnCours===false : auto-fill sans
+  // déplacement ni suppression possible). Jamais sur une semaine à venir.
+  const fort = st.kind==='passee' || (st.kind==='en_cours' && o.fortSiEnCours!==false);
   const tag = st.kind==='en_cours' ? 'SEMAINE EN COURS'
             : st.kind==='passee'   ? `SEMAINE PASSÉE (${st.label})`
             : `à venir (${st.label})`;
@@ -3037,28 +3040,48 @@ function guardEffectifsConfigured(){
   if(confirm(`Aucun effectif cible n'est configuré pour « ${SNACK.nom} ».\n\nL'auto-fill ne peut rien générer tant que le nombre de personnes requises par jour et par service n'a pas été renseigné.\n\nOuvrir les Réglages (effectifs cibles) maintenant ?`)) openReglages();
   return false;
 }
-// Confirmation de l'auto-fill (v0.69) : il AJOUTE, mais il peut aussi DÉFAIRE — il purge les créneaux
-// des salariés sortis de l'effectif sur les jours traités, et, réparation active, il peut DÉPLACER un
+// Confirmation de l'auto-fill : il AJOUTE, mais il peut aussi DÉFAIRE — il purge les créneaux des
+// salariés sortis de l'effectif sur les jours traités, et, réparation active, il peut DÉPLACER un
 // créneau posé par un auto-fill précédent. On le dit, avec les nombres, plutôt que « rien n'est remplacé ».
 // Les créneaux saisis à la main (origine 'manuel') ne sont jamais touchés par la réparation (planRepair).
+//
+// v0.70 — décision du patron : sur la semaine EN COURS, la case à cocher n'est exigée que si l'auto-fill
+// PEUT déplacer ou supprimer un créneau existant. S'il ne peut qu'ajouter, confirmation simple. (Semaine
+// passée : toujours renforcée — ajouter après coup modifie la référence des heures réalisées.)
+// « Peut déplacer » se lit sur le VRAI vivier de la réparation (movablePool + la règle execOf de
+// planRepair : généré, et dans ce restaurant ou inter-établissement autorisé), pas sur un calcul parallèle :
+// un décompte qui divergerait du moteur afficherait « ne fait qu'ajouter » avant un déplacement.
+// On ne sait pas d'avance s'il y aura un poste à réparer : on annonce ce qui est POSSIBLE.
 function autofillSpec(restoIds, dayIdx, action, extra){
-  const dates=new Set((dayIdx||[]).map(i=>fmtDate(dateOfDay(i))));
+  const dl=(dayIdx||[]).map(i=>fmtDate(dateOfDay(i))), dates=new Set(dl);
   const rows=(S.allCreneauxWeek||[]).filter(c=>restoIds.includes(c.restaurant_id) && dates.has(c.date));
-  const gen=rows.filter(c=>c.origine==='auto').length;
   const orph=rows.filter(c=>!onRoster(salById(c.salarie_id))).length;
-  const repair=_ruleCtx().on('autofill_reparation',true);
+  // Réglages : ceux du restaurant affiché (loadWeek ne charge que ses exceptions). En MULTI-snack, un autre
+  // restaurant peut avoir les siens : on retient alors le cas le plus large (réparation et inter actives)
+  // — se tromper ici dans le sens « case exigée » coûte un clic, l'inverse coûte un planning.
+  const rg=_ruleCtx(), multi=restoIds.length>1;
+  const repair = multi || rg.on('autofill_reparation',true);
+  const inter  = multi || rg.on('reparation_inter_snack',true);
+  const movables = repair ? movablePool(dl, null).filter(p=>p.src==='genere' && (inter || restoIds.includes(p.row.restaurant_id))).map(p=>p.row) : [];
+  const ailleurs=[...new Set(movables.filter(c=>!restoIds.includes(c.restaurant_id)).map(c=>c.restaurant_id))]
+    .map(id=>shortSnack(((S.restos||[]).find(r=>r.id===id)||{}).nom)).filter(Boolean);
+  const touche = movables.length + orph;
   const today=fmtDate(new Date());
   const passes=(dayIdx||[]).filter(i=>fmtDate(dateOfDay(i))<today).map(i=>JOURS[i].toLowerCase());
   const details=[];
   details.push(rows.length ? `${_pl(rows.length,'créneau déjà posé','créneaux déjà posés')} : ceux saisis à la main ne sont jamais modifiés.`
                            : 'Aucun créneau déjà posé sur cette période.');
-  if(repair && gen) details.push(`${_pl(gen,'a été posé','ont été posés')} par un auto-fill précédent : ${gen>1?'ils peuvent':'il peut'} être DÉPLACÉ${gen>1?'S':''} pour combler un poste vide (réglage « Réparer un poste vide »). Chaque déplacement est listé dans le rapport.`);
+  const n=movables.length;
+  if(n) details.push(`${_pl(n,'créneau posé','créneaux posés')} par un auto-fill précédent ${n>1?'peuvent':'peut'} être DÉPLACÉ${n>1?'S':''} pour combler un poste vide${ailleurs.length?` — y compris à ${ailleurs.join(', ')}`:''} (réglage « Réparer un poste vide »). Chaque déplacement est listé dans le rapport.`);
   if(orph) details.push(`${_pl(orph,'créneau appartient','créneaux appartiennent')} à un salarié sorti de l'effectif : ${orph>1?'ils seront SUPPRIMÉS':'il sera SUPPRIMÉ'}.`);
+  if(!touche) details.push('Rien ne sera déplacé ni supprimé : l\'auto-fill ne fera qu\'AJOUTER des créneaux.');
   if(passes.length) details.push(`⚠ Jour${passes.length>1?'s':''} déjà passé${passes.length>1?'s':''} inclus : ${passes.join(', ')}.`);
   (extra||[]).forEach(x=>details.push(x));
-  return destructiveSpec({titre:'🎲 Auto-fill', action, monday:new Date(MONDAY), now:new Date(),
+  const sp=destructiveSpec({titre:'🎲 Auto-fill', action, monday:new Date(MONDAY), now:new Date(),
     restos:restoIds.map(id=>((S.restos||[]).find(r=>r.id===id)||{}).nom).filter(Boolean),
-    details, note:'Annulable (↶).', bouton:'🎲 Lancer', danger:false});
+    details, note:'Annulable (↶).', bouton:'🎲 Lancer', danger:false, fortSiEnCours:touche>0});
+  sp.touche={deplacables:n, supprimes:orph};
+  return sp;
 }
 // _afResetPosed() à CHAQUE lancement, jamais entre deux snacks : le vivier « posé par nous » doit couvrir
 // toute la génération, c'est ce qui permet à un snack de libérer quelqu'un posé sur un autre juste avant.
@@ -5322,7 +5345,7 @@ async function runPdf(){
 
   const from=fmtDate(MONDAY), to=fmtDate(dateOfDay(7));
   // TOUS les restaurants, pas seulement ceux cochés : le PDF de Lobau doit savoir qu'un salarié travaille
-  // aussi à Grand Cœur (mention « aussi … » et « » GC » les jours concernés), même si seul Lobau est exporté.
+  // aussi à Grand Cœur (« » GC » dans les cases des jours concernés), même si seul Lobau est exporté.
   const{data:allCr,error:crErr}=await EatimeScope.from('planning_creneaux').select('*').in('restaurant_id',(S.restos||[]).map(r=>r.id)).gte('date',from).lt('date',to);
   // Une lecture en échec rendait un PDF VIDE sans un mot — le pire document à afficher en salle.
   if(crErr){ setSS('err','PDF non généré : lecture des créneaux impossible — '+crErr.message); return; }
@@ -5535,22 +5558,22 @@ function restoAbbr(nom, tousNoms){
   const mine=ab(nom);
   return (tousNoms||[]).some(n=>n!==nom && ab(n)===mine) ? shortSnack(nom) : mine;
 }
-// Fonction PURE (testée) : pour le PDF du restaurant `restoId`, OÙ le salarié `sid` travaille AUSSI cette
-// semaine. Un salarié Grand Cœur + Lobau qui ne lit que le planning affiché à Lobau doit savoir qu'il a
-// aussi des créneaux ailleurs, et quel jour aller lire l'autre planning.
-// ⚠ CONFIDENTIALITÉ (v0.62-0.63) : on ne renvoie QUE des noms de restaurant, par jour et par service —
-// jamais d'heures, jamais de total, jamais de motif. Le document est affiché en salle.
+// Fonction PURE (testée) : pour le PDF du restaurant `restoId`, les jours et services où le salarié `sid`
+// travaille dans un AUTRE restaurant cette semaine → {parJour:{date:{midi:['GC'], soir:[…]}}}. Un salarié
+// Grand Cœur + Lobau qui ne lit que le planning affiché à Lobau doit savoir, en lisant son jour, quel
+// autre planning aller regarder.
+// ⚠ CONFIDENTIALITÉ (v0.62-0.63) : on ne renvoie QUE des abréviations de restaurant, par jour et par
+// service — jamais d'heures, jamais de total, jamais de motif. Le document est affiché en salle.
+// Ne renvoie plus la liste des autres restaurants (v0.70) : la mention sous le nom a été retirée, et un
+// champ calculé mais inutilisé invite à la réafficher (même précédent que le cumul wkMin).
 function pdfAilleurs(sid, restoId, allCreneaux, restos){
-  const mine=(allCreneaux||[]).filter(c=>c.salarie_id===sid && (c.heure_debut||c.heure_fin));
-  const ici=mine.some(c=>c.restaurant_id===restoId);
-  const autresIds=new Set(mine.filter(c=>c.restaurant_id!==restoId).map(c=>c.restaurant_id));
-  const autres=(restos||[]).filter(r=>autresIds.has(r.id));   // ordre stable : celui de la liste des restaurants
   const tous=(restos||[]).map(r=>r.nom), parJour={};
-  for(const c of mine){ if(c.restaurant_id===restoId) continue;
-    const r=autres.find(x=>x.id===c.restaurant_id); if(!r) continue;
+  for(const c of (allCreneaux||[])){
+    if(c.salarie_id!==sid || c.restaurant_id===restoId || !(c.heure_debut||c.heure_fin)) continue;
+    const r=(restos||[]).find(x=>x.id===c.restaurant_id); if(!r) continue;
     const j=parJour[c.date]=parJour[c.date]||{}, a=restoAbbr(r.nom,tous);
     (j[c.service]=j[c.service]||[]); if(!j[c.service].includes(a)) j[c.service].push(a); }
-  return {ici, noms:autres.map(r=>shortSnack(r.nom)), parJour};
+  return {parJour};
 }
 // En-tête d'une page PDF : bandeau d'accent (couleur primaire), logo, nom du restaurant, semaine + org.
 // Appelé par le hook didDrawPage → répété sur CHAQUE page (un snack de 30 salariés déborde sur plusieurs pages A3).
@@ -5594,10 +5617,11 @@ function drawSnackPage(doc,resto,creneaux,ctx){
     const nameTxt=_rgbArr(textColorFor(s.couleur||'#888888'));
     const rl=roleLetter(s.id);
     const nm=([s.prenom,s.nom].filter(Boolean).join(' ')||s.nom||'?')+(rl?`  ·${rl}`:'');
-    // Travaille AUSSI ailleurs cette semaine → mention sous le nom (restaurant seulement, jamais d'heures).
-    const ail=ctx.allCr ? pdfAilleurs(s.id, resto.id, ctx.allCr, ctx.restos) : {ici:true, noms:[], parJour:{}};
-    const mention=ail.noms.length ? `\n» ${ail.ici?'aussi':'cette semaine :'} ${ail.noms.join(', ')}` : '';
-    const row=[{content:_pdfSafe(nm+mention),styles:{fillColor:nmeRgb,textColor:nameTxt,fontStyle:'bold',halign:'left'}}];
+    // Jours où il travaille dans un AUTRE restaurant → marque « » GC » dans les cases de ces jours (plus bas).
+    // ⚠ PAS de mention sous le nom (« aussi Grand Cœur ») : retirée en v0.70 à la demande du patron — elle
+    // alourdissait la colonne des noms, et c'est en lisant SON JOUR que le salarié a besoin de l'information.
+    const ail=ctx.allCr ? pdfAilleurs(s.id, resto.id, ctx.allCr, ctx.restos) : {parJour:{}};
+    const row=[{content:_pdfSafe(nm),styles:{fillColor:nmeRgb,textColor:nameTxt,fontStyle:'bold',halign:'left'}}];
     for(let i=0;i<7;i++){
       const date=fmtDate(dateOfDay(i));
       // Absence journée entière : congé/arrêt (indispo validée sans heures) ou école/examen CFA → 1 cellule ×4.

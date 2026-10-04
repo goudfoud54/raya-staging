@@ -36,7 +36,7 @@ for(const fn of ['getMonday','fmtDate','dateOfDay','parseYMD','weekDelta','weekS
   '_weekKey','rememberWeek','initialMonday','weekBannerText','renderWeekBanner','navWeek','goToday',
   '_pl','_restoListe','destructiveSpec','_dzClose','confirmDestructive','shortSnack',
   'beginTxn','endTxn','recordAction','applyAction','undo','purgeWeek','purgeRestos','deleteCreneauxBatch',
-  'selectionImpact','autofillSpec','onRoster','_ruleCtx','_regleOf',
+  'selectionImpact','autofillSpec','onRoster','_ruleCtx','_regleOf','movablePool','origineOf',
   '_pdfSafe','restoAbbr','pdfAilleurs','drawSnackPage','_pdfHeader','isoWeek','_hexToRgb','_relLum','textColorFor',
   '_rgbArr','_tintRgb','altDayType','indisposOf','worksAt']) inst(fn);
 eval("global.salById="+h.match(/const salById=([^\n]*);/)[1]+";");
@@ -300,25 +300,68 @@ console.log('\n── 8. Auto-fill, import, suppression multiple : la même conf
   const imp=selectionImpact([{sid:'a',date:'2026-10-05',svc:'midi',debSel:true,finSel:true},{sid:'a',date:'2026-10-05',svc:'soir',debSel:false,finSel:true},
                              {sid:'b',date:'2026-10-05',svc:'midi',debSel:true,finSel:true},{sid:'z',date:'2026-10-05',svc:'midi',debSel:true,finSel:true}],cr);
   t('selectionImpact : 2 supprimés, 1 modifié (une borne), case vide ignorée', imp.suppr.length===2 && imp.modif.length===1);
-  // autofillSpec : ce que l'auto-fill peut DÉFAIRE est annoncé, chiffré.
-  global.MONDAY=getMonday(new Date()); global.SNACK=RESTOS[1];
+  // autofillSpec : ce que l'auto-fill peut DÉFAIRE est annoncé, chiffré — et décide du niveau.
+  // v0.70 (décision du patron) : sur la semaine EN COURS, case à cocher SEULEMENT s'il peut déplacer ou
+  // supprimer un créneau existant ; s'il ne fait qu'ajouter, confirmation simple.
+  global.MONDAY=getMonday(new Date()); global.SNACK=RESTOS[1]; S.restos=RESTOS;
   S.salaries=[{id:'x',actif:true},{id:'y',actif:true},{id:'parti',actif:false,date_sortie:'2020-01-01'}];
-  S.regles=[]; global._regleOf=()=>null;                     // aucun réglage en base → défauts (réparation active)
-  S.allCreneauxWeek=[{restaurant_id:'g',salarie_id:'x',date:fmtDate(dateOfDay(3)),service:'midi',origine:'auto'},
-                     {restaurant_id:'g',salarie_id:'y',date:fmtDate(dateOfDay(3)),service:'soir',origine:'manuel'},
-                     {restaurant_id:'g',salarie_id:'parti',date:fmtDate(dateOfDay(4)),service:'midi',origine:'manuel'},
-                     {restaurant_id:'c',salarie_id:'x',date:fmtDate(dateOfDay(4)),service:'soir',origine:'auto'}];
-  const sp=autofillSpec(['g'],[0,1,2,3,4,5,6],'Remplir les postes vides');
-  const txt=sp.details.join(' | ');
-  t('auto-fill : semaine + statut + restaurant nommés, renforcé sur la semaine en cours', sp.fort===true && sp.tag==='SEMAINE EN COURS' && sp.restos==='Grand Cœur' && /^Remplir les postes vides de la semaine du /.test(sp.phrase), sp.phrase);
-  t('… annonce les 3 créneaux déjà posés, dont 1 DÉPLAÇABLE (posé par l\'auto-fill)', /3 créneaux déjà posés/.test(txt) && /1 a été posé par un auto-fill précédent : il peut être DÉPLACÉ/.test(txt), txt);
-  t('… et 1 créneau SUPPRIMÉ (salarié sorti de l\'effectif)', /1 créneau appartient à un salarié sorti de l'effectif : il sera SUPPRIMÉ/.test(txt), txt);
-  const passes=[0,1,2,3,4,5,6].filter(i=>fmtDate(dateOfDay(i))<fmtDate(new Date())).length;
-  t('… signale les jours déjà passés de la semaine en cours ('+passes+' aujourd\'hui)', passes===0 ? !/déjà passé/.test(txt) : /déjà passé/.test(txt), txt);
+  // Réglages : doublure de _regleOf (lecture de S.regles pour le restaurant affiché). Absent = défaut.
+  let REG={}; global._regleOf=c=>REG[c]||null;
+  const af=(rid,sid,i,svc,origine,extra)=>Object.assign({id:`${rid}${sid}${i}${svc}`,restaurant_id:rid,salarie_id:sid,date:fmtDate(dateOfDay(i)),service:svc,heure_debut:'11:00',heure_fin:'15:00',origine},extra||{});
+  const SEM=[0,1,2,3,4,5,6];
+  const spec=(rows,ids,days)=>{ S.allCreneauxWeek=rows; return autofillSpec(ids||['g'],days||SEM,'Remplir les postes vides'); };
+  // (a) Rien à défaire : uniquement des créneaux saisis à la main → il ne fera qu'AJOUTER.
+  let sp=spec([af('g','y',3,'soir','manuel'), af('g','x',3,'midi','manuel')]);
+  t('auto-fill semaine en cours, il ne peut qu\'AJOUTER → confirmation SIMPLE (pas de case)', sp.fort===false && sp.tag==='SEMAINE EN COURS' && /^Remplir les postes vides de la semaine du /.test(sp.phrase), JSON.stringify({fort:sp.fort,tag:sp.tag}));
+  t('… la fenêtre le dit : « ne fera qu\'AJOUTER »', /ne fera qu'AJOUTER/.test(sp.details.join(' | ')), sp.details.join(' | '));
+  inst('confirmDestructive');   // la VRAIE fenêtre (la section 7 l'avait remplacée par une doublure)
+  let html; { const p=confirmDestructive(sp); html=DOM.dzModal.innerHTML; _dzClose(false); await p; }
+  t('… et la fenêtre réelle n\'a ni case ni bouton désactivé, mais nomme toujours SEMAINE EN COURS', !/dzAck/.test(html) && !/id="dzGo" disabled/.test(html) && /SEMAINE EN COURS/.test(html));
+  // (b) Un créneau posé par un auto-fill précédent, dans ce restaurant → il PEUT être déplacé.
+  sp=spec([af('g','x',3,'midi','auto'), af('g','y',3,'soir','manuel')]);
+  t('créneau généré déplaçable ici → case EXIGÉE', sp.fort===true && sp.touche.deplacables===1, JSON.stringify(sp.touche));
+  t('… annoncé « peut être DÉPLACÉ »', /1 créneau posé par un auto-fill précédent peut être DÉPLACÉ/.test(sp.details.join(' | ')), sp.details.join(' | '));
+  // (c) Généré dans un AUTRE restaurant : déplaçable si l'inter-établissement est autorisé (défaut).
+  sp=spec([af('c','x',4,'soir','auto')]);
+  t('généré à Carnot, inter-établissement autorisé (défaut) → case EXIGÉE, Carnot nommé', sp.fort===true && /y compris à Carnot/.test(sp.details.join(' | ')), sp.details.join(' | '));
+  REG={reparation_inter_snack:{active:false}};
+  sp=spec([af('c','x',4,'soir','auto')]);
+  t('… inter-établissement DÉSACTIVÉ → hors d\'atteinte → confirmation simple', sp.fort===false && sp.touche.deplacables===0, JSON.stringify(sp.touche));
+  REG={autofill_reparation:{active:false}};
+  sp=spec([af('g','x',3,'midi','auto')]);
+  t('réparation DÉSACTIVÉE → rien ne bouge → confirmation simple', sp.fort===false && sp.touche.deplacables===0);
+  REG={};
+  // (d) Ce que la réparation ne déplace jamais (vivier réel movablePool) ne doit pas exiger la case.
+  sp=spec([af('g','x',3,'midi','auto',{sureffectif:true}), af('g','x',3,'soir','auto',{heure_fin:null}), af('g','x',4,'midi',null)]);
+  t('sureffectif, créneau incomplet, origine inconnue : jamais déplacés → confirmation simple', sp.fort===false, JSON.stringify(sp.touche));
+  sp=spec([af('g','x',5,'midi','auto')], ['g'], [2]);
+  t('auto-fill d\'UN jour : un créneau généré d\'un autre jour n\'est pas concerné', sp.fort===false);
+  // (e) Un salarié sorti de l'effectif : son créneau sera SUPPRIMÉ → case exigée.
+  sp=spec([af('g','parti',4,'midi','manuel')]);
+  t('créneau d\'un salarié sorti → sera SUPPRIMÉ → case EXIGÉE', sp.fort===true && sp.touche.supprimes===1 && /1 créneau appartient à un salarié sorti de l'effectif : il sera SUPPRIMÉ/.test(sp.details.join(' | ')), sp.details.join(' | '));
+  // (f) Multi-snack : réglages des autres restaurants inconnus ici → on retient le cas le plus large.
+  REG={reparation_inter_snack:{active:false}, autofill_reparation:{active:false}};
+  sp=spec([af('l','x',3,'midi','auto')], ['g','c']);
+  t('multi-snack : réglages des autres restaurants inconnus → hypothèse large → case EXIGÉE', sp.fort===true);
+  REG={};
+  // (g) Semaine PASSÉE : toujours renforcée, même pour un simple ajout. Semaine à venir : jamais.
+  global.MONDAY=getMonday(dateOfDay(-7)); sp=spec([]);
+  t('semaine PASSÉE, simple ajout → case EXIGÉE quand même', sp.fort===true && /SEMAINE PASSÉE/.test(sp.tag));
+  global.MONDAY=getMonday(dateOfDay(14)); sp=spec([af('g','x',3,'midi','auto')]);
+  t('semaine À VENIR, même avec déplacement possible → confirmation simple', sp.fort===false && sp.touche.deplacables===1);
+  global.MONDAY=getMonday(new Date());
+  // destructiveSpec : l'assouplissement est réservé à la semaine en cours, et n'existe que sur demande.
+  const now=new Date();
+  t('destructiveSpec : sans fortSiEnCours, la semaine en cours reste RENFORCÉE (purge, import, sélection)', destructiveSpec({action:'x',monday:getMonday(now),now}).fort===true);
+  t('… fortSiEnCours:false n\'assouplit PAS une semaine passée', destructiveSpec({action:'x',monday:getMonday(dateOfDay(-7)),now,fortSiEnCours:false}).fort===true);
+  t('seul autofillSpec utilise l\'assouplissement', (h.match(/fortSiEnCours:/g)||[]).length===1 && /fortSiEnCours:touche>0/.test(grab('autofillSpec')));
+  const passes=SEM.filter(i=>fmtDate(dateOfDay(i))<fmtDate(new Date())).length;
+  sp=spec([]);
+  t('… signale les jours déjà passés de la semaine en cours ('+passes+' aujourd\'hui)', passes===0 ? !/déjà passé/.test(sp.details.join(' | ')) : /déjà passé/.test(sp.details.join(' | ')), sp.details.join(' | '));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-console.log('\n── 9. PDF : « travaille aussi ailleurs » — fonctions pures ──────────────────────────────');
+console.log('\n── 9. PDF : « travaille ailleurs ce jour-là » — fonctions pures ──────────────────────────────');
 { const noms=RESTOS.map(r=>r.nom);
   t('abréviations : GC / Carnot / Lobau', restoAbbr('Raya Grand Cœur',noms)==='GC' && restoAbbr('Raya Carnot',noms)==='Carnot' && restoAbbr('Raya Lobau',noms)==='Lobau');
   t('abréviation ambiguë → nom court', restoAbbr('Raya Grand Cœur',noms.concat(['Raya Gare Centrale']))==='Grand Cœur');
@@ -327,11 +370,11 @@ console.log('\n── 9. PDF : « travaille aussi ailleurs » — fonctions pure
              {salarie_id:'y',restaurant_id:'c',date:'2026-08-04',service:'midi',heure_debut:'10:00',heure_fin:'14:00'},
              {salarie_id:'y',restaurant_id:'g',date:'2026-08-05',service:'midi',heure_debut:null,heure_fin:null}];   // ligne vide : ne compte pas
   const a=pdfAilleurs('y','l',all,RESTOS);
-  t('ailleurs : Carnot et Grand Cœur, dans l\'ordre des restaurants', a.ici===true && a.noms.join(',')==='Carnot,Grand Cœur', JSON.stringify(a.noms));
-  t('… par jour et par service', JSON.stringify(a.parJour)==='{"2026-08-04":{"soir":["GC"],"midi":["Carnot"]}}', JSON.stringify(a.parJour));
+  t('ailleurs : par jour et par service (Carnot le midi, GC le soir)', JSON.stringify(a)==='{"parJour":{"2026-08-04":{"soir":["GC"],"midi":["Carnot"]}}}', JSON.stringify(a));
   t('… une ligne sans heures ne fait pas « travailler ailleurs »', !a.parJour['2026-08-05']);
   t('… AUCUNE heure dans ce qui est renvoyé', !/\d{1,2}:\d{2}/.test(JSON.stringify(a)));
-  t('salarié d\'un seul restaurant → rien', pdfAilleurs('y','l',all.filter(c=>c.restaurant_id==='l'),RESTOS).noms.length===0);
+  t('… plus de liste des autres restaurants (mention sous le nom retirée en v0.70)', Object.keys(a).join()==='parJour');
+  t('salarié d\'un seul restaurant → rien', Object.keys(pdfAilleurs('y','l',all.filter(c=>c.restaurant_id==='l'),RESTOS).parJour).length===0);
   t('_pdfSafe : flèches remplacées, Œ et « – » conservés, lettre hors jeu translittérée',
     _pdfSafe('→ ↗ Œ – ş ł')==='> » Œ – s ?', _pdfSafe('→ ↗ Œ – ş ł'));
 }
@@ -402,8 +445,9 @@ function genere(resto){
   console.log('   ℹ source : '+L.source+(jsPDF?'':' — relancer avec JSPDF_PATH=<node_modules contenant jspdf> pour le PDF réel'));
   const nomCell=sid=>{ const s=S.salaries.find(x=>x.id===sid); const r=(L.body||[]).find(row=>String(row[0].content).startsWith(s.prenom)); return r; };
   t('CONTRÔLE : le document contient bien les horaires de Lobau', /11:00/.test(L.texte) && /22:30/.test(L.texte), L.texte.slice(0,200));
-  t('PDF de Lobau : Yanis porte la mention « » aussi Grand Cœur »', /Yanis B\.[^\n]*\n?» aussi Grand Cœur/.test(L.texte) || (/» aussi Grand Cœur/.test(L.texte) && /Yanis/.test(L.texte)), L.texte.slice(0,400));
-  const y=nomCell('yanis'); t('… dans SA case de nom (pas ailleurs)', y && /» aussi Grand Cœur$/.test(String(y[0].content)), y&&y[0].content);
+  // v0.70 : la mention sous le nom est RETIRÉE (elle alourdissait la colonne) — verrou d'absence.
+  t('PDF de Lobau : AUCUNE mention « aussi … » / « cette semaine : … » dans le document', !/aussi|cette semaine/.test(L.texte), (L.texte.match(/.{0,30}(aussi|cette semaine).{0,30}/)||[''])[0]);
+  const y=nomCell('yanis'); t('… la case de nom de Yanis ne porte que son nom', y && String(y[0].content)==='Yanis B.', y&&JSON.stringify(y[0].content));
   // Cases : 1 (nom) + par jour 4 cellules, ou moins si fusionnées. On reconstruit l'occupation par jour.
   const parJour=row=>{ const out=[]; let col=0; for(const c of row.slice(1)){ const span=c.colSpan||1; out.push({col, span, txt:String(c.content)}); col+=span; } return out; };
   const cells=parJour(y);
@@ -415,9 +459,9 @@ function genere(resto){
   t('… un jour où il ne travaille nulle part : « – »', at(5,'midi') && at(5,'midi').txt==='–');
   t('… la ligne occupe toujours 28 colonnes (fusion correcte)', cells.reduce((a,c)=>a+c.span,0)===28, cells.reduce((a,c)=>a+c.span,0));
   const sk=nomCell('sami');
-  t('Sami (aucun créneau ici, un à Grand Cœur) : « » cette semaine : Grand Cœur »', sk && /» cette semaine : Grand Cœur$/.test(String(sk[0].content)), sk&&sk[0].content);
+  t('Sami (aucun créneau ici, un à Grand Cœur) : nom seul, et « » GC » vendredi midi', sk && String(sk[0].content)==='Sami K.' && parJour(sk).some(c=>c.col===4*4 && c.txt==='» GC' && c.span===2), sk&&JSON.stringify(parJour(sk).filter(c=>c.txt!=='–')));
   const mo=nomCell('mona');
-  t('Mona (Lobau seulement) : AUCUNE mention', mo && !/»|aussi|cette semaine/.test(String(mo[0].content)), mo&&mo[0].content);
+  t('Mona (Lobau seulement) : nom seul, AUCUNE marque', mo && String(mo[0].content)==='Mona D.' && !parJour(mo).some(c=>/»/.test(c.txt)));
   t('« » GC » : 4 cases en tout (3 Yanis + 1 Sami)', (L.texte.match(/» GC/g)||[]).length===4, (L.texte.match(/» GC/g)||[]).length);
   const fuite=HEURES_AILLEURS.filter(x=>L.texte.includes(x));
   t('CONFIDENTIALITÉ : AUCUNE heure travaillée à Grand Cœur dans le PDF de Lobau', fuite.length===0, fuite.join(' '));
@@ -427,8 +471,11 @@ function genere(resto){
   t('en-tête : « Semaine NN · du 3 août au 9 août 2026 » (plus de « → » illisible)', /Semaine \d+ · du 3 août au 9 août 2026/.test(L.texte), (L.texte.match(/Semaine[^\n]*/)||[''])[0]);
   // Le PDF de Grand Cœur, en miroir : Yanis y est « aussi Lobau » et ses jours à Lobau sont marqués.
   const G=genere(RESTOS[1]);
-  t('PDF de Grand Cœur : Yanis « » aussi Lobau », lundi midi « » Lobau », sans ses heures de Lobau',
-    /» aussi Lobau/.test(G.texte) && /» Lobau/.test(G.texte) && !/11:00|22:00/.test(G.texte.replace(/11:13/g,'')), (G.texte.match(/.{0,30}Lobau.{0,30}/g)||[]).join(' | '));
+  t('PDF de Grand Cœur : « » Lobau » les jours de Yanis à Lobau (2), sans « aussi », sans ses heures de Lobau',
+    (G.texte.match(/» Lobau/g)||[]).length===2 && !/aussi/.test(G.texte) && !/11:00|22:00/.test(G.texte.replace(/11:13/g,'')), (G.texte.match(/.{0,30}Lobau.{0,30}/g)||[]).join(' | '));
+  // Verrou sur le CODE : la mention ne doit pas revenir par un autre chemin.
+  const zone=grab('drawSnackPage').replace(/\/\/[^\n]*/g,'');
+  t('drawSnackPage n\'écrit plus « aussi » ni « cette semaine »', !/aussi|cette semaine/.test(zone));
   // Contrôle de méthode du détecteur de police : une chaîne avec « → » DOIT être repérée.
   if(jsPDF){ const d=new jsPDF({compress:false}); d.text('Semaine 40 · 29 septembre → 5 octobre',10,10);
     t('CONTRÔLE : le détecteur repère bien une ligne avec « → » (l\'ancien en-tête)', lirePdf(Buffer.from(d.output('arraybuffer'))).utf16===1); }

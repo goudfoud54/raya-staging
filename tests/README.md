@@ -96,7 +96,9 @@ jamais relégué en note de bas de page.
 Trois volets, tous sur le vrai code extrait : réouverture de la semaine de travail après rechargement
 (+ bandeau, + délai de 3 jours, + passage à l'heure d'hiver), confirmation nommée des actions
 destructrices (texte, fenêtre, purge multi-snack de bout en bout sur une table en mémoire, annulation en
-un seul ↶), et mention « aussi <restaurant> » du PDF sans heures ni motif.
+un seul ↶), et marque « » GC » du PDF dans les cases des jours travaillés ailleurs, sans heures ni
+motif. Depuis v0.70 : plus de mention sous le nom (verrou d'absence), et la case à cocher de l'auto-fill
+sur la semaine en cours n'est exigée que s'il peut déplacer (vivier réel `movablePool`) ou supprimer.
 
 - **PDF réel ou enregistreur.** jsPDF n'est pas une dépendance du dépôt. Sans lui, la section PDF tourne
   sur un moteur enregistreur. Pour le document réel :
