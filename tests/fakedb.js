@@ -30,6 +30,7 @@ function makeDB(opts) {
         return op === 'eq' ? (r => String(r[c]) === val) : (r => val.replace(/[()]/g, '').split(',').includes(String(r[c]))); });
       this.f.push(r => tests.some(t => t(r))); return this; }
     range(a, b) { this.rg = [a, b]; return this; }
+    limit(n) { this.rg = [0, n - 1]; return this; }
     select(cols, o) { this.sel = true; this.selOpts = o || {}; return this; }
     maybeSingle() { this.one = 'maybe'; return this; }
     single() { this.one = 'single'; return this; }

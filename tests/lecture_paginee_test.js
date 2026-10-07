@@ -98,6 +98,80 @@ for (const [nom, fen, cap] of [['(a) historique sur 4 ans, 1 200ᵉ dans la sema
   t('les trois lanceurs d\'auto-fill passent par la garde', ['autoFillDay', 'autoFillWeek', 'autoFillMultiWeek'].every(f => /guardLecturesCompletes\(\)/.test(extractFn(PL, f))));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\n── 2. Stock : historique complet, dernière saisie juste, besoins justes ─────────────────');
+const STK = read('stock/index.html');
+const cp = require('child_process');
+{
+  const daysSinceSrc = STK.match(/function daysSince[\s\S]*?\n/)[0]; eval('global.daysSince=' + daysSinceSrc.replace(/^function daysSince/, 'function') + ';');
+  // Extraction par simple comptage d'accolades (comme besoin_render_test) : l'extracteur commun bute sur un
+  // motif d'expression régulière dans loadHistorique.
+  const grabB = name => { const i = STK.search(new RegExp('(?:async\\s+)?function ' + name + '\\s*\\(')); let d = 0, a = STK.indexOf('{', i), j = a;
+    for (; j < STK.length; j++) { if (STK[j] === '{') d++; else if (STK[j] === '}') { d--; if (d === 0) { j++; break; } } } return STK.slice(i, j); };
+  for (const n of ['computeBesoin', 'loadHistorique', 'renderDashboard']) eval('global.' + n + '=' + grabB(n).replace(/^async function \w+/, 'async function') + ';');
+  global.fmtD = window.fmtD || (d => d || '');
+  eval('global.escapeHtmlS=' + STK.match(/const escapeHtmlS=([^\n]*);/)[1] + ';');
+  global.BESOIN_STALE_DAYS = 4; global.eur = n => Number(n || 0).toFixed(2) + ' €'; global.filterHistorique = () => {};
+  const DOMS = {}; global.document = { getElementById: id => DOMS[id] || (DOMS[id] = { innerHTML: '', value: '' }), querySelectorAll: () => [] };
+  global.val = id => (DOMS[id] ? DOMS[id].value : '');
+  global.ORG = { id: 'org1', journee_exploitation_debut: '05:00' };
+  // 3 snacks × 400 produits = 1 200 couples (> 1 000 : la lecture de la vue DOIT paginer), ~4 800 saisies.
+  const SNACKS = ['s1', 's2', 's3'], NP = 400;
+  global.S = { snacks: SNACKS.map(id => ({ id, nom: 'Raya ' + id })), produits: [], stockMax: [] };
+  for (let i = 0; i < NP; i++) { S.produits.push({ id: 'p' + i, nom: 'Produit ' + i, categorie: 'Cat', cout_unitaire: 1 }); SNACKS.forEach(sid => S.stockMax.push({ restaurant_id: sid, produit_id: 'p' + i, quantite_max: 10, actif: true, mode_commentaire: 'aucun' })); }
+  const today = exploitationToday('05:00');
+  function histo(db) {
+    let k = 0;
+    for (const sid of SNACKS) for (let i = 0; i < NP; i++) for (let j = 4; j >= 1; j--)       // 4 saisies par couple, la plus récente il y a 1 jour
+      db.T('stock_saisies').push({ id: 'z' + String(++k).padStart(6, '0'), organization_id: 'org1', restaurant_id: sid, produit_id: 'p' + i, quantite: (i + j) % 7, date_saisie: addDaysYMD(today, -j), created_at: '2026-01-01T00:00:0' + j + 'Z' });
+    // La vue, reproduite avec la MÊME règle que la migration v6.37 (date desc, created_at desc, id desc).
+    // ⚠ La règle SQL elle-même a été vérifiée sur la base réelle (467 couples, 0 écart) ; ici on teste le front.
+    const best = {};
+    for (const r of db.T('stock_saisies')) { const key = r.restaurant_id + '|' + r.produit_id, b = best[key];
+      if (!b || r.date_saisie > b.date_saisie || (r.date_saisie === b.date_saisie && (r.created_at > b.created_at || (r.created_at === b.created_at && r.id > b.id)))) best[key] = r; }
+    Object.values(best).forEach(r => db.T('stock_saisies_dernieres').push({ ...r }));
+    return best;
+  }
+  // Besoins : 1 200 couples, plafond 1 000.
+  let db = makeDB({ cap: 1000 }); const best = histo(db); global.sb = db.api; global.EatimeScope = db.api;
+  const R = await computeBesoin(SNACKS);
+  const attendu = Object.values(best).reduce((a, r) => a + Math.max(0, 10 - Number(r.quantite)), 0);
+  const calcule = R.list.reduce((a, x) => a + x.totalNeed, 0);
+  t(`besoins sur 1 200 couples (vue paginée sous plafond 1 000) : besoin total ${calcule} = ${attendu} attendu`, !R.erreur && calcule === attendu, JSON.stringify({ erreur: R.erreur, calcule, attendu }));
+  t('… aucun produit compté « jamais saisi » à tort', R.list.every(x => !x.anyJamais));
+  // Contre-preuve : l'ANCIEN computeBesoin (tout l'historique, une requête) sur les mêmes données.
+  let ancien = null; try { ancien = cp.execSync('git show 9d94fec:stock/index.html', { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) {}
+  if (ancien) {
+    eval('global._oldBesoin=' + extractFn(ancien, 'computeBesoin') + ';');
+    const O = await _oldBesoin(SNACKS);
+    const faux = O.list.reduce((a, x) => a + x.totalNeed, 0), jamais = O.list.filter(x => x.anyJamais).length;
+    t(`CONTRÔLE : l'ancien calcul (historique tronqué à 1 000) donnait ${faux} au lieu de ${attendu}, ${jamais} produits « jamais saisis »`, faux !== attendu && jamais > 0, JSON.stringify({ faux, jamais }));
+  } else console.log('   ℹ git indisponible : contre-preuve sur l\'ancien calcul non rejouée');
+  // Lecture incomplète → la feuille de besoin est REFUSÉE (pas de commande sur données partielles).
+  db = makeDB({ cap: 1000 }); histo(db); global.EatimeScope = db.api;
+  let n = 0; db.hooks['stock_saisies_dernieres:select'] = q => { if (!(q.o.count && q.o.head) && ++n === 2) db.t.stock_saisies_dernieres.splice(0, 5); return null; };
+  const R2 = await computeBesoin(SNACKS);
+  t('lecture incomplète de la vue → feuille de besoin REFUSÉE, l\'écart est dit', !!R2.erreur && R2.list.length === 0 && /reçue\(s\) sur/.test(R2.erreur), R2.erreur);
+  // Tableau de bord : un snack de 1 100 produits (> 1 000 lignes dans la vue).
+  db = makeDB({ cap: 1000 }); global.EatimeScope = db.api; global.SNACK = { id: 'big', nom: 'Raya Big' };
+  S.produits = []; S.stockMax = [];
+  for (let i = 0; i < 1100; i++) { S.produits.push({ id: 'q' + i, nom: 'Q' + i, cout_unitaire: 2 }); S.stockMax.push({ restaurant_id: 'big', produit_id: 'q' + i, quantite_max: 10, actif: true });
+    db.T('stock_saisies_dernieres').push({ id: 'w' + String(i).padStart(5, '0'), organization_id: 'org1', restaurant_id: 'big', produit_id: 'q' + i, quantite: i % 5 === 0 ? 0 : 4, date_saisie: addDaysYMD(today, -2) }); }
+  const el = { innerHTML: '' }; await renderDashboard(el);
+  const kpi = lbl => { const m = el.innerHTML.match(new RegExp(lbl + '</div><div class="val">([^<]*)<')); return m && m[1]; };
+  t('tableau de bord, 1 100 produits : « Non saisis (30j) » = 0 (avant : tous ceux au-delà des 1 000 premiers)', kpi('Non saisis \\(30j\\)') === '0', kpi('Non saisis \\(30j\\)'));
+  t('… « Ruptures » = 220 (une sur cinq), valorisation 7 040,00 €', kpi('Ruptures') === '220' && /7040\.00 €/.test(el.innerHTML), JSON.stringify({ r: kpi('Ruptures') }));
+  // Historique : 3 500 saisies d'un mois, un snack.
+  db = makeDB({ cap: 1000 }); global.EatimeScope = db.api; global.SNACK = { id: 's1', nom: 'Raya s1' };
+  for (let i = 0; i < 3500; i++) db.T('stock_saisies').push({ id: 'h' + String(i).padStart(5, '0'), organization_id: 'org1', restaurant_id: 's1', produit_id: 'q' + (i % 300), quantite: 1, date_saisie: addDaysYMD('2026-09-01', i % 30) });
+  DOMS.hist_from = { value: '2026-09-01' }; DOMS.hist_to = { value: '2026-09-30' }; DOMS.hist_prod = { value: '' }; DOMS.histList = { innerHTML: '' };
+  await loadHistorique();
+  const lignes = (DOMS.histList.innerHTML.match(/<tr data-pname|<tr/g) || []).length - 1;
+  t('historique : 3 500 saisies d\'un mois → 3 500 lignes affichées, « liste complète »', lignes === 3500 && /3500 saisie\(s\) sur la période — liste complète/.test(DOMS.histList.innerHTML), lignes);
+  const { data: vieux } = await db.api.from('stock_saisies').select('*').eq('restaurant_id', 's1').limit(500);
+  t('CONTRÔLE : l\'ancien .limit(500) n\'en montrait que 500', vieux.length === 500);
+}
+
 console.log(ok ? '\nALL PASS' : '\nSOME FAILED');
 process.exit(ok ? 0 : 1);
 })().catch(e => { console.log('FAIL · exception : ' + (e && e.stack || e)); console.log('\nSOME FAILED'); process.exit(1); });

@@ -7,7 +7,7 @@
 <title>Eatime360 — Stock</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
-<script src="../orgscope.js?v=1"></script>
+<script src="../orgscope.js?v=1.1"></script>
 <script src="../utils.js?v=1.6"></script>
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
@@ -132,7 +132,7 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· Stock · v0.10 — journée d'exploitation (saisie de nuit rattachée à la veille, bascule réglable par organisation)</small></div>
+    <div class="brand">Eatime360 <small>· Stock · <span id="ver"></span></small></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -158,7 +158,11 @@ table.tbl tr:hover{background:rgba(127,127,127,.04)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+// Marqueur de version affiché dans l'en-tête : SEUL moyen pour le patron de savoir si la page ouverte est
+// à jour. À augmenter à CHAQUE modification de ce module (il était écrit en dur et n'avait pas suivi v0.23).
+const VERSION='v0.11 · lectures complètes : dernière saisie par produit lue dans une vue dédiée (tableau de bord, besoins), historique et snapshot lus en entier malgré le plafond de 1 000 lignes du serveur';
 let ME=null,ORG={},SNACK=null,TAB='dashboard';
+const escapeHtmlS=s=>String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 // Sélection multi-snack PROPRE à l'onglet Feuille de besoin (n'affecte pas le #snackSelect global qui
 // pilote les autres onglets, volontairement mono-snack). Tableau de restaurant_id. Défaut = snack courant.
 let BESOIN_SEL=null;
@@ -188,6 +192,7 @@ async function loadProfileAndShow(){
   if(ORG.couleur_primaire) document.documentElement.style.setProperty('--gold',ORG.couleur_primaire);
   if(ORG.suspended && ME.role!=='super_admin'){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--bad);font-size:18px;text-align:center;padding:20px">🚫 Organisation suspendue. Contacter le service client.</div>';return;}
   document.getElementById('lock').classList.add('hidden');document.getElementById('app').classList.remove('hidden');
+  { const v=document.getElementById('ver'); if(v) v.textContent=VERSION; }
   await loadCommonData();render();
 }
 async function logout(){await sb.auth.signOut();location.reload();}
@@ -245,10 +250,19 @@ async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
   const cut=ORG.journee_exploitation_debut;                 // heure de bascule de l'organisation
   const today=exploitationToday(cut);                        // journée d'exploitation en cours
-  const{data:saisies}=await EatimeScope.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',exploitationDay(Date.now()-30*86400000,cut)).order('date_saisie',{ascending:false});
-  const SL=saisies||[];
-  const last={};SL.forEach(s=>{if(!last[s.produit_id]||s.date_saisie>last[s.produit_id].date_saisie)last[s.produit_id]=s;});
-  const aujourdhui=SL.filter(s=>s.date_saisie===today);
+  // LIRE MOINS (v0.11). Avant : 30 jours de saisies (~3 500 lignes), tronqués à 1 000 par le serveur → une
+  // partie des produits passait pour « non saisie » ou avec une vieille quantité. Maintenant :
+  //   • la DERNIÈRE saisie de chaque produit, lue dans la vue stock_saisies_dernieres (une ligne par produit),
+  //     restreinte aux 30 derniers jours — même règle qu'avant, « non saisi (30j) » inchangé ;
+  //   • les saisies du JOUR (au plus une par produit suivi).
+  const since=exploitationDay(Date.now()-30*86400000,cut);
+  const [lu,jour]=await Promise.all([
+    fetchAllRows((c,o)=>EatimeScope.from('stock_saisies_dernieres').select(c,o).eq('restaurant_id',SNACK.id).gte('date_saisie',since).order('produit_id')),
+    EatimeScope.from('stock_saisies')/* borné : 1 restaurant × 1 jour (≤ 1 saisie par produit suivi) */.select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today),
+  ]);
+  if(lu.error||!lu.complet){ el.innerHTML=`<div class="section" style="border-color:var(--bad)"><h3 style="color:var(--bad)">⛔ Tableau de bord non affiché</h3><div style="font-size:13px">Lecture incomplète des dernières saisies (${lu.error?escapeHtmlS(lu.error.message||lu.error):`${lu.recu} reçue(s) sur ${lu.attendu}`}). Les chiffres seraient faux : rechargez la page ; si l'écart persiste, signalez-le.</div></div>`; return; }
+  const last={};lu.rows.forEach(s=>{last[s.produit_id]=s;});
+  const aujourdhui=jour.data||[];
   const stockMaxSnack=S.stockMax.filter(m=>m.restaurant_id===SNACK.id && m.actif!==false); // produits désactivés exclus du suivi
   // Produits « commentaire seul » : pas de quantité → exclus des agrégats NUMÉRIQUES (ruptures, valo,
   // sous-seuil). Restent comptés en « produits suivis » / « non saisis » (ils exigent une saisie du jour).
@@ -366,8 +380,13 @@ const shortSnack=n=>(n||'').replace(/^Raya\s+/i,'').trim()||n;
 async function computeBesoin(snackIds){
   const ids=(snackIds||[]).filter(Boolean);
   if(!ids.length) return {list:[],notes:[],staleAtMax:[],totalEur:0,snackIds:[],snackNames:[],multi:false};
-  const{data:saisies}=await EatimeScope.from('stock_saisies').select('restaurant_id,produit_id,quantite,commentaire,date_saisie').in('restaurant_id',ids).order('date_saisie',{ascending:false});
-  const last={};(saisies||[]).forEach(s=>{const b=last[s.restaurant_id]=last[s.restaurant_id]||{};if(!b[s.produit_id]||s.date_saisie>b[s.produit_id].date_saisie)b[s.produit_id]=s;});
+  // Dernière saisie par (restaurant, produit) : vue dédiée (v0.11), lue EN ENTIER et vérifiée. Avant : TOUT
+  // l'historique (~29 000 saisies) tronqué à 1 000 par le serveur → les produits non vus étaient comptés
+  // « jamais saisis » (besoin = max) ou avec une vieille quantité. Une feuille de commande calculée sur des
+  // données partielles serait fausse : en cas d'écart, on REFUSE de la produire (R.erreur).
+  const lu=await fetchAllRows((c,o)=>EatimeScope.from('stock_saisies_dernieres').select(c,o).in('restaurant_id',ids).order('restaurant_id').order('produit_id'));
+  if(lu.error||!lu.complet) return {erreur:lu.error?String(lu.error.message||lu.error):`lecture incomplète des dernières saisies (${lu.recu} reçue(s) sur ${lu.attendu})`,list:[],notes:[],staleAtMax:[],totalEur:0,snackIds:ids,snackNames:[],multi:ids.length>1};
+  const last={};lu.rows.forEach(s=>{const b=last[s.restaurant_id]=last[s.restaurant_id]||{};b[s.produit_id]=s;});
   const snackNom=sid=>{const r=S.snacks.find(x=>x.id===sid);return r?r.nom:'?';};
   const aggMap={};const staleAtMax=[];
   ids.forEach(sid=>{
@@ -432,6 +451,7 @@ async function renderBesoin(el){
   if(!BESOIN_SEL) BESOIN_SEL=[SNACK.id];
   BESOIN_SEL=BESOIN_SEL.filter(id=>S.snacks.some(s=>s.id===id));
   const R=await computeBesoin(BESOIN_SEL);
+  if(R.erreur){ el.innerHTML=`<div class="section" style="border-color:var(--bad)"><h3 style="color:var(--bad)">⛔ Feuille de besoin non calculée</h3><div style="font-size:13px">${escapeHtmlS(R.erreur)}. Une commande calculée sur des données partielles serait fausse : rechargez la page ; si l'écart persiste, signalez-le.</div></div>`; window._BESOIN=null; return; }
   const besoin=R.list, multi=R.multi, totalEur=R.totalEur;
   const titre = multi ? R.snackNames.join(' + ') : (R.snackNames[0]||SNACK.nom);
   // Encart "à recompter" : produits au max mais sur données anciennes (par snack en mode multi).
@@ -582,6 +602,7 @@ async function exportBesoinPDF(){
   toast('Génération PDF…');
   // Même source agrégée que l'écran (computeBesoin) → le PDF ne peut pas contredire l'affichage.
   const R=(window._BESOIN && (window._BESOIN.list.length||(window._BESOIN.notes||[]).length))?window._BESOIN:await computeBesoin(BESOIN_SEL||[SNACK.id]);
+  if(R.erreur){toast('⛔ PDF non produit : '+R.erreur);return;}
   if(!R.list.length && !(R.notes||[]).length){toast('Rien à exporter');return;}
   const multi=R.multi;
   const{jsPDF}=window.jspdf;
@@ -811,14 +832,20 @@ async function renderHistorique(el){
 async function loadHistorique(){
   const host=document.getElementById('histList'); if(!host) return; // barre pas encore rendue
   host.innerHTML='Chargement…';
-  let q=EatimeScope.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).gte('date_saisie',val('hist_from')).lte('date_saisie',val('hist_to')).order('date_saisie',{ascending:false}).limit(500);
-  if(val('hist_prod')) q=q.eq('produit_id',val('hist_prod'));
-  const{data}=await q;const list=data||[];
+  // Lecture COMPLÈTE de la période (v0.11). Avant : .limit(500) — un mois en compte ~3 500 par restaurant,
+  // l'historique n'en montrait donc qu'une fraction, sans le dire.
+  const prod=val('hist_prod');
+  const lu=await fetchAllRows((c,o)=>{ let q=EatimeScope.from('stock_saisies').select(c,o).eq('restaurant_id',SNACK.id).gte('date_saisie',val('hist_from')).lte('date_saisie',val('hist_to'));
+    if(prod) q=q.eq('produit_id',prod); return q.order('date_saisie',{ascending:false}).order('id'); });
+  const list=lu.rows||[];
+  const bilan=(lu.error||!lu.complet)
+    ? `<div class="section" style="border-color:var(--bad);color:var(--bad);font-size:13px">⛔ Historique INCOMPLET : ${lu.error?escapeHtmlS(lu.error.message||lu.error):`${lu.recu} saisie(s) reçue(s) sur ${lu.attendu}`} — rechargez la page.</div>`
+    : `<div style="color:var(--muted);font-size:12.5px;margin:4px 0 8px">${list.length} saisie(s) sur la période — liste complète.</div>`;
   let html=`<table class="tbl"><thead><tr><th>Date</th><th>Produit</th><th>Qté</th><th>Catégorie</th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px">Aucune saisie sur la période</td></tr>';
   else list.forEach(s=>{const p=S.produits.find(x=>x.id===s.produit_id);const cmt=s.commentaire?String(s.commentaire).replace(/</g,'&lt;'):'';const qte=s.quantite==null?'<span style="color:var(--muted)">—</span>':s.quantite;const pname=(p?.nom||'(supprimé)').toLowerCase().replace(/"/g,'');html+=`<tr data-pname="${pname}"><td>${fmtD(s.date_saisie)}</td><td><b>${p?.nom||'(supprimé)'}</b>${cmt?`<div style="font-size:11px;color:var(--warn);margin-top:2px">💬 ${cmt}</div>`:''}</td><td>${qte}</td><td style="color:var(--muted);font-size:12px">${p?.categorie||''}</td></tr>`;});
   html+='</tbody></table>';
-  host.innerHTML=html;
+  host.innerHTML=bilan+html;
   filterHistorique(); // ré-applique la recherche texte courante (elle survit au rechargement de liste)
 }
 // Recherche texte libre côté client sur les lignes déjà rendues (pas de re-requête serveur) — même

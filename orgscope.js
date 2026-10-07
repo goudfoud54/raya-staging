@@ -48,6 +48,7 @@
     'kiosk_heartbeats','org_roles','parametres','parametres_notifs','pin_attempts','planning_regles',
     'produits','profiles','push_subscriptions','restaurants','retard_alertes_config','retards',
     'salaries','stock_alertes_config','stock_commentaires','stock_max','stock_produits','stock_saisies',
+    'stock_saisies_dernieres',   // VUE (migration v6.37, security_invoker) — porte organization_id de stock_saisies
     'stock_snapshots_mensuels','team_tasks','wa_bot_config','wa_queue'];
 
   // B — pas d'organization_id : rattachement par le RESTAURANT (comme la politique RLS).

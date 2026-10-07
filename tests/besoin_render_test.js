@@ -45,7 +45,13 @@ const SAISIES=[
   {restaurant_id:"s2",produit_id:"pA",quantite:2,commentaire:null,date_saisie:today},
   {restaurant_id:"s2",produit_id:"pB",quantite:null,commentaire:"Fond 30€ (petit)",date_saisie:today},
 ];
-global.sb={from(){return this;},select(){return this;},in(){return this;},order(){return Promise.resolve({data:SAISIES});}};
+// Stock v0.11 : la dernière saisie par produit vient de la VUE stock_saisies_dernieres, lue par fetchAllRows
+// (compte exact + pages). Base simulée partagée (fakedb.js) : ces saisies sont déjà « une par produit et par
+// snack », donc la vue les rend telles quelles.
+{ const {makeDB}=require('./fakedb.js'); const db=makeDB({cap:1000});
+  SAISIES.forEach((x,i)=>db.T('stock_saisies_dernieres').push({id:'v'+i,...x})); global.sb=db.api;
+  const w={}; (new Function('window',fs.readFileSync(require('path').join(__dirname,'..','utils.js'),'utf8')))(w); global.fetchAllRows=w.EatimeUtils.fetchAllRows; }
+global.escapeHtmlS=s=>String(s==null?'':s);
 
 // ---- load real functions ----
 eval(daysSinceSrc);
