@@ -239,7 +239,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.25 · lectures complètes : indisponibilités et retards lus en entier malgré le plafond de 1 000 lignes du serveur, bandeau rouge si une lecture est incomplète';
+const VERSION='v0.26 · export des pointages : le récapitulatif en tête du fichier devient une option (décochée par défaut, fichier directement importable en paie) — le contrôle d\'exhaustivité reste, et le nombre de pointages est dans le nom du fichier · lectures complètes vérifiées par un verrou';
 let ME=null, ORG={};
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -649,6 +649,7 @@ function openExportModal(){
           <button class="btn ghost sm" type="button" onclick="document.querySelectorAll('.ex_resto').forEach(c=>c.checked=false)">Tout décocher</button>
         </div>
       </div>
+      <label class="chk" style="margin-top:10px;font-size:12.5px;line-height:1.45"><input type="checkbox" id="ex_recap" ${exportRecapPref()?'checked':''}> Ajouter un récapitulatif en tête du fichier (période, nombre de pointages, contrôle).<br><span style="color:var(--muted)">Décoché : fichier « brut », directement importable dans un logiciel de paie. Le contrôle d'exhaustivité s'applique dans les deux cas — un export incomplet est bloqué.</span></label>
       <div id="exStatus" style="font-size:12.5px;margin-top:10px;color:var(--muted)"></div>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeExportModal()">Annuler</button>
@@ -660,6 +661,12 @@ function openExportModal(){
 function closeExportModal(){ _exportPending=null; document.getElementById('modalHost').innerHTML=''; }
 function closeModal(){document.getElementById('modalHost').innerHTML='';}
 let _exportPending=null;   // export INCOMPLET en attente d'une décision explicite
+// Récapitulatif en tête du CSV : OPTION (v0.26), décochée par défaut, mémorisée par utilisateur. Les 3 lignes
+// + 1 vide de la v0.23 cassaient l'import dans un logiciel de paie. Le contrôle, lui, ne dépend pas de ce
+// choix : un export incomplet reste bloqué, et un téléchargement forcé porte TOUJOURS la ligne « INCOMPLET ».
+function _recapKey(){ return 'ex_recap:'+((ME&&ME.id)||'anon'); }
+function exportRecapPref(){ try{ return localStorage.getItem(_recapKey())==='1'; }catch(e){ return false; } }
+function setExportRecapPref(v){ try{ localStorage.setItem(_recapKey(), v?'1':'0'); }catch(e){} }
 function _exStatus(html){ const e=document.getElementById('exStatus'); if(e) e.innerHTML=html; }
 
 // Lecture complète des pointages d'une période — SOURCE UNIQUE des deux exports.
@@ -690,7 +697,11 @@ const _csvQ=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
 // Colonnes inchangées + « Journee » en DERNIER : les colonnes existantes gardent leur position.
 function buildPointagesCSV(rows, meta){
   const R=exportResume(meta);
-  const tete=[(meta.complet?'':'INCOMPLET — ')+'Export des pointages'+(R.perimetre?' — '+R.perimetre:''), R.periode, R.controle].map(_csvQ).join('\n')+'\n\n';
+  // En-tête récapitulatif : sur option, et TOUJOURS pour un export incomplet téléchargé de force (un fichier
+  // incomplet ne doit pas pouvoir être importé en paie sans que personne ne s'en aperçoive).
+  const tete=(meta.recap||!meta.complet)
+    ? [(meta.complet?'':'INCOMPLET — ')+'Export des pointages'+(R.perimetre?' — '+R.perimetre:''), R.periode, R.controle].map(_csvQ).join('\n')+'\n\n'
+    : '';
   const head='Date,Heure,Salarie,Snack,Type,Heures_jour,Journee\n';
   const byDS={}; rows.forEach(p=>{ const k=ptsJour(p)+'|'+p.salarie_id; (byDS[k]=byDS[k]||[]).push(p); });
   const hForDS={}; Object.entries(byDS).forEach(([k,arr])=>{ hForDS[k]=hoursOfDay(arr); });
@@ -707,12 +718,13 @@ function buildPointagesCSV(rows, meta){
 }
 function downloadPointagesCSV(rows, filename, meta){
   const blob=new Blob([buildPointagesCSV(rows,meta)],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${filename}${meta.complet?'':'_INCOMPLET'}.csv`;a.click();
+  // Le nombre de pointages est dans le NOM du fichier : visible sans ouvrir le fichier, sans en altérer le contenu.
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${filename}_${meta.recu}pointages${meta.complet?'':'_INCOMPLET'}.csv`;a.click();
 }
 // Après lecture : livrer si complet, sinon BLOQUER et expliquer (dans la fenêtre d'export, ou dans une
 // fenêtre dédiée pour l'export de la fiche salarié).
 function finishExport(res, filename, perimetre){
-  const meta={sel:res.sel, fige:res.fige, attendu:res.attendu, recu:res.recu, doublons:res.doublons, complet:res.complet, cutLbl:_cutLbl(), perimetre};
+  const meta={sel:res.sel, fige:res.fige, attendu:res.attendu, recu:res.recu, doublons:res.doublons, complet:res.complet, cutLbl:_cutLbl(), perimetre, recap:exportRecapPref()};
   if(!document.getElementById('exStatus')){
     document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeExportModal()"><div class="modal"><h2>Export des pointages</h2><div id="exStatus" style="font-size:12.5px"></div><div class="modal-actions"><button class="btn ghost" onclick="closeExportModal()">Fermer</button></div></div></div>`;
   }
@@ -741,6 +753,7 @@ async function doExport(){
   const restos=[...document.querySelectorAll('.ex_resto:checked')].map(c=>c.value);
   if(!restos.length){toast('Coche au moins un snack');return;}
   _exportAgain=doExport;
+  { const rc=document.getElementById('ex_recap'); if(rc) setExportRecapPref(!!rc.checked); }
   const go=document.getElementById('exGo'); if(go) go.disabled=true;
   _exStatus('Lecture des pointages…');
   const res=await readPointages({from,to}, q=>q.in('restaurant_id',restos), (n,a)=>_exStatus(`Lecture des pointages… ${n}${a!=null?' / '+a:''}`));
@@ -1466,7 +1479,7 @@ async function addDispo(){
   const lu=await fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).order('id'));
   S.dispos=lu.rows||[];renderDispoList();render();toast(lu.complet?'Ajoutée':`Ajoutée — ⚠ liste incomplète (${lu.recu}/${lu.attendu}), rechargez la page`);
 }
-async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await EatimeScope.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const{data}=await EatimeScope.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
+async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await EatimeScope.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const lu=await fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).order('id'));S.dispos=lu.rows||[];renderDispoList();render();if(!lu.complet)toast(`⚠ liste des indisponibilités incomplète (${lu.recu}/${lu.attendu}) — rechargez la page`);}
 async function addContrainte(){
   const id=currentFiche.id;
   const cle=document.getElementById('nc_cle').value;
@@ -1598,7 +1611,7 @@ async function loadAltCal(salId){
   const {data:cal}=await EatimeScope.from('alternance_calendrier').select('*').eq('salarie_id',salId).eq('annee_scolaire',annee).maybeSingle();
   ALT.cal=cal||null; ALT.cfaNom=cal?.cfa_nom||''; const cfa=document.getElementById('alt_cfa'); if(cfa)cfa.value=ALT.cfaNom;
   ALT.period=(cal&&cal.date_debut&&cal.date_fin)?{debut:cal.date_debut,fin:cal.date_fin}:altPeriod(annee);
-  const {data:jours}=await EatimeScope.from('alternance_jours').select('*').eq('salarie_id',salId).gte('date',ALT.period.debut).lte('date',ALT.period.fin);
+  const {data:jours}=await EatimeScope.from('alternance_jours')/* borné : 1 salarié × 1 année scolaire (≤ 366) */.select('*').eq('salarie_id',salId).gte('date',ALT.period.debut).lte('date',ALT.period.fin);
   ALT.jours={}; (jours||[]).forEach(j=>ALT.jours[j.date]={id:j.id,type:j.type,source:j.source});
   ALT.salId=salId; ALT.base=altSnapshot(ALT.jours); ALT.lastSave=null;
   ALT.dirty=false; markAltDirty(); renderAltCalendar(); renderAltSaveStatus();
@@ -1699,7 +1712,7 @@ async function saveAltCal(){
       if(error) return fail('écriture des jours ('+error.message+')');
     }
     // 3. Puis retrait des jours effacés dans l'aperçu (présents en base, absents de l'aperçu).
-    const {data:exist,error:e3}=await EatimeScope.from('alternance_jours').select('id,date').eq('salarie_id',sal).gte('date',p.debut).lte('date',p.fin);
+    const {data:exist,error:e3}=await EatimeScope.from('alternance_jours')/* borné : 1 salarié × 1 année scolaire (≤ 366) */.select('id,date').eq('salarie_id',sal).gte('date',p.debut).lte('date',p.fin);
     if(e3) return fail('lecture avant nettoyage ('+e3.message+')');
     const keep=new Set(rows.map(r=>r.date)), del=(exist||[]).filter(x=>!keep.has(x.date)).map(x=>x.id);
     for(let i=0;i<del.length;i+=150){
@@ -1707,7 +1720,7 @@ async function saveAltCal(){
       if(error) return fail('retrait des jours effacés ('+error.message+')');
     }
     // 4. Relecture : la base doit contenir EXACTEMENT l'aperçu.
-    const {data:back,error:e4}=await EatimeScope.from('alternance_jours').select('date,type').eq('salarie_id',sal).gte('date',p.debut).lte('date',p.fin);
+    const {data:back,error:e4}=await EatimeScope.from('alternance_jours')/* borné : 1 salarié × 1 année scolaire (≤ 366) */.select('date,type').eq('salarie_id',sal).gte('date',p.debut).lte('date',p.fin);
     if(e4) return fail('relecture de contrôle ('+e4.message+')');
     const ec=altEcart(rows,back);
     if(ec.total) return fail(`la base ne correspond pas à l'aperçu (${ec.manquants} manquant(s), ${ec.enTrop} en trop, ${ec.differents} différent(s))`);

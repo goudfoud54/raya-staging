@@ -123,3 +123,25 @@ de stock.
   1 000 saisies et en supprime 2 500. Sans git, ces trois contrôles sont sautés et le harnais le dit.
 - **Plafond serveur.** Tout nouveau code qui lit une table susceptible de dépasser 1 000 lignes doit passer
   par `fetchAllRows` (utils.js) : jamais d'arrêt sur « page plus courte que demandée ».
+
+## Lectures plafonnées — le VERROU (`lecture_paginee_test.js`)
+
+Supabase rend au plus **1 000 lignes par réponse, sans erreur**. Ce harnais :
+
+1. prouve sur une base simulée qui coupe comme la vraie (`tests/fakedb.js`, plafond 1 000 et 500) que les
+   lectures exposées voient tout — 1 500 indisponibilités et le **vrai** `checkPlacement` qui refuse la 1 200ᵉ,
+   besoins de stock sur 1 200 couples restaurant/produit, historique de 3 500 saisies, totaux Finance, HACCP ;
+2. **balaye tout le dépôt** (hors `tests/`, `scripts/`, `migrations/`) : chaque `.from('<table>')` d'une table
+   à fort volume (liste `TABLES_VOLUME`) doit être, au choix :
+   - un **constructeur de page** `.select(c,o)` passé à `fetchAllRows` / `fetchAllOrThrow` (utils.js) ;
+   - ou annoté **`/* borné : <raison> */`** juste après `.from(...)` quand la lecture est petite PAR NATURE
+     (1 salarié × 1 semaine, `.limit(1)`, comptage seul…) ;
+   - un alias sans `select` est annoté `/* paginé : … */`.
+   Toute `.limit(n>1)` sur ces tables exige aussi une annotation. Une lecture nue réintroduite = **rouge**.
+
+**Ajouter une table qui grossit à `TABLES_VOLUME`** fait vérifier toutes ses lectures. Le scanner ne voit que
+les noms de table **littéraux** : `finMk(table,…)` (finance) et `hMk(table,…)` (HACCP) construisent des
+`select(c,o)` et sont couverts par les tests fonctionnels de la section 3.
+
+`tests/fakedb.js` est la base simulée PARTAGÉE (plafond, count/head, range, contraintes, crochets de panne) —
+l'importer, ne pas la recopier.

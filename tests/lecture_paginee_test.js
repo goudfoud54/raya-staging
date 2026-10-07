@@ -207,6 +207,72 @@ console.log('\n── 3. Finance et HACCP : un total juste, ou pas de total ─�
   t('HACCP : 1 200 contrôles d\'huile lus en entier (avant : 500, puis filtrés par restaurant)', rows.length === 1200);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\n── 4. VERROU : aucune lecture d\'une table à fort volume sans pagination ni justification ─');
+// Même principe que orgscope_test : le dépôt entier est balayé. Pour chaque .from('<table>') d'une table
+// qui grossit, on suit la CHAÎNE d'appels jusqu'à son dernier maillon (parenthèses équilibrées — pas
+// « jusqu'au prochain ; », qui fusionnerait les dizaines de lectures d'un même Promise.all). Une lecture
+// passe si :
+//   • elle est un CONSTRUCTEUR de page : .select(c,o) (deux identifiants) — la signature de fetchAllRows ;
+//   • ou elle porte /* borné : <raison non vide> */ (lecture petite PAR NATURE : 1 salarié × 1 semaine…) ;
+//   • ou c'est un alias sans select (const T=()=>…from('t')) annoté /* paginé : … */.
+// Toute .limit(n>1) sur ces tables exige aussi une annotation. Écritures (insert/upsert/update/delete) ignorées.
+const TABLES_VOLUME = ['pointages', 'salarie_dispos', 'retards', 'stock_saisies', 'stock_saisies_dernieres', 'stock_snapshots_mensuels',
+  'planning_creneaux', 'alternance_jours', 'fin_ca_journalier', 'fin_depenses', 'fin_encaissements', 'fin_versements',
+  'fin_transactions_bancaires', 'haccp_releves_temperature', 'haccp_huiles', 'haccp_receptions', 'haccp_nettoyages'];
+function fichiers(d, out = []) {
+  for (const f of fs.readdirSync(d)) { if (['node_modules', '.git', 'tests', 'scripts', 'migrations'].includes(f)) continue;
+    const p = path.join(d, f), st = fs.statSync(p); if (st.isDirectory()) fichiers(p, out); else if (/\.(html|js|ts|mjs)$/.test(f)) out.push(p); }
+  return out;
+}
+// Suit .meth(args) .meth(args) … en sautant espaces, retours et commentaires ; renvoie maillons + commentaires.
+function chaine(src, i) {
+  const maillons = [], comms = []; let k = i;
+  for (;;) {
+    let j = k;
+    for (;;) { while (/\s/.test(src[j])) j++; if (src.startsWith('/*', j)) { const e = src.indexOf('*/', j); comms.push(src.slice(j, e + 2)); j = e + 2; continue; }
+      if (src.startsWith('//', j)) { const e = src.indexOf('\n', j); comms.push(src.slice(j, e)); j = e; continue; } break; }
+    const m = /^\.(\w+)\s*\(/.exec(src.slice(j, j + 60)); if (!m) break;
+    let p = j + m[0].length, d = 1;
+    while (p < src.length && d > 0) { const c = src[p];
+      if (c === '"' || c === "'" || c === '`') { const q = c; p++; while (p < src.length && src[p] !== q) { if (src[p] === '\\') p++; p++; } }
+      else if (c === '(') d++; else if (c === ')') d--; p++; }
+    maillons.push({ m: m[1], args: src.slice(j + m[0].length, p - 1) }); k = p;
+  }
+  return { maillons, comms };
+}
+const verdicts = [];
+for (const f of fichiers(ROOT)) {
+  const src = fs.readFileSync(f, 'utf8'), rel = path.relative(ROOT, f), re = /\.from\(\s*'([a-z_]+)'\s*\)/g; let m;
+  while ((m = re.exec(src))) {
+    if (!TABLES_VOLUME.includes(m[1])) continue;
+    const { maillons, comms } = chaine(src, m.index + m[0].length);
+    const noms = maillons.map(x => x.m);
+    if (noms.some(n => ['insert', 'upsert', 'update', 'delete'].includes(n))) continue;
+    const ligne = src.slice(0, m.index).split('\n').length, ou = `${rel}:${ligne} (${m[1]})`;
+    const annot = comms.find(c => /\/\*\s*(borné|paginé)\s*:\s*\S/.test(c));
+    const sel = maillons.find(x => x.m === 'select');
+    const page = sel && /^\s*\w+\s*,\s*\w+\s*$/.test(sel.args);
+    const lim = maillons.find(x => x.m === 'limit' && !/^\s*1\s*$/.test(x.args));
+    let ok1 = true, pourquoi = '';
+    if (!sel && !annot) { ok1 = false; pourquoi = 'alias sans select non annoté'; }
+    else if (sel && !page && !annot) { ok1 = false; pourquoi = 'lecture NON paginée et non justifiée'; }
+    else if (lim && !annot) { ok1 = false; pourquoi = `.limit(${lim.args}) non justifié`; }
+    else if (annot && /\/\*\s*(borné|paginé)\s*:\s*\*\//.test(annot)) { ok1 = false; pourquoi = 'annotation sans raison'; }
+    verdicts.push({ ou, ok: ok1, pourquoi, mode: page ? 'paginé' : (annot ? 'borné' : '—') });
+  }
+}
+const ko = verdicts.filter(v => !v.ok);
+t(`${verdicts.length} lectures de tables à fort volume vérifiées (contrôle de non-vacuité : ≥ 40, mesuré 43 en oct. 2026)`, verdicts.length >= 40, verdicts.length);
+t(`… toutes paginées (${verdicts.filter(v => v.mode === 'paginé').length}) ou justifiées « borné » (${verdicts.filter(v => v.mode === 'borné').length}) — en défaut : ${ko.length}`, ko.length === 0, ko.map(v => v.ou + ' → ' + v.pourquoi).join('\n      '));
+// Contrôle de méthode : le scanner DOIT attraper une lecture nue réintroduite.
+{ const faux = "x; const{data}=await EatimeScope.from('salarie_dispos').select('*'); y; await EatimeScope.from('pointages').select(c,o).limit(500).eq('a',1);";
+  const r = []; const re2 = /\.from\(\s*'([a-z_]+)'\s*\)/g; let mm;
+  while ((mm = re2.exec(faux))) { const { maillons, comms } = chaine(faux, mm.index + mm[0].length); const sel = maillons.find(x => x.m === 'select');
+    const annot = comms.find(c => /\/\*\s*(borné|paginé)\s*:\s*\S/.test(c)); const lim = maillons.find(x => x.m === 'limit');
+    r.push(!(sel && !/^\s*\w+\s*,\s*\w+\s*$/.test(sel.args) && !annot) && !(lim && !annot)); }
+  t('CONTRÔLE : le scanner rejette .select(\'*\') nu ET un .limit(500) même sur un constructeur paginé', r[0] === false && r[1] === false, JSON.stringify(r)); }
+
 console.log(ok ? '\nALL PASS' : '\nSOME FAILED');
 process.exit(ok ? 0 : 1);
 })().catch(e => { console.log('FAIL · exception : ' + (e && e.stack || e)); console.log('\nSOME FAILED'); process.exit(1); });

@@ -1004,7 +1004,7 @@ async function init(){
 async function loadDisposPlanning(monday){
   const m=new Date(monday), d1=new Date(m), d2=new Date(m); d1.setDate(d1.getDate()-7); d2.setDate(d2.getDate()+14);
   const from=fmtDate(d1), to=fmtDate(d2);
-  const T=()=>EatimeScope.from('salarie_dispos');
+  const T=()=>EatimeScope.from('salarie_dispos')/* paginé : chaque usage ci-dessous passe par fetchAllRows */;
   const lus=await Promise.all([
     fetchAllRows((c,o)=>T().select(c,o).eq('type','recurrente').order('id')),
     fetchAllRows((c,o)=>T().select(c,o).eq('type','ponctuelle').gte('date_specifique',from).lt('date_specifique',to).order('id')),
@@ -1052,7 +1052,7 @@ async function loadWeek(){
     // simplement de rapatrier les exceptions des AUTRES restaurants, qui ne s'appliquent pas ici.
     EatimeScope.from('planning_regles').select('*').or(`restaurant_id.is.null,restaurant_id.eq.${SNACK.id}`),
     EatimeScope.from('org_roles').select('*').eq('actif',true).order('ordre'),
-    EatimeScope.from('alternance_jours').select('salarie_id,date,type').gte('date',from).lte('date',toIncl),
+    EatimeScope.from('alternance_jours')/* borné : 8 jours × alternants (≈ 15 × 8 = 120) */.select('salarie_id,date,type').gte('date',from).lte('date',toIncl),
     // Mises à pied (disciplinary_actions) chevauchant la semaine → jours où le salarié est suspendu,
     // donc légitimement absent (utilisé pour ne pas l'alerter « sous son minimum »). select tolérant :
     // si la table/colonne n'est pas lisible (RLS), on retombe sur [] sans casser le chargement.
@@ -1081,7 +1081,7 @@ async function loadWeek(){
   // une exception ici traverserait loadWeek et la grille ne s'afficherait PAS — trois restaurants
   // ouvrent cette page tous les jours. Une détection ratée doit coûter une fonctionnalité, pas la page.
   else if(!_AF.sonde){ _AF.sonde=true;
-    try{ const {error}=await EatimeScope.from('planning_creneaux').select('origine').limit(1);
+    try{ const {error}=await EatimeScope.from('planning_creneaux')/* borné : sonde d'une colonne, .limit(1) */.select('origine').limit(1);
          _AF.origineCol=!error;   // colonne absente → PostgREST répond 42703
     }catch(e){ _AF.origineCol=false; }
   }
@@ -3015,7 +3015,7 @@ async function openReport(){
 async function openPointageCorrection(sid,date){
   setSS('busy','Chargement…');
   const from=date+'T00:00:00', to=fmtDate(new Date(new Date(date+'T00:00:00').getTime()+86400000))+'T10:00:00';
-  const{data:pts,error}=await EatimeScope.from('pointages').select('*').eq('salarie_id',sid).gte('ts',from).lt('ts',to).order('ts');
+  const{data:pts,error}=await EatimeScope.from('pointages')/* borné : 1 salarié × 34 h */.select('*').eq('salarie_id',sid).gte('ts',from).lt('ts',to).order('ts');
   if(error){setSS('err','Erreur: '+error.message);return;}
   setSS('','');
   const s=S.salaries.find(x=>x.id===sid);
@@ -3061,7 +3061,7 @@ async function savePointageTime(id,sid,date){
   if(!motif){alert('Motif requis pour toute correction (traçabilité).');return;}
   const[h,m]=inp.value.split(':');
   // On garde la date d'origine du pointage, on change juste l'heure saisie.
-  const{data:orig}=await EatimeScope.from('pointages').select('ts').eq('id',id).maybeSingle();
+  const{data:orig}=await EatimeScope.from('pointages')/* borné : 1 ligne par id */.select('ts').eq('id',id).maybeSingle();
   if(!orig){alert('Pointage introuvable');return;}
   const d=new Date(orig.ts);d.setHours(+h,+m,0,0);
   const{error}=await EatimeScope.from('pointages').update({ts:d.toISOString(),corrige_par:ME.id,corrige_le:new Date().toISOString(),motif_correction:motif}).eq('id',id);

@@ -298,7 +298,9 @@ for (const cap of [500, 1000]) {
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 console.log('\n── 5. Export de bout en bout : fichier, récapitulatif, blocage si incomplet ───────────');
 for (const n of ['_cutoff', '_ddmmyyyy', '_cutLbl', 'ptsJour', 'readPointages', 'exportResume', 'buildPointagesCSV', 'downloadPointagesCSV', 'finishExport',
-  'forceIncompleteExport', 'doExport', 'exportSalarieCSV', 'hoursOfDay', '_exStatus']) inst(SAL, n);
+  'forceIncompleteExport', 'doExport', 'exportSalarieCSV', 'hoursOfDay', '_exStatus', '_recapKey', 'exportRecapPref', 'setExportRecapPref']) inst(SAL, n);
+// localStorage en mémoire (préférence « récapitulatif en tête », v0.26).
+global.localStorage = (() => { const m = new Map(); return { getItem: k => m.has(k) ? m.get(k) : null, setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) }; })();
 eval('global._csvQ=' + SAL.match(/const _csvQ=([^\n]*);/)[1] + ';');
 eval('global.TYPL_PT=' + SAL.match(/const TYPL_PT=(\{[^\n]*\});/)[1] + ';');
 eval('global.fullName=' + SAL.match(/const fullName=([^\n]*);/)[1] + ';');
@@ -306,15 +308,24 @@ eval('global.fmtH=' + extractFn(SAL, 'fmtH') + ';');
 eval('global._exportPending=null; global._exportAgain=null;');
 global.ORG = { journee_exploitation_debut: '05:00' };
 global.S = { salaries: [0, 1, 2, 3, 4, 5, 6].map(i => ({ id: 's' + i, prenom: 'P' + i, nom: 'N"' + i })), restos: [{ id: 'r0', nom: 'Raya Carnot' }, { id: 'r1', nom: 'Raya Grand Cœur' }, { id: 'r2', nom: 'Raya Lobau' }] };
-function modaleExport(from, to) {
-  el('modalHost').innerHTML = 'export'; el('exStatus').innerHTML = ''; el('exGo');
+function modaleExport(from, to, recap) {
+  el('modalHost').innerHTML = 'export'; el('exStatus').innerHTML = ''; el('exGo'); el('ex_recap').checked = !!recap;
   el('ex_from').value = from; el('ex_to').value = to;
   DOM.__qsa = { '.ex_resto:checked': ['r0', 'r1', 'r2'].map(v => ({ value: v })) };
 }
 {
   const db = pointagesDB(2345, 1000, '2026-08-01T10:00:00Z'); global.EatimeScope = db.api;   // ~28 jours de pointages
+  // v0.26 — PAR DÉFAUT : fichier « brut » (pas de récapitulatif en tête), importable tel quel en paie.
   modaleExport('2026-07-01', '2026-09-30'); DL.length = 0; BLOBS.length = 0;
+  await doExport();
+  const brut = BLOBS[BLOBS.length - 1] || '';
+  t('par défaut : AUCUN récapitulatif — la 1ʳᵉ ligne est l\'en-tête des colonnes (import paie)', /^\ufeffDate,Heure,Salarie,Snack,Type,Heures_jour,Journee\n/.test(brut), JSON.stringify(brut.slice(0, 80)));
+  t('… le nombre de pointages est dans le NOM du fichier', DL[0] && DL[0].name === 'pointages_2026-07-01_2026-09-30_2345pointages.csv', DL[0] && DL[0].name);
+  t('… le contrôle reste à l\'écran (2345 attendus = 2345 exportés)', /✅ <b>2345 pointage\(s\) exporté\(s\)<\/b>/.test(DOM.exStatus.innerHTML) && /2345 attendu\(s\), 2345 exporté\(s\), complet/.test(DOM.exStatus.innerHTML));
+  // Option cochée : récapitulatif en tête, comme en v0.23 — et le choix est retenu pour la fois suivante.
+  modaleExport('2026-07-01', '2026-09-30', true); DL.length = 0; BLOBS.length = 0;
   const meta = await doExport();
+  t('option cochée → préférence MÉMORISÉE pour l\'utilisateur', exportRecapPref() === true);
   const csv = BLOBS[BLOBS.length - 1] || '';
   const lignes = csv.split('\n').filter(l => /^\d\d\/\d\d\/\d{4},/.test(l));
   t('export de 2 345 pointages (plafond 1 000) → fichier de 2 345 lignes', DL.length === 1 && lignes.length === 2345, `${DL.length} fichier(s), ${lignes.length} ligne(s)`);
@@ -324,18 +335,19 @@ function modaleExport(from, to) {
   t('… récapitulatif en un seul champ (ses virgules ne créent pas de colonnes)', csv.split('\n').slice(0, 3).every(l => /^\ufeff?".*"$/.test(l)));
   t('… en-tête inchangé, « Journee » ajoutée en dernière colonne', csv.includes('\nDate,Heure,Salarie,Snack,Type,Heures_jour,Journee\n'));
   t('… un nom contenant un guillemet ne casse pas la ligne', lignes.every(l => /,"P\d N""\d",/.test(l)));
-  t('… nom de fichier sans mention INCOMPLET', DL[0] && DL[0].name === 'pointages_2026-07-01_2026-09-30.csv', DL[0] && DL[0].name);
+  t('… nom de fichier sans mention INCOMPLET', DL[0] && DL[0].name === 'pointages_2026-07-01_2026-09-30_2345pointages.csv', DL[0] && DL[0].name);
+  setExportRecapPref(false);
 }
 { // Incomplet → BLOQUÉ ; téléchargement possible seulement sur demande, marqué INCOMPLET.
   const db = pointagesDB(2345, 1000, '2026-08-01T10:00:00Z'); global.EatimeScope = db.api;
   let n = 0; db.hooks['pointages:select'] = q => { if (!(q.o.count && q.o.head) && ++n === 2) db.t.pointages.splice(0, 3); return null; };
-  modaleExport('2026-07-01', '2026-09-30'); DL.length = 0;
+  modaleExport('2026-07-01', '2026-09-30'); DL.length = 0;   // récapitulatif DÉCOCHÉ
   await doExport();
   t('export incomplet → AUCUN fichier produit', DL.length === 0);
   t('… l\'écran dit pourquoi : « 2345 attendu(s), 2342 reçu(s) »', /Export incomplet — fichier NON produit/.test(DOM.exStatus.innerHTML) && /2345 pointage\(s\) attendu\(s\), 2342 reçu\(s\)/.test(DOM.exStatus.innerHTML), DOM.exStatus.innerHTML.slice(0, 300));
   forceIncompleteExport();
   const csv = BLOBS[BLOBS.length - 1];
-  t('« Télécharger quand même » → fichier _INCOMPLET, première ligne « INCOMPLET — »', DL.length === 1 && /_INCOMPLET\.csv$/.test(DL[0].name) && /^\ufeff"INCOMPLET — Export des pointages/.test(csv), DL[0] && DL[0].name);
+  t('« Télécharger quand même » (récapitulatif décoché) → fichier _INCOMPLET, et la 1ʳᵉ ligne « INCOMPLET — » est QUAND MÊME écrite', DL.length === 1 && /_INCOMPLET\.csv$/.test(DL[0].name) && /^\ufeff"INCOMPLET — Export des pointages/.test(csv), DL[0] && DL[0].name);
 }
 { // Export de la fiche salarié : même chemin, mois entier.
   const db = pointagesDB(2345, 1000, '2026-08-01T10:00:00Z'); global.EatimeScope = db.api;
@@ -344,7 +356,7 @@ function modaleExport(from, to) {
   await exportSalarieCSV();
   const attendu = db.T('pointages').filter(p => p.salarie_id === 's3' && exploitationDay(p.ts, '05:00').startsWith('2026-08')).length;
   const csv = BLOBS[BLOBS.length - 1]; const lignes = csv.split('\n').filter(l => /^\d\d\/\d\d\/\d{4},/.test(l));
-  t(`export d'une fiche (août, ${attendu} pointages) → toutes les lignes, compte vérifié`, DL.length === 1 && lignes.length === attendu && new RegExp(`${attendu} attendu\\(s\\), ${attendu} exporté\\(s\\), complet`).test(csv), `${lignes.length}/${attendu}`);
+  t(`export d'une fiche (août, ${attendu} pointages) → toutes les lignes, compte dans le nom du fichier`, DL.length === 1 && lignes.length === attendu && DL[0].name === `pointages_P3_N3_2026-08_${attendu}pointages.csv`, `${lignes.length}/${attendu} ${DL[0] && DL[0].name}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
