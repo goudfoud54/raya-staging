@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.2"></script>
+<script src="../utils.js?v=1.7"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -224,16 +224,31 @@ function render(){
   if(TAB==='categories') return renderCategories(el);
 }
 
+// ─────── LECTURES COMPLÈTES (2026-10, plafond serveur) ───────
+// Supabase rend au plus 1 000 lignes par réponse, SANS erreur. Chaque écran de ce module ADDITIONNE ce
+// qu'il reçoit (CA, dépenses, encaissements, versements, masse salariale, solde) : un total calculé sur une
+// partie des lignes est faux et rien ne le montre. Tout passe donc par lireTout() — lecture paginée et
+// comptée (fetchAllRows, utils.js) — et une lecture incomplète REMPLACE l'écran par un message, jamais un
+// chiffre partiel. Volumes au 2026-10-07 : faibles (0 à 291 lignes), mais fin_ca_journalier dépasse
+// 1 000 lignes sur une année (3 restaurants × 365 jours) et la marge lit les créneaux du planning (~860/mois).
+const lireTout=(nom, mk, cols)=>fetchAllOrThrow(nom, mk, {cols});   // utils.js — lecture complète ou erreur nommée
+function lectureKo(el, e){
+  if(el) el.innerHTML=`<div class="section" style="border-color:var(--bad)"><h3 style="color:var(--bad)">⛔ Chiffres non affichés</h3><div style="font-size:13px;line-height:1.5">${String((e&&e.message)||e).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}. Des totaux calculés sur une partie des lignes seraient faux : rechargez la page ; si l'écart persiste, signalez-le.</div></div>`;
+}
+// Fabrique de lecture paginable : table + filtre période + snack éventuel, tri stable terminé par id.
+const finMk=(table, dcol, r, extra)=>(c,o)=>{ let q=EatimeScope.from(table).select(c,o).gte(dcol,r.from).lte(dcol,r.to);
+  if(SNACK) q=q.eq('restaurant_id',SNACK.id); if(extra) q=extra(q); return q.order(dcol,{ascending:false}).order('id'); };
+
 // ─────── DASHBOARD ───────
 async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
   const r=periodRange();
-  let qCa=EatimeScope.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
-  let qDep=EatimeScope.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
-  let qEnc=EatimeScope.from('fin_encaissements').select('*').gte('date',r.from).lte('date',r.to);
-  if(SNACK){qCa=qCa.eq('restaurant_id',SNACK.id);qDep=qDep.eq('restaurant_id',SNACK.id);qEnc=qEnc.eq('restaurant_id',SNACK.id);}
-  const[ca,dep,enc]=await Promise.all([qCa,qDep,qEnc]);
-  const CA=ca.data||[],DEP=dep.data||[],ENC=enc.data||[];
+  let CA,DEP,ENC;
+  try{ [CA,DEP,ENC]=await Promise.all([
+    lireTout('chiffre d\'affaires', finMk('fin_ca_journalier','date',r), '*'),
+    lireTout('dépenses', finMk('fin_depenses','date_facture',r), '*,fin_categories(nom,type)'),
+    lireTout('encaissements', finMk('fin_encaissements','date',r), '*')]); }
+  catch(e){ lectureKo(el,e); return; }
   // KPI
   const sumCAttc=CA.filter(x=>x.service==='total'||x.service==null).reduce((a,x)=>a+(Number(x.ca_ttc)||0),0)
     || CA.reduce((a,x)=>a+(Number(x.ca_ttc)||0),0); // fallback
@@ -286,10 +301,9 @@ async function renderCA(el){
     <button class="btn ghost sm" onclick="openCABulk()">+ Saisie rapide multi-jours</button>
   </div><div id="caList">Chargement…</div>`;
   const r=periodRange();
-  let q=EatimeScope.from('fin_ca_journalier').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).order('service');
-  if(SNACK) q=q.eq('restaurant_id',SNACK.id);
-  const{data}=await q;
-  const list=data||[];
+  let list;
+  try{ list=await lireTout('chiffre d\'affaires', (c,o)=>{ let q=EatimeScope.from('fin_ca_journalier').select(c,o).gte('date',r.from).lte('date',r.to); if(SNACK) q=q.eq('restaurant_id',SNACK.id); return q.order('date',{ascending:false}).order('service').order('id'); }, '*,restaurants(nom)'); }
+  catch(e){ lectureKo(document.getElementById('caList'),e); return; }
   let html=`<table class="tbl"><thead><tr><th>Date</th><th>Snack</th><th>Service</th><th>CA TTC</th><th>CA HT</th><th>Couverts</th><th>Ticket moy</th><th>Notes</th><th></th></tr></thead><tbody>`;
   let totTtc=0,totHt=0,totCouv=0;
   if(!list.length) html+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px">Aucune saisie sur la période</td></tr>';
@@ -371,11 +385,10 @@ async function renderDepenses(el){
     <button class="btn" onclick="openDep()">+ Nouvelle dépense</button>
   </div><div id="depList">Chargement…</div>`;
   const r=periodRange();
-  let q=EatimeScope.from('fin_depenses').select('*,fin_categories(nom,type),restaurants(nom)').gte('date_facture',r.from).lte('date_facture',r.to).order('date_facture',{ascending:false}).limit(1000);
-  if(SNACK) q=q.eq('restaurant_id',SNACK.id);
-  if(val('filtStat')) q=q.eq('statut',val('filtStat'));
-  if(val('filtCat')) q=q.eq('categorie_id',val('filtCat'));
-  const{data}=await q;
+  const fSt=val('filtStat'), fCat=val('filtCat');
+  let data;
+  try{ data=await lireTout('dépenses', finMk('fin_depenses','date_facture',r,q=>{ if(fSt) q=q.eq('statut',fSt); if(fCat) q=q.eq('categorie_id',fCat); return q; }), '*,fin_categories(nom,type),restaurants(nom)'); }
+  catch(e){ lectureKo(document.getElementById('depList'),e); return; }
   let list=data||[];
   const search=val('filtSearch').toLowerCase();
   if(search) list=list.filter(x=>((x.fournisseur||'')+' '+(x.num_facture||'')+' '+(x.notes||'')).toLowerCase().includes(search));
@@ -443,12 +456,10 @@ async function renderTreso(el){
   </div>
   <div class="grid grid2"><div id="encList">Chargement…</div><div id="versList">Chargement…</div></div>`;
   const r=periodRange();
-  let qE=EatimeScope.from('fin_encaissements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
-  let qV=EatimeScope.from('fin_versements').select('*,restaurants(nom)').gte('date',r.from).lte('date',r.to).order('date',{ascending:false}).limit(500);
-  if(SNACK){qE=qE.eq('restaurant_id',SNACK.id);qV=qV.eq('restaurant_id',SNACK.id);}
-  const[e,v]=await Promise.all([qE,qV]);
+  let E,Vrows;
+  try{ [E,Vrows]=await Promise.all([lireTout('encaissements', finMk('fin_encaissements','date',r), '*,restaurants(nom)'), lireTout('versements', finMk('fin_versements','date',r), '*,restaurants(nom)')]); }
+  catch(e){ lectureKo(document.getElementById('encList'),e); lectureKo(document.getElementById('versList'),e); return; }
   // Encaissements
-  const E=e.data||[];
   let totByMode={};E.forEach(x=>{totByMode[x.mode]=(totByMode[x.mode]||0)+(Number(x.montant)||0);});
   let h1=`<div class="section"><h3>Encaissements</h3>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${Object.entries(totByMode).map(([m,v])=>`<span class="badge info" style="font-size:11.5px">${MODES_ENC[m]||m} : ${eur(v)}</span>`).join('')}</div>
@@ -458,7 +469,7 @@ async function renderTreso(el){
   h1+='</tbody></table></div>';
   document.getElementById('encList').innerHTML=h1;
   // Versements
-  const V=v.data||[];
+  const V=Vrows;
   let totV=V.reduce((a,x)=>a+(Number(x.montant)||0),0);
   let h2=`<div class="section"><h3>Versements banque</h3>
     <div style="margin-bottom:10px"><span class="badge ok" style="font-size:11.5px">Total période : ${eur(totV)}</span></div>
@@ -516,12 +527,14 @@ async function delVers(id){if(!confirm('Supprimer ?'))return;const{error}=await 
 async function renderMarge(el){
   el.innerHTML='<div style="color:var(--muted)">Calcul en cours…</div>';
   const r=periodRange();
-  let qCa=EatimeScope.from('fin_ca_journalier').select('*').gte('date',r.from).lte('date',r.to);
-  let qDep=EatimeScope.from('fin_depenses').select('*,fin_categories(nom,type)').gte('date_facture',r.from).lte('date_facture',r.to);
-  let qPl=EatimeScope.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin,date').gte('date',r.from).lte('date',r.to);
-  if(SNACK){qCa=qCa.eq('restaurant_id',SNACK.id);qDep=qDep.eq('restaurant_id',SNACK.id);qPl=qPl.eq('restaurant_id',SNACK.id);}
-  const[ca,dep,pl]=await Promise.all([qCa,qDep,qPl]);
-  const CA=ca.data||[],DEP=dep.data||[],PL=pl.data||[];
+  // La masse salariale vient des créneaux du planning (~860 par mois pour 3 restaurants) : sur une période
+  // de plus d'un mois, l'ancienne requête unique en perdait une partie et SOUS-ESTIMAIT la masse salariale.
+  let CA,DEP,PL;
+  try{ [CA,DEP,PL]=await Promise.all([
+    lireTout('chiffre d\'affaires', finMk('fin_ca_journalier','date',r), '*'),
+    lireTout('dépenses', finMk('fin_depenses','date_facture',r), '*,fin_categories(nom,type)'),
+    lireTout('créneaux du planning', finMk('planning_creneaux','date',r), 'id,salarie_id,heure_debut,heure_fin,date')]); }
+  catch(e){ lectureKo(el,e); return; }
   // CA
   const caTtc=CA.reduce((a,x)=>a+(Number(x.ca_ttc)||0),0);
   const caHt=CA.reduce((a,x)=>a+(Number(x.ca_ht)||0),0);
@@ -610,12 +623,15 @@ async function delCat(id){if(!confirm('Supprimer cette catégorie ?'))return;con
 async function renderBanque(el){
   el.innerHTML='Chargement…';
   const r=periodRange();
-  const[c,t,reg]=await Promise.all([
+  let c,TRX,reg;
+  try{ [c,TRX,reg]=await Promise.all([
     EatimeScope.from('fin_comptes_bancaires').select('*').eq('actif',true).order('nom'),
-    EatimeScope.from('fin_transactions_bancaires').select('*,fin_categories(nom)').gte('date_operation',r.from).lte('date_operation',r.to).order('date_operation',{ascending:false}).limit(1000),
+    // Transactions : lues en entier (le solde affiché en est la somme). Pas de filtre snack ici (comptes de l'org).
+    lireTout('transactions bancaires', (cc,o)=>EatimeScope.from('fin_transactions_bancaires').select(cc,o).gte('date_operation',r.from).lte('date_operation',r.to).order('date_operation',{ascending:false}).order('id'), '*,fin_categories(nom)'),
     EatimeScope.from('fin_regles_catego').select('*,fin_categories(nom)').eq('actif',true).order('priorite',{ascending:false}),
-  ]);
-  const COMPTES=c.data||[],TRX=t.data||[],REGLES=reg.data||[];
+  ]); }
+  catch(e){ lectureKo(el,e); return; }
+  const COMPTES=c.data||[],REGLES=reg.data||[];
   // Comptes summary
   let comptesHtml='';
   COMPTES.forEach(co=>{
@@ -663,7 +679,9 @@ async function renderBanque(el){
 async function autoCategorize(){
   const{data:regles}=await EatimeScope.from('fin_regles_catego').select('id,pattern,categorie_id,priorite,applies_to').eq('organization_id',ORG.id).eq('actif',true).order('priorite',{ascending:false});
   if(!regles||!regles.length){toast('Aucune règle active.');return;}
-  const{data:trx}=await EatimeScope.from('fin_transactions_bancaires').select('id,libelle,debit,credit').eq('organization_id',ORG.id).eq('statut','non_categorisee');
+  let trx;
+  try{ trx=await lireTout('transactions à catégoriser', (c,o)=>EatimeScope.from('fin_transactions_bancaires').select(c,o).eq('organization_id',ORG.id).eq('statut','non_categorisee').order('id'), 'id,libelle,debit,credit'); }
+  catch(e){ toast('⛔ '+e.message); return; }
   if(!trx||!trx.length){toast('Aucune transaction non catégorisée');return;}
   toast(`Analyse de ${trx.length} transactions…`);
   let nbCat=0,nbSkip=0;

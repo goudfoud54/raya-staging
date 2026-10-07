@@ -186,7 +186,7 @@ async function showApp(){
 }
 
 async function loadMine(){
-  const{data}=await sb.from('salarie_dispos').select('*').eq('salarie_id',ME.id).order('created_at',{ascending:false}).limit(30);
+  const{data}=await sb.from('salarie_dispos')/* borné : .limit(30) VOULU — les 30 dernières demandes du salarié */.select('*').eq('salarie_id',ME.id).order('created_at',{ascending:false}).limit(30);
   const list=data||[];
   const fmt=d=>{if(d.type==='recurrente')return 'Tous les '+JOURS[d.jour_semaine].toLowerCase()+'s';if(d.date_specifique)return new Date(d.date_specifique).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'});return '—';};
   const plage=d=>(d.heure_debut||d.heure_fin)?((d.heure_debut||'').slice(0,5)+'→'+(d.heure_fin||'').slice(0,5)):'journée entière';

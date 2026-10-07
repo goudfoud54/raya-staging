@@ -123,6 +123,15 @@
     return { rows: rows, attendu: attendu, recu: rows.length, doublons: doublons,
              complet: attendu != null && rows.length === attendu && doublons === 0, error: null };
   }
+  // Variante « tout ou rien » pour les écrans qui CALCULENT sur les lignes (totaux, soldes, registres) :
+  // renvoie les lignes si la lecture est complète, LÈVE une erreur nommée sinon. L'écran affiche l'erreur
+  // au lieu d'un chiffre partiel. `nom` = ce qui est lu, en français (« dépenses », « relevés de température »).
+  async function fetchAllOrThrow(nom, mk, opts) {
+    var r = await fetchAllRows(mk, opts);
+    if (r.error || !r.complet) throw new Error('lecture incomplète — ' + nom + ' (' + (r.error ? (r.error.message || r.error)
+      : (r.recu + ' ligne(s) reçue(s) sur ' + (r.attendu == null ? '?' : r.attendu) + (r.doublons ? ', ' + r.doublons + ' doublon(s)' : ''))) + ')');
+    return r.rows;
+  }
 
   // ── Kiosques : état d'une tablette + décision de mise à jour auto (logique PURE, testée) ──────
   // Classe un heartbeat en trois états DISTINCTS (confondre les deux derniers rendrait l'écran
@@ -222,7 +231,7 @@
     return { status: r.status, ok: r.ok && j.ok === true, pointage: j.pointage || null, error: j.error || null, retry: j.retry_after_s || null };
   }
 
-  const api = { fmtD, ymdLocal, todayYMD, cutoffToMinutes, exploitationDay, exploitationToday, addDaysYMD, parisWallToUtcMs, exploitationBounds, fetchAllRows, kioskStatus, shouldAutoUpdate, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
+  const api = { fmtD, ymdLocal, todayYMD, cutoffToMinutes, exploitationDay, exploitationToday, addDaysYMD, parisWallToUtcMs, exploitationBounds, fetchAllRows, fetchAllOrThrow, kioskStatus, shouldAutoUpdate, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
   g.EatimeUtils = api;
   // Drop-in globaux :
   if (typeof g.fmtD === 'undefined') g.fmtD = fmtD;
@@ -234,6 +243,7 @@
   if (typeof g.addDaysYMD === 'undefined') g.addDaysYMD = addDaysYMD;
   if (typeof g.exploitationBounds === 'undefined') g.exploitationBounds = exploitationBounds;
   if (typeof g.fetchAllRows === 'undefined') g.fetchAllRows = fetchAllRows;
+  if (typeof g.fetchAllOrThrow === 'undefined') g.fetchAllOrThrow = fetchAllOrThrow;
   if (typeof g.kioskStatus === 'undefined') g.kioskStatus = kioskStatus;
   if (typeof g.shouldAutoUpdate === 'undefined') g.shouldAutoUpdate = shouldAutoUpdate;
   g.kioskId = kioskId; g.verifyPin = verifyPin; g.createPointage = createPointage;

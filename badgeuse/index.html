@@ -210,7 +210,7 @@ function stateOf(last){
   return 'present'; // arrivee ou pause_fin
 }
 async function fetchLastPointage(sid){
-  const{data}=await sb.from('pointages').select('type,ts').eq('salarie_id',sid).order('ts',{ascending:false}).limit(1);
+  const{data}=await sb.from('pointages')/* borné : dernier pointage, .limit(1) */.select('type,ts').eq('salarie_id',sid).order('ts',{ascending:false}).limit(1);
   return (data&&data[0])||null;
 }
 

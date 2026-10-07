@@ -241,7 +241,7 @@ async function loadAll(){
   EatimeAutocomplete.enhance(fS, { placeholder:'Tous les salariés — tape un nom…' });
   EatimeAutocomplete.enhance(tS, { placeholder:'Tape un nom de salarié…' });
   const since = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-  const rt = await EatimeScope.from('retards').select('*').gte('date', since).order('date',{ascending:false});
+  const rt = await EatimeScope.from('retards')/* borné : 7 derniers jours (≈45 retards/semaine en oct. 2026) */.select('*').gte('date', since).order('date',{ascending:false});
   S.retards = rt.data || [];
   renderRetardsBar();
 }

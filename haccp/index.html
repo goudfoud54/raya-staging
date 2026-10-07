@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.2"></script>
+<script src="../utils.js?v=1.7"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -204,19 +204,33 @@ function render(){const el=document.getElementById('content');
   if(TAB==='export') return renderExport(el);
 }
 
+// ────────────── LECTURES COMPLÈTES (2026-10, plafond serveur) ──────────────
+// Supabase rend au plus 1 000 lignes par réponse, SANS erreur. Les listes appliquaient en plus .limit(500)
+// à TOUTE l'organisation AVANT le filtre par restaurant : un restaurant voyait moins de 500 lignes, sans le
+// savoir. Tout passe maintenant par fetchAllOrThrow (utils.js) : lecture complète ou message explicite.
+// Le filtre par restaurant reste côté navigateur : il conserve VOLONTAIREMENT les lignes dont l'équipement
+// ou la zone n'est plus rattaché (un filtre côté base par jointure les ferait disparaître du registre).
+// Volumes au 2026-10-07 : faibles (3 à 118 lignes) — c'est une mise en conformité avant croissance.
+const hMk=(table, cols, debut, fin, extra)=>(c,o)=>{ let q=EatimeScope.from(table).select(c,o);
+  if(debut) q=q.gte('ts',debut); if(fin) q=q.lte('ts',fin); if(extra) q=extra(q); return q.order('ts',{ascending:false}).order('id'); };
+function lectureKoH(el, e){
+  if(el) el.innerHTML=`<div class="section" style="border-color:var(--bad)"><h3 style="color:var(--bad)">⛔ Registre non affiché</h3><div style="font-size:13px;line-height:1.5">${String((e&&e.message)||e).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}. Un registre HACCP incomplet ne doit pas être présenté comme complet : rechargez la page ; si l'écart persiste, signalez-le.</div></div>`;
+}
+
 // ────────────── DASHBOARD ──────────────
 async function renderDashboard(el){
   el.innerHTML='<div style="color:var(--muted)">Chargement…</div>';
   const since=new Date();since.setDate(since.getDate()-7);
   const sinceIso=since.toISOString();
-  let qT=EatimeScope.from('haccp_releves_temperature').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
-  let qH=EatimeScope.from('haccp_huiles').select('*,haccp_equipements(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
-  let qR=EatimeScope.from('haccp_receptions').select('*').gte('ts',sinceIso).order('ts',{ascending:false});
-  let qN=EatimeScope.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(restaurant_id,nom)').gte('ts',sinceIso).order('ts',{ascending:false});
-  if(SNACK){qR=qR.eq('restaurant_id',SNACK.id);}
-  const[t,h,r,n]=await Promise.all([qT,qH,qR,qN]);
+  let t,h,r,n;
+  try{ [t,h,r,n]=await Promise.all([
+    fetchAllOrThrow('relevés de température', hMk('haccp_releves_temperature',0,sinceIso), {cols:'*,haccp_equipements(restaurant_id,nom)'}),
+    fetchAllOrThrow('contrôles d\'huile', hMk('haccp_huiles',0,sinceIso), {cols:'*,haccp_equipements(restaurant_id,nom)'}),
+    fetchAllOrThrow('réceptions', hMk('haccp_receptions',0,sinceIso,null,q=>SNACK?q.eq('restaurant_id',SNACK.id):q), {cols:'*'}),
+    fetchAllOrThrow('nettoyages', hMk('haccp_nettoyages',0,sinceIso), {cols:'*,haccp_zones_nettoyage(restaurant_id,nom)'})]); }
+  catch(e){ lectureKoH(el,e); return; }
   const filterSnack=arr=>!SNACK?arr:arr.filter(x=>(x.haccp_equipements?.restaurant_id||x.haccp_zones_nettoyage?.restaurant_id||x.restaurant_id)===SNACK.id);
-  const T=filterSnack(t.data||[]),H=filterSnack(h.data||[]),R=r.data||[],N=filterSnack(n.data||[]);
+  const T=filterSnack(t),H=filterSnack(h),R=r,N=filterSnack(n);
   const tNonConf=T.filter(x=>x.conforme===false).length;
   const rNonConf=R.filter(x=>x.conforme===false).length;
   let html=`
@@ -250,12 +264,9 @@ async function renderTemperatures(el){
     </div>
     <div id="releveList" style="color:var(--muted)">Chargement…</div>`;
   const eq=val('filtEq'),from=val('filtFrom'),to=val('filtTo');
-  let q=EatimeScope.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').order('ts',{ascending:false}).limit(500);
-  if(eq) q=q.eq('equipement_id',eq);
-  if(from) q=q.gte('ts',from+'T00:00:00');
-  if(to) q=q.lte('ts',to+'T23:59:59');
-  const{data}=await q;
-  let list=data||[];
+  let list;
+  try{ list=await fetchAllOrThrow('relevés de température', hMk('haccp_releves_temperature',0,from?from+'T00:00:00':null,to?to+'T23:59:59':null,q=>eq?q.eq('equipement_id',eq):q), {cols:'*,haccp_equipements(nom,t_min,t_max,restaurant_id)'}); }
+  catch(e){ lectureKoH(document.getElementById('releveList'),e); return; }
   if(SNACK) list=list.filter(x=>!x.haccp_equipements||x.haccp_equipements.restaurant_id===SNACK.id);
   let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Équipement</th><th>T° relevée</th><th>Plage</th><th>Statut</th><th>Salarié</th><th>Action corrective</th><th></th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucun relevé</td></tr>';
@@ -307,10 +318,9 @@ async function renderHuiles(el){
     </div>
     <div id="huileList">Chargement…</div>`;
   const fr=val('filtFr');
-  let q=EatimeScope.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').order('ts',{ascending:false}).limit(500);
-  if(fr) q=q.eq('equipement_id',fr);
-  const{data}=await q;
-  let list=data||[];
+  let list;
+  try{ list=await fetchAllOrThrow('contrôles d\'huile', hMk('haccp_huiles',0,null,null,q=>fr?q.eq('equipement_id',fr):q), {cols:'*,haccp_equipements(nom,restaurant_id)'}); }
+  catch(e){ lectureKoH(document.getElementById('huileList'),e); return; }
   if(SNACK) list=list.filter(x=>!x.haccp_equipements||x.haccp_equipements.restaurant_id===SNACK.id);
   let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Friteuse</th><th>Action</th><th>Polarité %</th><th>Marque</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucun contrôle</td></tr>';
@@ -359,11 +369,10 @@ async function renderReceptions(el){
       <button class="btn" onclick="openReception()">+ Nouvelle réception</button>
     </div>
     <div id="recList">Chargement…</div>`;
-  let q=EatimeScope.from('haccp_receptions').select('*,haccp_reception_controles(type_produit,lot,dluo,temperature,conforme,produit)').order('ts',{ascending:false}).limit(500);
-  if(SNACK) q=q.eq('restaurant_id',SNACK.id);
   const search=val('filtProd');
-  const{data}=await q;
-  let list=data||[];
+  let list;
+  try{ list=await fetchAllOrThrow('réceptions', hMk('haccp_receptions',0,null,null,q=>SNACK?q.eq('restaurant_id',SNACK.id):q), {cols:'*,haccp_reception_controles(type_produit,lot,dluo,temperature,conforme,produit)'}); }
+  catch(e){ lectureKoH(document.getElementById('recList'),e); return; }
   if(search) list=list.filter(x=>((x.produit||'')+' '+(x.fournisseur||'')).toLowerCase().includes(search.toLowerCase()));
   let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Fournisseur</th><th>BL / Réf</th><th>Contrôles (🥩❄🧀)</th><th>Photo</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucune réception</td></tr>';
@@ -469,12 +478,10 @@ async function renderNettoyage(el){
       <button class="btn" onclick="openNettoyage()">+ Saisir un nettoyage</button>
     </div>
     <div id="netList">Chargement…</div>`;
-  let q=EatimeScope.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,periodicite,restaurant_id)').order('ts',{ascending:false}).limit(500);
-  if(val('filtZone')) q=q.eq('zone_id',val('filtZone'));
-  if(val('filtFromN')) q=q.gte('ts',val('filtFromN')+'T00:00:00');
-  if(val('filtToN')) q=q.lte('ts',val('filtToN')+'T23:59:59');
-  const{data}=await q;
-  let list=data||[];
+  const fZ=val('filtZone'), fF=val('filtFromN'), fT=val('filtToN');
+  let list;
+  try{ list=await fetchAllOrThrow('nettoyages', hMk('haccp_nettoyages',0,fF?fF+'T00:00:00':null,fT?fT+'T23:59:59':null,q=>fZ?q.eq('zone_id',fZ):q), {cols:'*,haccp_zones_nettoyage(nom,periodicite,restaurant_id)'}); }
+  catch(e){ lectureKoH(document.getElementById('netList'),e); return; }
   if(SNACK) list=list.filter(x=>!x.haccp_zones_nettoyage||x.haccp_zones_nettoyage.restaurant_id===SNACK.id);
   let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Zone</th><th>Périodicité</th><th>Salarié</th><th>Notes</th><th></th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Aucun nettoyage saisi</td></tr>';
@@ -602,14 +609,18 @@ async function exportPDF(){
   const to=new Date(y,m,0,23,59,59).toISOString();
   const snackName=sid?(S.snacks.find(s=>s.id===sid)?.nom||''):'TOUS LES SNACKS';
   // Récup data
-  let qT=EatimeScope.from('haccp_releves_temperature').select('*,haccp_equipements(nom,t_min,t_max,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
-  let qH=EatimeScope.from('haccp_huiles').select('*,haccp_equipements(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
-  let qR=EatimeScope.from('haccp_receptions').select('*').gte('ts',from).lte('ts',to).order('ts');
-  let qN=EatimeScope.from('haccp_nettoyages').select('*,haccp_zones_nettoyage(nom,restaurant_id)').gte('ts',from).lte('ts',to).order('ts');
-  if(sid) qR=qR.eq('restaurant_id',sid);
-  const[t,h,r,n]=await Promise.all([qT,qH,qR,qN]);
+  // Registre DDPP remis à l'administration : un PDF incomplet présenté comme complet serait le pire résultat.
+  // Lecture complète, sinon AUCUN PDF et l'écart est dit. Tri chronologique (ascendant) conservé.
+  const asc=(table)=>(c,o)=>{ let q=EatimeScope.from(table).select(c,o).gte('ts',from).lte('ts',to); if(sid&&table==='haccp_receptions') q=q.eq('restaurant_id',sid); return q.order('ts').order('id'); };
+  let t,h,r,n;
+  try{ [t,h,r,n]=await Promise.all([
+    fetchAllOrThrow('relevés de température', asc('haccp_releves_temperature'), {cols:'*,haccp_equipements(nom,t_min,t_max,restaurant_id)'}),
+    fetchAllOrThrow('contrôles d\'huile', asc('haccp_huiles'), {cols:'*,haccp_equipements(nom,restaurant_id)'}),
+    fetchAllOrThrow('réceptions', asc('haccp_receptions'), {cols:'*'}),
+    fetchAllOrThrow('nettoyages', asc('haccp_nettoyages'), {cols:'*,haccp_zones_nettoyage(nom,restaurant_id)'})]); }
+  catch(e){ toast('⛔ PDF non produit : '+e.message); return; }
   const filterSnack=arr=>!sid?arr:arr.filter(x=>(x.haccp_equipements?.restaurant_id||x.haccp_zones_nettoyage?.restaurant_id||x.restaurant_id)===sid);
-  const T=filterSnack(t.data||[]),H=filterSnack(h.data||[]),R=r.data||[],N=filterSnack(n.data||[]);
+  const T=filterSnack(t),H=filterSnack(h),R=r,N=filterSnack(n);
   // PDF
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:'mm',format:'a4'});

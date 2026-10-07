@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
 
     // 2. Y a-t-il eu au moins une saisie pour la journée d'exploitation en cours ?
     const { count, error: sErr } = await sb
-      .from('stock_saisies')
+      .from('stock_saisies')/* borné : comptage seul (head), aucune ligne rapatriée */
       .select('id', { count: 'exact', head: true })
       .eq('restaurant_id', r.id)
       .eq('date_saisie', today);

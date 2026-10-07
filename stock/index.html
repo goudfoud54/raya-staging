@@ -297,7 +297,7 @@ async function renderDashboard(el){
 async function renderSaisie(el){
   const cut=ORG.journee_exploitation_debut;
   const today=exploitationToday(cut); S.saisieDay=today;      // journée d'exploitation figée pour ce rendu (garde-fou saveSaisie)
-  const{data:saisies}=await EatimeScope.from('stock_saisies').select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today);
+  const{data:saisies}=await EatimeScope.from('stock_saisies')/* borné : 1 restaurant × 1 jour */.select('*').eq('restaurant_id',SNACK.id).eq('date_saisie',today);
   const byProd={};(saisies||[]).forEach(s=>{byProd[s.produit_id]=s;});S.saisiesAujourdhui=byProd;
   const max={};S.stockMax.filter(m=>m.restaurant_id===SNACK.id).forEach(m=>max[m.produit_id]=m);
   // Produits désactivés sur CE snack (seuil défini mais actif=false) : exclus de la saisie du jour.

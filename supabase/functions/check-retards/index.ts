@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
     const orgId = r.organization_id;
 
     // Créneaux d'hier + aujourd'hui (hier nécessaire pour les sorties de soir à cheval sur minuit)
-    const { data: creneaux } = await sb.from('planning_creneaux')
+    const { data: creneaux } = await sb.from('planning_creneaux')/* borné : 1 restaurant × 2 jours */
       .select('id, salarie_id, restaurant_id, date, service, heure_debut, heure_fin')
       .eq('restaurant_id', r.id).in('date', [yesterday, today]);
     if (!creneaux || !creneaux.length) { results.push({ resto: r.nom, creneaux: 0 }); continue; }
@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
 
     // Pointages du resto sur ~36h (fenêtre couvrant hier+aujourd'hui), groupés par salarié
     const since = new Date(Date.now() - 40 * 3600 * 1000).toISOString();
-    const { data: pts } = await sb.from('pointages')
+    const { data: pts } = await sb.from('pointages')/* borné : 1 restaurant × 40 h */
       .select('salarie_id, restaurant_id, type, ts').eq('restaurant_id', r.id).gte('ts', since);
     const ptsBySal: Record<string, any[]> = {};
     for (const p of (pts || [])) (ptsBySal[p.salarie_id] ||= []).push(p);
@@ -135,12 +135,12 @@ Deno.serve(async (req) => {
     const disposBySal: Record<string, any[]> = {};
     for (const d of (dispos || [])) (disposBySal[d.salarie_id] ||= []).push(d);
     const { data: altern } = salIds.length
-      ? await sb.from('alternance_jours').select('salarie_id, date, type').in('salarie_id', salIds).in('date', [yesterday, today]) : { data: [] } as any;
+      ? await sb.from('alternance_jours')/* borné : salariés du jour × 2 jours */.select('salarie_id, date, type').in('salarie_id', salIds).in('date', [yesterday, today]) : { data: [] } as any;
     const altBySal: Record<string, any[]> = {};
     for (const a of (altern || [])) (altBySal[a.salarie_id] ||= []).push(a);
 
     // Retards déjà tracés pour ces clés (dédup en mémoire + garde-fou index unique à l'insert)
-    const { data: existing } = await sb.from('retards')
+    const { data: existing } = await sb.from('retards')/* borné : 1 restaurant × 2 jours */
       .select('id, salarie_id, restaurant_id, date, service, type, statut, heure_prevue')
       .eq('restaurant_id', r.id).in('date', [yesterday, today]);
     const keyOf = (x: any) => `${x.salarie_id}|${x.date}|${x.service}|${x.type}`;

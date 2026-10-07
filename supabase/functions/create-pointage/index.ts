@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
   //    de la fenêtre. Un pointage vieux de >18h est considéré périmé (état remis à zéro), même
   //    seuil que stateOf() côté client (badgeuse/index.html).
   const STALE_H = 18;
-  const { data: recent } = await sb.from('pointages')
+  const { data: recent } = await sb.from('pointages')/* borné : dernier pointage, .limit(1) */
     .select('type,ts').eq('salarie_id', salarie_id).order('ts', { ascending: false }).limit(1);
   const lastRaw = recent?.[0] || null;
   const last = (lastRaw && (Date.now() - new Date(lastRaw.ts).getTime()) <= STALE_H * 3600_000) ? lastRaw : null;

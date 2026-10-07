@@ -140,7 +140,7 @@ async function loadStockData(){
   const[p,m,s,c]=await Promise.all([
     sb.from('stock_produits').select('*').eq('actif',true).eq('organization_id',SNACK.organization_id).order('categorie').order('nom'),
     sb.from('stock_max').select('*').eq('actif',true).eq('restaurant_id',SNACK_ID),
-    sb.from('stock_saisies').select('*').eq('restaurant_id',SNACK_ID).eq('date_saisie',today),
+    sb.from('stock_saisies')/* borné : 1 restaurant × 1 jour */.select('*').eq('restaurant_id',SNACK_ID).eq('date_saisie',today),
     // Mode commentaire par produit (optionnel / obligatoire), indépendant de actif → requête dédiée.
     sb.from('stock_max').select('produit_id,mode_commentaire').eq('restaurant_id',SNACK_ID).neq('mode_commentaire','aucun'),
   ]);

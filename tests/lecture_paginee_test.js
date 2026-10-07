@@ -172,6 +172,41 @@ const cp = require('child_process');
   t('CONTRÔLE : l\'ancien .limit(500) n\'en montrait que 500', vieux.length === 500);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\n── 3. Finance et HACCP : un total juste, ou pas de total ─────────────────────────────────');
+{
+  const FIN = read('finance/index.html'), HAC = read('haccp/index.html');
+  global.fetchAllOrThrow = window.EatimeUtils.fetchAllOrThrow;
+  const grabG = (src, name) => { const i = src.search(new RegExp('(?:async\\s+)?function ' + name + '\\s*\\(')); let d = 0, a = src.indexOf('{', i), j = a;
+    for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}') { d--; if (d === 0) { j++; break; } } } return src.slice(i, j); };
+  // Finance : tableau de bord sur 1 500 lignes de CA (une année, 3 restaurants + services).
+  eval('global.lireTout=' + FIN.match(/const lireTout=([^\n;]*);/)[1] + ';');
+  eval('global.finMk=' + FIN.match(/const finMk=([\s\S]*?\};)/)[1].replace(/;$/, '') + ';');
+  eval('global.lectureKo=' + grabG(FIN, 'lectureKo').replace(/^function lectureKo/, 'function') + ';');
+  eval('global.renderDashboardFin=' + grabG(FIN, 'renderDashboard').replace(/^async function renderDashboard/, 'async function') + ';');
+  global.periodRange = () => ({ from: '2026-01-01', to: '2026-12-31' }); global.periodLbl = () => '2026';
+  // Doublures d'affichage : les graphiques (Chart.js) sont dessinés APRÈS le calcul et hors sujet ici.
+  global.Chart = function () { return { destroy() {} }; }; global.CHARTS = global.CHARTS || {};
+  global.document = { getElementById: () => ({ innerHTML: '', getContext: () => ({}), style: {} }), querySelectorAll: () => [] };
+  global.SNACK = null; global.eur = n => Number(n || 0).toFixed(2) + ' €'; global.pct = n => Number(n || 0).toFixed(1) + ' %';
+  let db = makeDB({ cap: 1000 }); global.EatimeScope = db.api;
+  for (let i = 0; i < 1500; i++) db.T('fin_ca_journalier').push({ id: 'ca' + String(i).padStart(5, '0'), restaurant_id: 'r' + (i % 3), date: addDaysYMD('2026-01-01', i % 300), service: 'total', ca_ttc: 100, ca_ht: 90 });
+  let el = { innerHTML: '' };
+  try { await renderDashboardFin(el); } catch (e) { el.innerHTML = 'EXCEPTION ' + e.message; }
+  t('finance : CA TTC sur 1 500 saisies = 150 000,00 € (requête unique : 100 000 €)', /150000\.00 €<\/div><div class="sub">1500 saisies/.test(el.innerHTML), (el.innerHTML.match(/CA TTC<\/div><div class="val">[^<]*<\/div><div class="sub">[^<]*/) || [el.innerHTML.slice(0, 200)])[0]);
+  let n = 0; db.hooks['fin_ca_journalier:select'] = q => { if (!(q.o.count && q.o.head) && ++n === 2) db.t.fin_ca_journalier.splice(0, 3); return null; };
+  el = { innerHTML: '' }; await renderDashboardFin(el);
+  t('… lecture incomplète → « Chiffres non affichés », aucun total partiel', /⛔ Chiffres non affichés/.test(el.innerHTML) && !/€/.test(el.innerHTML), el.innerHTML.slice(0, 160));
+  // HACCP : un registre incomplet n'est pas présenté comme complet ; plus de limit(500) avant le filtre snack.
+  const hacCode = HAC.replace(/\/\/[^\n]*/g, '');
+  t('HACCP : plus aucun .limit(500) dans le module', !/\.limit\(500\)/.test(hacCode));
+  eval('global.hMk=' + HAC.match(/const hMk=([\s\S]*?\};)/)[1].replace(/;$/, '') + ';');
+  db = makeDB({ cap: 1000 }); global.EatimeScope = db.api;
+  for (let i = 0; i < 1200; i++) db.T('haccp_huiles').push({ id: 'h' + String(i).padStart(5, '0'), ts: new Date(Date.UTC(2026, 9, 1) + i * 60000).toISOString(), equipement_id: 'e' + (i % 2) });
+  const rows = await fetchAllOrThrow('contrôles d\'huile', hMk('haccp_huiles', 0, null, null, null), { cols: '*' });
+  t('HACCP : 1 200 contrôles d\'huile lus en entier (avant : 500, puis filtrés par restaurant)', rows.length === 1200);
+}
+
 console.log(ok ? '\nALL PASS' : '\nSOME FAILED');
 process.exit(ok ? 0 : 1);
 })().catch(e => { console.log('FAIL · exception : ' + (e && e.stack || e)); console.log('\nSOME FAILED'); process.exit(1); });

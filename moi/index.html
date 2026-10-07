@@ -14,7 +14,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.2"></script>
+<script src="../utils.js?v=1.7"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
@@ -275,7 +275,7 @@ async function renderPlanning(el){
       <button class="btn ghost sm" style="margin-left:auto" onclick="WEEK_OFFSET++;renderPlanning(document.getElementById('content'))">Semaine suiv. ›</button>
     </div>
     <div id="planContent">Chargement…</div>`;
-  const{data:cren}=await EatimeScope.from('planning_creneaux').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('date',from).lte('date',to).order('date').order('service');
+  const{data:cren}=await EatimeScope.from('planning_creneaux')/* borné : 1 salarié × 1 semaine */.select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('date',from).lte('date',to).order('date').order('service');
   const list=cren||[];
   let html='<div class="week-grid">';
   for(let i=0;i<7;i++){
@@ -298,8 +298,10 @@ async function renderPlanning(el){
 // ─────── INDISPOS ───────
 async function renderDispos(el){
   if(!SALARIE){el.innerHTML='<div class="card-x" style="text-align:center;color:var(--muted)">Compte non lié à une fiche salarié.</div>';return;}
-  const{data}=await EatimeScope.from('salarie_dispos').select('*').eq('salarie_id',SALARIE.id).order('created_at',{ascending:false});
-  const list=data||[];
+  // Historique COMPLET de ses demandes, lu par pages (une absence longue = une ligne par jour : la liste
+  // peut dépasser le plafond de 1 000 lignes du serveur, qui tronque sans erreur).
+  const lu=await fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).eq('salarie_id',SALARIE.id).order('created_at',{ascending:false}).order('id'));
+  const list=lu.rows||[];
   let html=`<div class="h2">Mes indisponibilités</div>
     <div class="h2-sub">${list.filter(d=>d.statut_demande==='en_attente').length} en attente · ${list.filter(d=>d.statut_demande==='validee').length} validées</div>`;
   if(!list.length) html+='<div class="card-x" style="text-align:center;color:var(--muted)">Aucune indisponibilité déclarée</div>';
@@ -348,7 +350,7 @@ async function saveDispo(){
 async function renderPointages(el){
   if(!SALARIE){el.innerHTML='<div class="card-x" style="text-align:center;color:var(--muted)">Compte non lié à une fiche salarié.</div>';return;}
   const since=new Date();since.setDate(since.getDate()-30);
-  const{data}=await EatimeScope.from('pointages').select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('ts',since.toISOString()).order('ts',{ascending:false});
+  const{data}=await EatimeScope.from('pointages')/* borné : 1 salarié × 30 jours */.select('*,restaurants(nom)').eq('salarie_id',SALARIE.id).gte('ts',since.toISOString()).order('ts',{ascending:false});
   const list=data||[];
   // Calcul heures par jour
   const byDay={};list.forEach(p=>{const d=p.ts.slice(0,10);(byDay[d]=byDay[d]||[]).push(p);});
