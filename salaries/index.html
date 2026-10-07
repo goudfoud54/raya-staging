@@ -238,7 +238,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.23 · alternance : plus de week-ends en « repos » d\'office (ni au chargement, ni à l\'import CFA) · un seul bouton « Enregistrer le calendrier » qui enregistre tout, relit la base et dit combien de jours sont enregistrés · avertissement avant de quitter avec des modifications non enregistrées · export des pointages complet (lecture paginée, compte vérifié, journées de travail en heure de Paris)';
+const VERSION='v0.24 · alternance : un calendrier importé après « Abandonner » reste protégé (avertissement avant de quitter, conservé au changement d\'onglet)';
 let ME=null, ORG={};
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -1569,6 +1569,11 @@ async function onAltYearChange(){
   ALT.annee=voulu; sel.value=voulu; ALT.period=null; loadAltCal(currentFiche.id);
 }
 function markAltDirty(){
+  // Point de passage UNIQUE de toute modification de l'aperçu (pinceau, import, emploi du temps, « tout
+  // vider », nom du CFA) : c'est ici qu'on rattache l'aperçu au salarié affiché. Sans ce rattachement, un
+  // import fait après « Abandonner » n'était plus protégé — ni garde, ni avertissement du navigateur — et
+  // un simple changement d'onglet le rechargeait depuis la base (v0.24).
+  if(ALT.dirty && !ALT.salId && currentFiche && currentFiche.id) ALT.salId=currentFiche.id;
   const b=document.getElementById('altDirty'); if(!b)return;
   const n=altDiffCount(ALT.base, ALT.jours), cfa=ALT.cal?((ALT.cal.cfa_nom||'')!==(ALT.cfaNom||'')):!!ALT.cfaNom;
   b.style.display=ALT.dirty?'inline-flex':'none';
@@ -1592,7 +1597,7 @@ async function loadAltCal(salId){
   // l'alternant relève de son planning de travail et de ses indisponibilités, pas du calendrier du CFA —
   // et si un établissement ferme le week-end, ce n'est pas à ce calendrier de le décider.
 }
-function altSnapshot(j){ const o={}; Object.entries(j||{}).forEach(([d,v])=>{ o[d]={type:v.type}; }); return o; }
+function altSnapshot(j){ const o={}; Object.entries(j||{}).forEach(([d,v])=>{ o[d]={type:v.type, source:v.source}; }); return o; }
 function altMonthsRange(){
   const p=ALT.period||altPeriod(ALT.annee);
   const s=new Date(p.debut+'T00:00:00'), e=new Date(p.fin+'T00:00:00'); const arr=[];
@@ -1748,7 +1753,9 @@ function altLeaveGuard(action){
 async function _altLeave(choice){
   const r=_altLeaveRes; _altLeaveRes=null; closeModal(); if(!r) return;
   if(choice==='save'){ r(await saveAltCal()); return; }             // échec d'enregistrement → on RESTE
-  if(choice==='discard'){ ALT.dirty=false; ALT.jours={}; ALT.base={}; ALT.salId=null; ALT.lastSave=null; markAltDirty(); r(true); return; }
+  // Abandonner = revenir à l'état ENREGISTRÉ (ALT.base), en restant rattaché au même salarié : l'action
+  // qui suit (import d'un autre fichier, sur la même fiche) doit rester protégée par la garde.
+  if(choice==='discard'){ ALT.jours=altSnapshot(ALT.base); ALT.cfaNom=(ALT.cal&&ALT.cal.cfa_nom)||''; ALT.dirty=false; ALT.lastSave=null; markAltDirty(); renderAltCalendar(); r(true); return; }
   r(false);
 }
 window.addEventListener('beforeunload',e=>{ if(altHasUnsaved()){ e.preventDefault(); e.returnValue=''; return ''; } });

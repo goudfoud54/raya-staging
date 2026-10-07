@@ -16,12 +16,19 @@
 -- terminée). Il n'est pas nécessaire au correctif.
 --
 -- RETOUR ARRIÈRE : la sauvegarde ci-dessous conserve les 86 lignes ; pour les remettre :
---   insert into public.alternance_jours select * from public._sauvegarde_repos_weekend_20261007;
+--   insert into public.alternance_jours select * from sauvegardes.repos_weekend_20261007;
+--
+-- La sauvegarde va dans un schéma À PART (« sauvegardes »), non exposé par l'API : une table créée dans
+-- `public` hérite des droits par défaut d'anon/authenticated et serait lisible via l'API REST avec la
+-- clé publique tant qu'elle existe. Droits retirés explicitement par sécurité.
 
 begin;
 
+create schema if not exists sauvegardes;
+revoke all on schema sauvegardes from public, anon, authenticated;
+
 -- Sauvegarde intégrale avant suppression.
-create table if not exists public._sauvegarde_repos_weekend_20261007 as
+create table if not exists sauvegardes.repos_weekend_20261007 as
   select * from public.alternance_jours
   where organization_id = 'dc0a81a8-60ec-437f-8aa6-e43b8e2b1978'          -- Groupe Raya
     and salarie_id      = '12e78c56-63ee-4f2b-9082-aef9a10fa2df'          -- Assma EL HAI
@@ -29,17 +36,19 @@ create table if not exists public._sauvegarde_repos_weekend_20261007 as
     and extract(isodow from date) >= 6
     and created_at = '2026-07-20 15:54:49.597508+00';
 
+revoke all on sauvegardes.repos_weekend_20261007 from public, anon, authenticated;
+
 -- Garde : on n'efface RIEN si le périmètre n'est pas exactement celui constaté.
 do $$
 declare n int;
 begin
-  select count(*) into n from public._sauvegarde_repos_weekend_20261007;
+  select count(*) into n from sauvegardes.repos_weekend_20261007;
   if n <> 86 then
     raise exception 'Périmètre inattendu : % ligne(s) au lieu de 86 — nettoyage annulé', n;
   end if;
 end $$;
 
 delete from public.alternance_jours
-where id in (select id from public._sauvegarde_repos_weekend_20261007);
+where id in (select id from sauvegardes.repos_weekend_20261007);
 
 commit;

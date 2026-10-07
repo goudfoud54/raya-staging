@@ -307,6 +307,23 @@ console.log('\n── 3. Garde : modifications non enregistrées ─────
   t('quitter la page avec des modifications → avertissement du navigateur', ev.prevented && ev.returnValue === '');
   ALT.dirty = false; const ev2 = { prevented: false, preventDefault() { this.prevented = true; } }; _wl.beforeunload[_wl.beforeunload.length - 1](ev2);
   t('… sans modification → aucun avertissement', !ev2.prevented);
+  // v0.24 — « Abandonner » au moment d'IMPORTER un autre calendrier, sur la MÊME fiche : l'aperçu importé
+  // doit rester protégé (avant : rattachement perdu → ni garde ni avertissement, et l'onglet le rechargeait).
+  ALT.dirty = true; global.currentFiche = { id: 'salA' }; await loadAltCal('salA');
+  const enBase = Object.keys(ALT.jours).length;
+  ALT.jours['2026-12-01'] = { type: 'ecole', source: 'manuel' }; ALT.dirty = true; markAltDirty();
+  const pI = altLeaveGuard('importer un autre calendrier'); await tick(); await _altLeave('discard'); const okI = await pI;
+  t('import → garde → « Abandonner » : retour à l\'état ENREGISTRÉ, même fiche', okI === true && !ALT.jours['2026-12-01'] && Object.keys(ALT.jours).length === enBase && ALT.salId === 'salA');
+  ALT.jours = { '2026-12-08': { type: 'ecole', source: 'ocr' }, '2026-12-09': { type: 'ecole', source: 'ocr' } }; ALT.dirty = true; markAltDirty();   // = applyCfaClusters
+  t('… l\'aperçu importé est rattaché au salarié et compte comme NON enregistré', altHasUnsaved() && ALT.salId === 'salA');
+  const lect2 = db.reads; initAltTab('salA');
+  t('… changer d\'onglet le CONSERVE (aucune relecture de la base)', db.reads === lect2 && ALT.jours['2026-12-08'] && Object.keys(ALT.jours).length === 2);
+  const ev3 = { prevented: false, preventDefault() { this.prevented = true; } }; _wl.beforeunload[_wl.beforeunload.length - 1](ev3);
+  t('… et quitter la page déclenche l\'avertissement', ev3.prevented);
+  // Filet de sécurité : tout aperçu modifié sans rattachement (salId vide) est rattaché à la fiche affichée.
+  ALT.salId = null; ALT.dirty = true; markAltDirty();
+  t('aperçu modifié sans rattachement → rattaché à la fiche affichée par markAltDirty', ALT.salId === 'salA' && altHasUnsaved());
+  ALT.dirty = false;
   const code = SAL.replace(/\/\/[^\n]*/g, '');
   t('import d\'un autre fichier CFA et déconnexion passent aussi par la garde', /async function onCfaFile\(ev\)\{[^]*?altLeaveGuard\(/.test(code.slice(code.indexOf('async function onCfaFile'), code.indexOf('async function onCfaFile') + 400)) && /async function logout\(\)\{if\(!await altLeaveGuard/.test(code));
 }
