@@ -106,3 +106,20 @@ sur la semaine en cours n'est exigée que s'il peut déplacer (vivier réel `mov
   (même variable pour `absence_motif_test`). Le harnais dit toujours laquelle des deux jambes a tourné.
 - **Police du PDF.** Helvetica ne connaît que le jeu WinAnsi : un seul « → » dans une chaîne la fait
   afficher lettre par lettre. Le harnais vérifie qu'aucune chaîne émise n'en sort (`_pdfSafe`).
+
+## Alternance et export des pointages (`alternance_export_test.js`, salaries v0.23)
+
+Vrai code de `salaries/index.html`, `utils.js` et `stock/index.html`, sur une base PostgREST simulée en
+mémoire qui reproduit **le plafond serveur** (1 000 lignes par réponse, sans erreur — `max_rows` constaté
+dans les journaux de l'API) et **les contraintes réelles** de `alternance_jours` (CHECK source/type,
+UNIQUE salarié+date). Couvre : plus de week-end en repos (chargement, import OCR, import vectoriel sur le
+PDF de référence — école = 93), enregistrement unique relu en base, garde de sortie, lecture paginée
+(`fetchAllRows`) sous plafond 500 et 1 000, export complet ou bloqué, bornes en journées d'exploitation
+(propriété sur 1 600 instants, changements d'heure, trois fuseaux d'appareil via sous-processus), snapshot
+de stock.
+
+- **Contre-preuves.** Quand git est disponible, le harnais rejoue l'ANCIEN code (`git show 90f178a:…`) sur
+  les mêmes données : 104 week-ends en repos, calendrier vidé par un jour « pdf-texte », snapshot qui agrège
+  1 000 saisies et en supprime 2 500. Sans git, ces trois contrôles sont sautés et le harnais le dit.
+- **Plafond serveur.** Tout nouveau code qui lit une table susceptible de dépasser 1 000 lignes doit passer
+  par `fetchAllRows` (utils.js) : jamais d'arrêt sur « page plus courte que demandée ».

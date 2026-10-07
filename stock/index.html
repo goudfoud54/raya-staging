@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.4"></script>
+<script src="../utils.js?v=1.6"></script>
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -839,7 +839,17 @@ async function genererSnapshotMensuel(){
   const monthStart=ymdLocal(lastMonth);
   const monthEnd=ymdLocal(new Date(now.getFullYear(),now.getMonth(),0));
   toast('Génération du snapshot…');
-  const{data:saisiesAll}=await EatimeScope.from('stock_saisies').select('*').eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd);
+  // ⚠ LECTURE COMPLÈTE OBLIGATOIRE (2026-10-07, avec salaries v0.23). Le serveur plafonne chaque réponse à 1 000 lignes SANS erreur ;
+  // un mois en compte ~10 000. L'ancien code agrégeait les 1 000 premières puis PURGEAIT tout le mois : ~9 000
+  // saisies détruites sans avoir été agrégées. On lit tout (paginé, compté), et au moindre écart on n'agrège
+  // ni ne purge RIEN.
+  const lu=await fetchAllRows((cols,o)=>EatimeScope.from('stock_saisies').select(cols,o).eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd).order('date_saisie').order('id'),
+                             {onProgress:(n,a)=>toast(`Lecture des saisies… ${n}${a!=null?' / '+a:''}`)});
+  if(lu.error||!lu.complet){
+    alert(`Snapshot ANNULÉ — rien n'a été agrégé ni supprimé.\n\nLecture des saisies incomplète : ${lu.recu} reçue(s) sur ${lu.attendu==null?'?':lu.attendu} attendue(s)${lu.doublons?`, ${lu.doublons} doublon(s)`:''}${lu.error?` (${lu.error.message||lu.error})`:''}.\nPurger maintenant détruirait des saisies non agrégées. Réessayez plus tard.`);
+    return;
+  }
+  const saisiesAll=lu.rows;
   // Le snapshot est NUMÉRIQUE → on n'agrège que les saisies avec quantité. Les saisies « commentaire
   // seul » (quantite NULL) sont ignorées ici ET conservées en base (non purgées ci-dessous).
   const saisies=(saisiesAll||[]).filter(s=>s.quantite!=null);
@@ -847,9 +857,18 @@ async function genererSnapshotMensuel(){
   const agg={};
   saisies.forEach(s=>{const k=`${s.restaurant_id}|${s.produit_id}`;if(!agg[k])agg[k]={qte:[],last:null,restaurant_id:s.restaurant_id,produit_id:s.produit_id};agg[k].qte.push(Number(s.quantite));if(!agg[k].last||s.date_saisie>agg[k].last.date)agg[k].last={date:s.date_saisie,qte:Number(s.quantite)};});
   const snaps=Object.values(agg).map(g=>{const p=S.produits.find(x=>x.id===g.produit_id);return {organization_id:ORG.id,restaurant_id:g.restaurant_id,produit_id:g.produit_id,annee:lastMonth.getFullYear(),mois:lastMonth.getMonth()+1,qte_moyenne:+(g.qte.reduce((a,b)=>a+b,0)/g.qte.length).toFixed(2),qte_min:Math.min(...g.qte),qte_max:Math.max(...g.qte),qte_derniere:g.last.qte,nb_saisies:g.qte.length,valorisation_eur:+(g.last.qte*Number(p?.cout_unitaire||0)).toFixed(2)};});
-  await EatimeScope.from('stock_snapshots_mensuels').upsert(snaps,{onConflict:'organization_id,restaurant_id,produit_id,annee,mois'});
-  await EatimeScope.from('stock_saisies').delete().eq('organization_id',ORG.id).gte('date_saisie',monthStart).lte('date_saisie',monthEnd).not('quantite','is',null);
-  toast(`✓ Snapshot ${snaps.length} lignes · ${saisies.length} saisies purgées`);
+  // Purge UNIQUEMENT si le snapshot est bien écrit : l'erreur était ignorée, et la purge suivait quand même.
+  const{error:snapErr}=await EatimeScope.from('stock_snapshots_mensuels').upsert(snaps,{onConflict:'organization_id,restaurant_id,produit_id,annee,mois'});
+  if(snapErr){ alert('Snapshot NON enregistré — aucune saisie supprimée.\n\n'+snapErr.message); return; }
+  // Purge EXACTEMENT les saisies agrégées (par id), pas « tout le mois » : une saisie arrivée entre la lecture
+  // et la purge n'est jamais détruite sans avoir été comptée.
+  const ids=saisies.map(x=>x.id); let purgees=0;
+  for(let i=0;i<ids.length;i+=150){
+    const{data:del,error:delErr}=await EatimeScope.from('stock_saisies').delete().in('id',ids.slice(i,i+150)).select('id');
+    if(delErr){ alert(`Snapshot enregistré, mais purge interrompue après ${purgees} saisie(s) : ${delErr.message}\nLes saisies restantes sont intactes. NE RELANCEZ PAS le snapshot de ce mois : il serait recalculé sur les seules saisies restantes et écraserait le bon. Signalez-le.`); loadHistorique(); return; }
+    purgees+=(del||[]).length;
+  }
+  toast(`✓ Snapshot ${snaps.length} lignes · ${purgees} saisies purgées (sur ${saisies.length} agrégées)`);
   loadHistorique(); // recharge la liste en conservant les critères (barre d'outils déjà en place)
 }
 

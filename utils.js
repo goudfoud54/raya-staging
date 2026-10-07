@@ -56,6 +56,74 @@
   }
   function exploitationToday(cutoff) { return exploitationDay(Date.now(), cutoff); }
 
+  // 'AAAA-MM-JJ' + n jours → 'AAAA-MM-JJ'. Arithmétique en jours CALENDAIRES (ancre midi UTC) : jamais
+  // de « + n×86 400 000 » sur une heure locale, faux la semaine du changement d'heure.
+  function addDaysYMD(ymd, n) {
+    var p = String(ymd).split('-').map(Number);
+    var dt = new Date(Date.UTC(p[0], p[1] - 1, p[2] + n, 12, 0, 0));
+    return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0') + '-' + String(dt.getUTCDate()).padStart(2, '0');
+  }
+  // Écart de Paris sur UTC (minutes) à l'instant `ms` : +60 l'hiver, +120 l'été.
+  function _parisOffsetMin(ms) {
+    var p = _parisParts(ms);
+    return Math.round((Date.UTC(p.y, p.mo - 1, p.d, p.hh, p.mm) - Math.floor(ms / 60000) * 60000) / 60000);
+  }
+  // Heure MURALE de Paris (jour 'AAAA-MM-JJ' + `minutes` depuis minuit) → instant UTC en ms. Deux passes
+  // pour retomber sur le bon côté d'un changement d'heure. Une heure qui n'existe pas (02:30 le jour du
+  // passage à l'heure d'été) est décalée d'une heure — sans effet pour une bascule à 05:00 ou à minuit.
+  function parisWallToUtcMs(ymd, minutes) {
+    var p = String(ymd).split('-').map(Number);
+    var wall = Date.UTC(p[0], p[1] - 1, p[2], 0, 0) + (minutes || 0) * 60000;
+    var t = wall - _parisOffsetMin(wall) * 60000;
+    return wall - _parisOffsetMin(t) * 60000;
+  }
+  // Bornes [début, fin[ en instants UTC (ISO) couvrant les journées d'exploitation `from`..`to` incluses.
+  // C'est la MÊME définition du jour qu'exploitationDay : un instant t appartient à la période si et
+  // seulement si exploitationDay(t) ∈ [from, to] (prouvé par tests/alternance_export_test.js).
+  // Remplace les « from+'T00:00:00' » concaténés : sans décalage horaire, PostgREST les lit en UTC, ce
+  // qui retirait 1 à 2 h en début de période et en ajoutait autant après la fin.
+  function exploitationBounds(from, to, cutoff) {
+    var cut = cutoffToMinutes(cutoff);
+    var s = parisWallToUtcMs(from, cut), e = parisWallToUtcMs(addDaysYMD(to, 1), cut);
+    return { start: new Date(s).toISOString(), end: new Date(e).toISOString(), startMs: s, endMs: e };
+  }
+
+  // ── Lecture COMPLÈTE d'une requête, quel que soit le plafond du serveur ───────────────────────
+  // Supabase plafonne chaque réponse (max_rows, 1 000 sur ce projet — constaté dans les journaux de
+  // l'API : réponses « 0-999 »). Une requête qui demande plus reçoit 1 000 lignes SANS AUCUNE ERREUR.
+  // mk(colonnes, optionsSelect) doit renvoyer un builder NEUF, filtré et TRIÉ de façon déterministe
+  // (terminer le tri par 'id') : un builder PostgREST ne se rejoue pas, et un tri ambigu fait glisser
+  // les pages. Le compte attendu vient d'une requête count:'exact' sur les mêmes filtres.
+  //   ⚠ On avance du nombre de lignes RÉELLEMENT reçues et on ne s'arrête que sur une page VIDE ou le
+  //   compte atteint — jamais sur « page plus courte que demandée » : avec un plafond serveur, TOUTES
+  //   les pages sont plus courtes que demandé, et on s'arrêterait après la première.
+  // Renvoie {rows, attendu, recu, doublons, complet, error}. `complet` faux = NE PAS livrer en silence.
+  async function fetchAllRows(mk, opts) {
+    opts = opts || {};
+    var page = opts.page || 1000, maxRows = opts.maxRows || 500000;
+    var c;
+    try { c = await mk('id', { count: 'exact', head: true }); } catch (e) { return { error: e, rows: [], attendu: null, recu: 0, doublons: 0, complet: false }; }
+    if (c && c.error) return { error: c.error, rows: [], attendu: null, recu: 0, doublons: 0, complet: false };
+    var attendu = (c && typeof c.count === 'number') ? c.count : null;
+    var rows = [], vus = new Set(), doublons = 0, off = 0;
+    while (off < maxRows && (attendu == null || rows.length < attendu)) {
+      var r;
+      try { r = await mk(opts.cols || '*').range(off, off + page - 1); } catch (e) { return { error: e, rows: rows, attendu: attendu, recu: rows.length, doublons: doublons, complet: false }; }
+      if (r.error) return { error: r.error, rows: rows, attendu: attendu, recu: rows.length, doublons: doublons, complet: false };
+      var data = r.data || [];
+      if (!data.length) break;
+      for (var i = 0; i < data.length; i++) {
+        var row = data[i];
+        if (row && row.id != null) { if (vus.has(row.id)) { doublons++; continue; } vus.add(row.id); }
+        rows.push(row);
+      }
+      off += data.length;
+      if (opts.onProgress) opts.onProgress(rows.length, attendu);
+    }
+    return { rows: rows, attendu: attendu, recu: rows.length, doublons: doublons,
+             complet: attendu != null && rows.length === attendu && doublons === 0, error: null };
+  }
+
   // ── Kiosques : état d'une tablette + décision de mise à jour auto (logique PURE, testée) ──────
   // Classe un heartbeat en trois états DISTINCTS (confondre les deux derniers rendrait l'écran
   // inutilisable comme feu vert au lot 2) :
@@ -154,7 +222,7 @@
     return { status: r.status, ok: r.ok && j.ok === true, pointage: j.pointage || null, error: j.error || null, retry: j.retry_after_s || null };
   }
 
-  const api = { fmtD, ymdLocal, todayYMD, cutoffToMinutes, exploitationDay, exploitationToday, kioskStatus, shouldAutoUpdate, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
+  const api = { fmtD, ymdLocal, todayYMD, cutoffToMinutes, exploitationDay, exploitationToday, addDaysYMD, parisWallToUtcMs, exploitationBounds, fetchAllRows, kioskStatus, shouldAutoUpdate, escapeHtml, eur0, eur2, toMin, dur, kioskId, verifyPin, createPointage };
   g.EatimeUtils = api;
   // Drop-in globaux :
   if (typeof g.fmtD === 'undefined') g.fmtD = fmtD;
@@ -163,6 +231,9 @@
   if (typeof g.cutoffToMinutes === 'undefined') g.cutoffToMinutes = cutoffToMinutes;
   if (typeof g.exploitationDay === 'undefined') g.exploitationDay = exploitationDay;
   if (typeof g.exploitationToday === 'undefined') g.exploitationToday = exploitationToday;
+  if (typeof g.addDaysYMD === 'undefined') g.addDaysYMD = addDaysYMD;
+  if (typeof g.exploitationBounds === 'undefined') g.exploitationBounds = exploitationBounds;
+  if (typeof g.fetchAllRows === 'undefined') g.fetchAllRows = fetchAllRows;
   if (typeof g.kioskStatus === 'undefined') g.kioskStatus = kioskStatus;
   if (typeof g.shouldAutoUpdate === 'undefined') g.shouldAutoUpdate = shouldAutoUpdate;
   g.kioskId = kioskId; g.verifyPin = verifyPin; g.createPointage = createPointage;
