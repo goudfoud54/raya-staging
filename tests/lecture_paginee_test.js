@@ -197,6 +197,15 @@ console.log('\n── 3. Finance et HACCP : un total juste, ou pas de total ─�
   let n = 0; db.hooks['fin_ca_journalier:select'] = q => { if (!(q.o.count && q.o.head) && ++n === 2) db.t.fin_ca_journalier.splice(0, 3); return null; };
   el = { innerHTML: '' }; await renderDashboardFin(el);
   t('… lecture incomplète → « Chiffres non affichés », aucun total partiel', /⛔ Chiffres non affichés/.test(el.innerHTML) && !/€/.test(el.innerHTML), el.innerHTML.slice(0, 160));
+  // Marge : la SEULE lecture Finance déjà tronquée en production (créneaux du planning, ~860/mois pour 3
+  // restaurants). 1 800 créneaux de 4 h sur deux mois, 12 €/h brut, coefficient 1,5 → 129 600 € chargés.
+  eval('global.renderMarge=' + grabG(FIN, 'renderMarge').replace(/^async function renderMarge/, 'async function') + ';');
+  db = makeDB({ cap: 1000 }); global.EatimeScope = db.api;
+  global.S = { salaries: [{ id: 'm1', taux_horaire_brut: 12, coef_charges_perso: 1.5 }] }; global.ORG = { coef_charges: 1.42 };
+  for (let i = 0; i < 1800; i++) db.T('planning_creneaux').push({ id: 'pc' + String(i).padStart(5, '0'), restaurant_id: 'r' + (i % 3), salarie_id: 'm1', date: addDaysYMD('2026-08-01', i % 60), heure_debut: '11:00', heure_fin: '15:00' });
+  el = { innerHTML: '' }; try { await renderMarge(el); } catch (e) { el.innerHTML = 'EXCEPTION ' + e.message; }
+  const masse = (el.innerHTML.match(/Masse salariale chargée \(planning\)<\/td><td[^>]*>([^<]*)</) || [])[1];
+  t('marge : masse salariale sur 1 800 créneaux = 129 600 € (requête unique tronquée : 72 000 €)', masse === '129600.00 €', masse || el.innerHTML.slice(0, 200));
   // HACCP : un registre incomplet n'est pas présenté comme complet ; plus de limit(500) avant le filtre snack.
   const hacCode = HAC.replace(/\/\/[^\n]*/g, '');
   t('HACCP : plus aucun .limit(500) dans le module', !/\.limit\(500\)/.test(hacCode));

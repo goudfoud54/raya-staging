@@ -188,8 +188,10 @@ button{cursor:pointer;border:none;background:none}
 </div>
 
 <!-- LISTE -->
+<!-- Lecture incomplète : HORS de la liste — la fiche (indispos, pointages, heures Badgeuse) masque #listView,
+     et c'est précisément là que l'avertissement doit rester visible. -->
+<div id="lectureBarSal" style="display:none;background:rgba(196,90,90,.16);border-bottom:2px solid var(--bad);padding:9px 24px;font-size:13px;position:sticky;top:0;z-index:30"></div>
 <div id="listView" class="hidden">
-  <div id="lectureBarSal" style="display:none;background:rgba(196,90,90,.16);border-bottom:2px solid var(--bad);padding:9px 24px;font-size:13px"></div>
   <div class="header">
     <div class="brand">Raya <small>· Gestion Salariés · <span id="ver" style="font-size:10px;color:var(--muted)"></span></small></div>
     <div class="h-actions">
@@ -239,7 +241,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.26 · export des pointages : le récapitulatif en tête du fichier devient une option (décochée par défaut, fichier directement importable en paie) — le contrôle d\'exhaustivité reste, et le nombre de pointages est dans le nom du fichier · lectures complètes vérifiées par un verrou';
+const VERSION='v0.27 · le bandeau « lecture incomplète » reste visible dans la fiche salarié (il disparaissait à l\'ouverture d\'une fiche) · récapitulatif du CSV de pointages en option, nombre de pointages dans le nom du fichier';
 let ME=null, ORG={};
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
