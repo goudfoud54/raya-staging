@@ -124,8 +124,14 @@ Deno.serve(async (req) => {
     for (const p of (pts || [])) (ptsBySal[p.salarie_id] ||= []).push(p);
 
     // Indispos + alternance des salariés concernés
+    // Lire MOINS (2026-10, lectures plafonnées) : estIgnore ne regarde que les indispos RÉCURRENTES et les
+    // PONCTUELLES datées d'hier ou d'aujourd'hui. L'ancienne lecture rapatriait TOUT l'historique des
+    // salariés du jour — tronqué sans erreur au-delà de 1 000 lignes (plafond PostgREST), donc une absence
+    // validée pouvait être ignorée et déclencher une fausse alerte de retard. ⚠ NON DÉPLOYÉ : la version en
+    // production (v2) diverge du dépôt sur d'autres points (finMinutes, hhmm) — à relire avant tout déploiement.
     const { data: dispos } = salIds.length
-      ? await sb.from('salarie_dispos').select('*').in('salarie_id', salIds) : { data: [] } as any;
+      ? await sb.from('salarie_dispos')/* borné : salariés du jour × (récurrentes + ponctuelles d'hier/aujourd'hui) */.select('*').in('salarie_id', salIds)
+          .or(`type.eq.recurrente,date_specifique.in.(${yesterday},${today})`) : { data: [] } as any;
     const disposBySal: Record<string, any[]> = {};
     for (const d of (dispos || [])) (disposBySal[d.salarie_id] ||= []).push(d);
     const { data: altern } = salIds.length

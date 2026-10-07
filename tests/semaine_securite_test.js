@@ -19,6 +19,8 @@ const h=fs.readFileSync(path.join(__dirname,"..","planning/index.html"),"utf8");
 const {extractFn}=require("./extract.js");
 const grab=n=>extractFn(h,n);
 const inst=n=>{ try{ eval("global."+n+"="+grab(n).replace(/^(async )?function/,'$1function')+";"); }catch(e){ console.log('MISS',n,(''+e).split('\n')[0]); } };
+// utils.js réel (fetchAllRows : la purge lit par pages depuis v0.71).
+{ global.window=global.window||{}; eval(fs.readFileSync(path.join(__dirname,'..','utils.js'),'utf8')); global.fetchAllRows=window.EatimeUtils.fetchAllRows; }
 const constOf=(n)=>{ const m=h.match(new RegExp("const "+n+"=([^;\\n]*);")); if(!m) throw new Error('const '+n+' introuvable'); eval("global."+n+"="+m[1]+";"); };
 
 let ok=true;
@@ -210,14 +212,18 @@ function makeDB(rows, refuse){
   class Q{ constructor(k,p){this.k=k;this.p=p;this.f=[];this.sel=false;}
     in(c,v){this.f.push(r=>v.includes(r[c]));return this;} eq(c,v){this.f.push(r=>r[c]===v);return this;}
     gte(c,v){this.f.push(r=>r[c]>=v);return this;} lt(c,v){this.f.push(r=>r[c]<v);return this;}
-    select(){this.sel=true;return this;} single(){this.one=true;return this;}
+    select(c,o){this.sel=true;this.so=o||{};return this;} single(){this.one=true;return this;}
+    // v0.71 : la purge lit par fetchAllRows (compte exact + pages). Tri par id, plafond de 1 000 comme la vraie base.
+    order(){return this;} range(a,b){this.rg=[a,b];return this;}
     then(res,rej){ try{ res(this.run()); }catch(e){ rej(e); } }
     run(){ const m=r=>this.f.every(f=>f(r));
-      if(this.k==='select') return {data:db.rows.filter(m).map(r=>({...r})), error:null};
+      if(this.k==='select'){ const all=db.rows.filter(m).sort((x,y)=>x.id<y.id?-1:x.id>y.id?1:0);
+        if(this.so&&this.so.head) return {data:null,count:all.length,error:null};
+        const sl=this.rg?all.slice(this.rg[0],this.rg[1]+1):all; return {data:sl.slice(0,1000).map(r=>({...r})), error:null}; }
       if(this.k==='delete'){ const hit=db.rows.filter(m).filter(r=>!(refuse&&refuse.has(r.id)));
         db.rows=db.rows.filter(r=>!hit.includes(r)); return {data:this.sel?hit.map(r=>({id:r.id})):null, error:null}; }
       if(this.k==='upsert'){ db.rows=db.rows.filter(r=>key(r)!==key(this.p)); db.rows.push({...this.p}); return {data:{...this.p},error:null}; } } }
-  db.api={ from:()=>({ select:()=>new Q('select'), delete:()=>new Q('delete'), upsert:(row)=>new Q('upsert',row) }) };
+  db.api={ from:()=>({ select:(c,o)=>new Q('select').select(c,o), delete:()=>new Q('delete'), upsert:(row)=>new Q('upsert',row) }) };
   return db;
 }
 const RESTOS=[{id:'c',nom:'Raya Carnot'},{id:'g',nom:'Raya Grand Cœur'},{id:'l',nom:'Raya Lobau'}];

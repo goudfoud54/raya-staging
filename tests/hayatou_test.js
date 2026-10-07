@@ -12,7 +12,8 @@ global._pdur=(d,f)=>{let a=_pmin(d),b=_pmin(f);if(a==null||b==null)return 0;if(b
 global.DEF_TIME=svc=>svc==='midi'?['11:00','14:30']:['18:30','23:30'];
 global.fmtH1=x=>(Math.round(x*10)/10).toString().replace('.',',');
 // extract solver functions
-for(const fn of ['_toMin','overlaps','_indispoBlocking','_endCapMin','_ruleCtx','isMultiSnack','weekMinutesOf','weekHoursOf','snackPrioriteOf','hoursOnMorePrioritaryRestos','snackPriorityGate','sureffBlockedByPriority','sortCandidates','plafondOf','getShifts','hasIndispo','isSuspended','hasPonctuelleAbsence','checkPlacement','dayJourType','snackTargetSlots','hasEffectifsConfig','removeCreneau','autoFillCore','autoFillMultiWeek']){
+for(const fn of ['_toMin','overlaps','_indispoBlocking','_endCapMin','_ruleCtx','isMultiSnack','weekMinutesOf','weekHoursOf','snackPrioriteOf','hoursOnMorePrioritaryRestos','snackPriorityGate','sureffBlockedByPriority','sortCandidates','plafondOf','getShifts','hasIndispo','isSuspended','hasPonctuelleAbsence','checkPlacement','dayJourType','snackTargetSlots','hasEffectifsConfig','removeCreneau','autoFillCore','autoFillMultiWeek',
+  'guardLecturesCompletes']){   // v0.71 : garde « lecture incomplète » (S.lectures absent ici = lectures complètes)
   try{ eval("global."+fn+"="+grab(fn).replace(/^(async )?function/,'$1function')+";"); }catch(e){ console.log('MISS',fn,e.message||e); }
 }
 eval("global."+gc("PLACE_RULES").slice(4).replace(/^/,''));  // PLACE_RULES

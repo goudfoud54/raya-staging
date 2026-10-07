@@ -14,7 +14,7 @@
      SUPPRIMÉE au profit de celle-ci, pour ne pas maintenir deux moteurs de bulles. -->
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
-<script src="../utils.js?v=1"></script>
+<script src="../utils.js?v=1.7"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
@@ -260,6 +260,9 @@ table.plan td input:focus{border-color:var(--gold);background:var(--surface)}
        pas sur « Analyser » s'il n'a aucune raison de soupçonner un problème — c'est exactement ce qui
        s'est passé avec les 7 jours de Youcef. Discret mais présent, avec le compte et un lien. -->
   <div id="conformiteBar" style="display:none"></div>
+  <!-- Lecture incomplète (plafond serveur de 1 000 lignes) : jamais de planning calculé en silence sur des
+       données partielles. Rempli par renderLectureBar() à chaque rendu. -->
+  <div id="lectureBar" style="display:none;background:rgba(196,90,90,.16);border-bottom:2px solid var(--bad);padding:9px 24px;font-size:13px;color:var(--text)"></div>
 
   <div class="eff-wrap"><div class="eff-grid" id="effGrid"></div></div>
 
@@ -331,7 +334,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.70 · PDF : la mention « aussi … » sous le nom est retirée, seule la marque « » GC » dans les cases des jours travaillés ailleurs reste · auto-fill sur la semaine en cours : la case à cocher n\'est exigée que s\'il peut déplacer ou supprimer des créneaux existants — s\'il ne fait qu\'ajouter, confirmation simple';
+const VERSION='v0.71 · lectures complètes : le planning ne charge plus que les indisponibilités utiles à la semaine (≈160 lignes au lieu de toute la table) et les lit en entier malgré le plafond de 1 000 lignes du serveur ; créneaux de la semaine, purge, PDF et rapport aussi · une lecture incomplète affiche un bandeau rouge et bloque l\'auto-fill';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -604,9 +607,10 @@ async function purgeRestos(ids){
   ids=(ids||[]).filter(Boolean); if(!ids.length) return;
   const monday=new Date(MONDAY), from=fmtDate(monday), to=fmtDate(dateOfDay(7));
   setSS('busy','Comptage des créneaux…');
-  const {data,error}=await EatimeScope.from('planning_creneaux').select('*').in('restaurant_id',ids).gte('date',from).lt('date',to);
-  if(error){ setSS('err','Purge impossible : lecture des créneaux — '+error.message); return; }
-  const rows=data||[];
+  // Lecture COMPLÈTE : le nombre annoncé dans la confirmation doit être celui qu'on supprime.
+  const lu=await fetchAllRows((c,o)=>EatimeScope.from('planning_creneaux').select(c,o).in('restaurant_id',ids).gte('date',from).lt('date',to).order('id'));
+  if(lu.error||!lu.complet){ setSS('err','Purge impossible : lecture des créneaux '+(lu.error?'— '+(lu.error.message||lu.error):`incomplète (${lu.recu}/${lu.attendu})`)); return; }
+  const rows=lu.rows;
   if(!rows.length){ setSS('ok','Rien à purger — la semaine est déjà vide'); return; }
   const parR=(S.restos||[]).filter(r=>rows.some(c=>c.restaurant_id===r.id)).map(r=>{
     const mine=rows.filter(c=>c.restaurant_id===r.id);
@@ -980,15 +984,68 @@ async function init(){
   await loadWeek();
 }
 
+// ===== LECTURES PLAFONNÉES (v0.71) =====
+// Supabase rend AU PLUS 1 000 lignes par réponse, SANS erreur (journaux de l'API : « 0-999 »). Une table
+// qui grossit finit donc par être lue en partie, en silence. Les indisponibilités en étaient à 748 pour
+// Groupe Raya (+150 à 220 par mois) : vers mi-novembre 2026, checkPlacement aurait ignoré des indispos
+// VALIDÉES et l'auto-fill aurait placé quelqu'un dessus. Deux remèdes, dans cet ordre :
+//   1. LIRE MOINS — le planning n'a besoin que des indispos qui touchent la semaine affichée ;
+//   2. LIRE TOUT ce qu'on lit — fetchAllRows (utils.js) : pagination + compte vérifié.
+// Une lecture incomplète n'est JAMAIS utilisée en silence : bandeau rouge + auto-fill bloqué
+// (renderLectureBar / guardLecturesCompletes). Verrou : tests/lecture_paginee_test.js.
+//
+// Indisponibilités utiles au planning de la semaine du `monday` — fonction de FICHIER (testée).
+// Trois lectures simples fusionnées par id, plutôt qu'un seul or(and(…)) :
+//   • les RÉCURRENTES (jour de la semaine, sans date) : toutes ;
+//   • les PONCTUELLES datées de [lundi−7, lundi+14[ : la semaine, plus une marge d'une semaine de chaque côté
+//     (veille du lundi, lendemain du dimanche, analyse de la semaine précédente) ;
+//   • les demandes EN ATTENTE, toutes dates : le badge 🔔 et la fenêtre de validation.
+// Avant : TOUTE la table (748 lignes, croissance continue). Après : ~157 lignes, stable dans le temps.
+async function loadDisposPlanning(monday){
+  const m=new Date(monday), d1=new Date(m), d2=new Date(m); d1.setDate(d1.getDate()-7); d2.setDate(d2.getDate()+14);
+  const from=fmtDate(d1), to=fmtDate(d2);
+  const T=()=>EatimeScope.from('salarie_dispos');
+  const lus=await Promise.all([
+    fetchAllRows((c,o)=>T().select(c,o).eq('type','recurrente').order('id')),
+    fetchAllRows((c,o)=>T().select(c,o).eq('type','ponctuelle').gte('date_specifique',from).lt('date_specifique',to).order('id')),
+    fetchAllRows((c,o)=>T().select(c,o).eq('statut_demande','en_attente').order('id')),
+  ]);
+  const byId=new Map(); lus.forEach(r=>(r.rows||[]).forEach(x=>byId.set(x.id,x)));
+  const ko=lus.filter(r=>!r.complet);
+  return { rows:[...byId.values()], complet:!ko.length, recu:byId.size,
+           detail:{recurrentes:lus[0].recu, ponctuelles:lus[1].recu, en_attente:lus[2].recu},
+           ecart:ko.map(r=>r.error?(r.error.message||String(r.error)):`${r.recu} reçue(s) sur ${r.attendu==null?'?':r.attendu}`).join(' · ') };
+}
+// Créneaux de TOUS les restaurants pour la semaine — complets ou signalés (fetchAllRows).
+function loadCreneauxSemaine(from, to){
+  return fetchAllRows((c,o)=>EatimeScope.from('planning_creneaux').select(c,o).gte('date',from).lt('date',to).order('date').order('id'));
+}
+// État des lectures de la semaine : {nom: {complet, ecart}}. Rempli par loadWeek.
+function renderLectureBar(){
+  const el=document.getElementById('lectureBar'); if(!el) return;
+  const ko=Object.entries(S.lectures||{}).filter(([,v])=>v && !v.complet);
+  if(!ko.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.innerHTML=`⛔ <b>Lecture incomplète</b> : ${ko.map(([k,v])=>`${escP(k)} (${escP(v.ecart||'écart')})`).join(' · ')}. Les règles peuvent ne pas voir une indisponibilité ou un créneau : <b>l'auto-fill est bloqué</b>. Rechargez la page ; si l'écart persiste, signalez-le.`;
+  el.style.display='block';
+}
+// Garde de l'auto-fill : jamais sur des données incomplètes (il placerait sur une indispo invisible).
+function guardLecturesCompletes(){
+  const ko=Object.entries(S.lectures||{}).filter(([,v])=>v && !v.complet);
+  if(!ko.length) return true;
+  setSS('err','⛔ Auto-fill bloqué : lecture incomplète ('+ko.map(([k])=>k).join(', ')+') — rechargez la page');
+  renderLectureBar();
+  return false;
+}
 async function loadWeek(){
   const from=fmtDate(MONDAY), to=fmtDate(dateOfDay(7));
   const toIncl=fmtDate(dateOfDay(7)); // lundi suivant (pour la règle « veille » du dimanche)
-  const[s,ro,d,cr,crAll,eff,reg,orr,alt,disc,ct,der]=await Promise.all([
+  const[s,ro,d,crAll,eff,reg,orr,alt,disc,ct,der]=await Promise.all([
     EatimeScope.from('salaries').select('*').order('nom'),
     EatimeScope.from('salarie_roles').select('*'),
-    EatimeScope.from('salarie_dispos').select('*'),
-    EatimeScope.from('planning_creneaux').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to),
-    EatimeScope.from('planning_creneaux').select('*').gte('date',from).lt('date',to),
+    loadDisposPlanning(MONDAY),
+    // Créneaux de la semaine, TOUS restaurants, lus en entier. Ceux du snack affiché en sont un sous-ensemble
+    // (S.creneaux) : une requête de moins, et la même lecture vérifiée pour les deux.
+    loadCreneauxSemaine(from, to),
     EatimeScope.from('planning_effectifs').select('*'),
     // Réglages : valeur par DÉFAUT de l'organisation (restaurant_id NULL) + EXCEPTIONS du restaurant
     // affiché. Le cloisonnement par organisation est assuré par la RLS (v6.33) ; ce filtre-ci évite
@@ -1008,7 +1065,8 @@ async function loadWeek(){
     // légal » (logLegalOverride), pas des créneaux. select tolérant : RLS refusée → [] sans casser la page.
     EatimeScope.from('planning_derogations').select('*').eq('restaurant_id',SNACK.id).gte('date',from).lt('date',to).not('salarie_id','is',null)
   ]);
-  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.data||[];S.creneaux=cr.data||[];S.allCreneauxWeek=crAll.data||[];S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];S.derogations=der.data||[];
+  S.lectures={'indisponibilités':d, 'créneaux de la semaine':crAll};
+  S.salaries=s.data||[];S.roles=ro.data||[];S.dispos=d.rows||[];S.allCreneauxWeek=crAll.rows||[];S.creneaux=S.allCreneauxWeek.filter(c=>c.restaurant_id===SNACK.id);S.effectifs=eff.data||[];S.regles=reg.data||[];S.orgRoles=orr.data||[];S.miseAPied=disc.data||[];S.contraintes=ct.data||[];S.derogations=der.data||[];
   // La colonne `origine` existe-t-elle ? On ne l'ÉCRIT que si elle est là : l'inclure sans la colonne
   // ferait échouer CHAQUE insertion de l'auto-fill — le pire des échecs silencieux, un remplissage qui
   // ne remplit rien.
@@ -1592,7 +1650,7 @@ async function submitAbsence(sid){
   const btn=document.getElementById('abs_save'); if(btn){ btn.disabled=true; }
   err.textContent='';
   // Créneaux déjà planifiés sur la période (tous restos) → proposer de les supprimer
-  const{data:existing,error:exErr}=await EatimeScope.from('planning_creneaux').select('id,date').eq('salarie_id',sid).gte('date',debut).lte('date',fin);
+  const{data:existing,error:exErr}=await EatimeScope.from('planning_creneaux')/* borné : 1 salarié × période d'absence ≤ 400 j × 2 services < 1 000 */.select('id,date').eq('salarie_id',sid).gte('date',debut).lte('date',fin);
   if(exErr){ err.textContent='Erreur: '+exErr.message; if(btn)btn.disabled=false; return; }
   if(existing && existing.length){
     if(confirm(`⚠ ${existing.length} créneau(x) déjà planifié(s) pour ce salarié sur la période.\n\nOK = les supprimer et marquer l'absence.\nAnnuler = garder les créneaux (ils apparaîtront en conflit avec l'absence).`)){
@@ -1943,6 +2001,7 @@ function showCheckDetails(i){
 function render(){
   document.getElementById('wkLabel').textContent=wkRangeLabel();
   renderWeekBanner();
+  renderLectureBar();
   computeConflicts();
   renderEffectifs();
   if(VIEW_MODE==='poste') renderPosteTable(); else renderTable();
@@ -2755,9 +2814,11 @@ function updateDemandesBadge(){
   if(b){if(pending){b.textContent=pending;b.style.display='flex';}else{b.style.display='none';}}
 }
 async function openDemandes(){
-  // Reload dispos pour avoir les dernières demandes
-  const{data}=await EatimeScope.from('salarie_dispos').select('*');
-  S.dispos=data||[];updateDemandesBadge();
+  // Recharge les dispos pour avoir les dernières demandes — par le MÊME chargeur que loadWeek : recharger
+  // seulement les demandes en attente écraserait les indispos de la semaine, et checkPlacement ne les
+  // verrait plus dès l'ouverture de cette fenêtre.
+  const d=await loadDisposPlanning(MONDAY);
+  S.dispos=d.rows; S.lectures=Object.assign(S.lectures||{},{'indisponibilités':d}); renderLectureBar(); updateDemandesBadge();
   const JOURS_LBL=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
   const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
   const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
@@ -2851,7 +2912,10 @@ function hasPonctuelleAbsence(sid,date){
 async function openReport(){
   setSS('busy','Chargement pointages…');
   const from=fmtDate(MONDAY), to=fmtDate(dateOfDay(7));
-  const{data:pts,error}=await EatimeScope.from('pointages').select('*').gte('ts',from+'T00:00:00').lt('ts',to+'T00:00:00').order('ts');
+  // Lecture complète (une semaine de pointages : ~420 pour 3 restaurants, plus d'un millier pour un
+  // établissement plus grand). Bornes inchangées (hors périmètre de la v0.71).
+  const _lp=await fetchAllRows((c,o)=>EatimeScope.from('pointages').select(c,o).gte('ts',from+'T00:00:00').lt('ts',to+'T00:00:00').order('ts').order('id'));
+  const error=_lp.error||(!_lp.complet?{message:`lecture incomplète des pointages (${_lp.recu}/${_lp.attendu}) — rapport non affiché`}:null), pts=_lp.rows;
   if(error){setSS('err','Erreur: '+error.message);return;}
   setSS('','');
   // Index pointages par (sid|date)
@@ -3086,6 +3150,7 @@ function autofillSpec(restoIds, dayIdx, action, extra){
 // _afResetPosed() à CHAQUE lancement, jamais entre deux snacks : le vivier « posé par nous » doit couvrir
 // toute la génération, c'est ce qui permet à un snack de libérer quelqu'un posé sur un autre juste avant.
 async function autoFillDay(dayIdx){
+  if(!guardLecturesCompletes())return;
   if(!guardEffectifsConfigured())return;
   const d=dateOfDay(dayIdx);
   const quand=`${JOURS[dayIdx].toLowerCase()} ${d.getDate()===1?'1er':d.getDate()} ${d.toLocaleDateString('fr-FR',{month:'long'})}`;
@@ -3094,6 +3159,7 @@ async function autoFillDay(dayIdx){
   await autoFillCore([dayIdx]);
 }
 async function autoFillWeek(){
+  if(!guardLecturesCompletes())return;
   if(!guardEffectifsConfigured())return;
   if(!await confirmDestructive(autofillSpec([SNACK.id],[0,1,2,3,4,5,6],'Remplir les postes vides')))return;
   _afResetPosed();
@@ -3138,6 +3204,7 @@ function launchAutoFillPicker(){
   autoFillMultiWeek(ids);
 }
 async function autoFillMultiWeek(ids){
+  if(!guardLecturesCompletes())return;
   // Ordre : le plus contraint (le plus de postes-cibles) d'abord, pour qu'il ne se fasse pas « rafler »
   // ses candidats par un snack moins tendu traité avant lui. Le tri inter-snack de sortCandidates
   // (manque vs heures_min) + le plafond via weekHoursOf limitent déjà la sur-affectation.
@@ -3171,6 +3238,8 @@ async function autoFillMultiWeek(ids){
     _afMulti={index:i+1,total,nom:SNACK.nom};
     updateAutofillProgress(0,1,'Placement (phases 1&2)…');
     await loadWeek(); // recharge S.creneaux/S.effectifs du snack + S.allCreneauxWeek (global, à jour)
+    // Lecture incomplète pour CE snack → on ne le remplit pas (il placerait sur une indispo invisible).
+    if(!guardLecturesCompletes()){ results.push({snackId:id, snackNom:SNACK.nom, skipped:true, lecture:true}); continue; }
     if(!hasEffectifsConfig()){ results.push({snackId:id, snackNom:SNACK.nom, skipped:true}); continue; }
     const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true, distribute:false})||{};
     // `chain` est conservé DÈS l'étape A : l'étape B écrasera `phase3`, et une réparation faite ici y
@@ -3190,6 +3259,7 @@ async function autoFillMultiWeek(ids){
     _afMulti={index:i+1,total,nom:SNACK.nom};
     updateAutofillProgress(0.5,1,'Distribution (min. d\'heures)…');
     await loadWeek();
+    if(!guardLecturesCompletes()) continue;   // lecture devenue incomplète entre les deux étapes : pas de distribution
     const res=await autoFillCore([0,1,2,3,4,5,6],{silent:true, phase3only:true, globalUnfilled})||{};
     const rr=results.find(r=>r.snackId===id); if(rr) rr.phase3=res.phase3||{};
   }
@@ -3220,7 +3290,7 @@ async function autoFillMultiWeek(ids){
 function showMultiSolveReport(results, underMin){
   const totalAdded=results.reduce((a,r)=>a+(r.added||0),0);
   const perSnack=results.map(r=>{
-    if(r.skipped) return `<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px"><b>${escP(r.snackNom)}</b> <span style="color:var(--warn)">— ignoré (aucun effectif configuré)</span></div>`;
+    if(r.skipped) return `<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px"><b>${escP(r.snackNom)}</b> <span style="color:${r.lecture?'var(--bad)':'var(--warn)'}">— ignoré (${r.lecture?'lecture incomplète des indisponibilités ou des créneaux — rechargez la page':'aucun effectif configuré'})</span></div>`;
     const nb=(r.report||[]).length;
     return `<div style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px"><b>${escP(r.snackNom)}</b> · <span style="color:var(--ok)">${r.added||0} placé(s)</span>${nb?` · <span style="color:var(--bad)">${nb} non comblé(s)</span>`:''}</div>`;
   }).join('');
@@ -3927,7 +3997,7 @@ async function openAnalyse(){
   let prevCost=null;
   try{
     const pFrom=fmtDate(dateOfDay(-7)), pTo=fmtDate(MONDAY);
-    const {data}=await EatimeScope.from('planning_creneaux').select('salarie_id,heure_debut,heure_fin')
+    const {data}=await EatimeScope.from('planning_creneaux')/* borné : 1 restaurant × 1 semaine */.select('salarie_id,heure_debut,heure_fin')
       .eq('restaurant_id',SNACK.id).gte('date',pFrom).lt('date',pTo);
     if(data) prevCost=costOfCreneaux(data).brut;
   }catch(e){ console.warn('[planning] coût semaine précédente indisponible', e); }
@@ -5346,7 +5416,8 @@ async function runPdf(){
   const from=fmtDate(MONDAY), to=fmtDate(dateOfDay(7));
   // TOUS les restaurants, pas seulement ceux cochés : le PDF de Lobau doit savoir qu'un salarié travaille
   // aussi à Grand Cœur (« » GC » dans les cases des jours concernés), même si seul Lobau est exporté.
-  const{data:allCr,error:crErr}=await EatimeScope.from('planning_creneaux').select('*').in('restaurant_id',(S.restos||[]).map(r=>r.id)).gte('date',from).lt('date',to);
+  const _lc=await fetchAllRows((c,o)=>EatimeScope.from('planning_creneaux').select(c,o).in('restaurant_id',(S.restos||[]).map(r=>r.id)).gte('date',from).lt('date',to).order('date').order('id'));
+  const allCr=_lc.rows, crErr=_lc.error||(!_lc.complet?{message:`lecture incomplète (${_lc.recu}/${_lc.attendu} créneaux)`}:null);
   // Une lecture en échec rendait un PDF VIDE sans un mot — le pire document à afficher en salle.
   if(crErr){ setSS('err','PDF non généré : lecture des créneaux impossible — '+crErr.message); return; }
   const creneauxByResto={};(allCr||[]).forEach(c=>{(creneauxByResto[c.restaurant_id]=creneauxByResto[c.restaurant_id]||[]).push(c);});

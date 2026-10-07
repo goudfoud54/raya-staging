@@ -11,7 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.6"></script>
+<script src="../utils.js?v=1.7"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
@@ -189,6 +189,7 @@ button{cursor:pointer;border:none;background:none}
 
 <!-- LISTE -->
 <div id="listView" class="hidden">
+  <div id="lectureBarSal" style="display:none;background:rgba(196,90,90,.16);border-bottom:2px solid var(--bad);padding:9px 24px;font-size:13px"></div>
   <div class="header">
     <div class="brand">Raya <small>· Gestion Salariés · <span id="ver" style="font-size:10px;color:var(--muted)"></span></small></div>
     <div class="h-actions">
@@ -238,7 +239,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.24 · alternance : un calendrier importé après « Abandonner » reste protégé (avertissement avant de quitter, conservé au changement d\'onglet)';
+const VERSION='v0.25 · lectures complètes : indisponibilités et retards lus en entier malgré le plafond de 1 000 lignes du serveur, bandeau rouge si une lecture est incomplète';
 let ME=null, ORG={};
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -360,7 +361,10 @@ async function loadAll(){
     EatimeScope.from('restaurants').select('*').eq('actif',true).order('nom'),
     EatimeScope.from('salaries').select('*').order('nom'),
     EatimeScope.from('salarie_roles').select('*'),
-    EatimeScope.from('salarie_dispos').select('*'),
+    // Indisponibilités : l'historique COMPLET de chaque fiche est affiché ici — lecture intégrale, paginée et
+    // vérifiée (748 lignes pour Groupe Raya au 2026-10-07, +150 à 220 par mois : au-delà de 1 000, une
+    // requête unique en perdait sans erreur).
+    fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).order('id')),
     EatimeScope.from('salarie_contraintes').select('*'),
     EatimeScope.from('salarie_paires').select('*'),
     EatimeScope.from('salarie_documents').select('*').order('created_at',{ascending:false}),
@@ -369,11 +373,16 @@ async function loadAll(){
     // mensuelles fausses, sans le moindre signe.
     fetchAllRows((cols,o)=>EatimeScope.from('pointages').select(cols,o).gte('ts',d90.toISOString()).order('ts',{ascending:false}).order('id')),
     EatimeScope.from('org_roles').select('*').eq('organization_id',ME.organization_id).eq('actif',true).order('ordre'),
-    EatimeScope.from('retards').select('*').gte('date',d90.toISOString().slice(0,10)).order('date',{ascending:false})
+    fetchAllRows((c,o)=>EatimeScope.from('retards').select(c,o).gte('date',d90.toISOString().slice(0,10)).order('date',{ascending:false}).order('id'))
   ]);
-  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.orgRoles=or.data||[];S.dispos=d.data||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.rows||[];S.ptsDepuis=exploitationDay(d90.getTime(),_cutoff());S.ptsComplet=!!pt.complet;
+  S.restos=r.data||[];S.salaries=s.data||[];S.roles=ro.data||[];S.orgRoles=or.data||[];S.dispos=d.rows||[];S.contraintes=c.data||[];S.paires=p.data||[];S.docs=dx.data||[];S.pts=pt.rows||[];S.ptsDepuis=exploitationDay(d90.getTime(),_cutoff());S.ptsComplet=!!pt.complet;
+  // Lectures incomplètes → bandeau PERSISTANT (un toast de 2 s ne suffit pas pour une donnée RH fausse).
+  S.lecturesKo=[['indisponibilités',d],['pointages (90 j)',pt],['retards (90 j)',rt]].filter(([,x])=>!x.complet)
+    .map(([k,x])=>`${k} : ${x.error?(x.error.message||x.error):`${x.recu} reçu(s) sur ${x.attendu==null?'?':x.attendu}`}`);
+  { const b=document.getElementById('lectureBarSal'); if(b){ b.style.display=S.lecturesKo.length?'block':'none';
+      b.innerHTML=S.lecturesKo.length?`⛔ <b>Lecture incomplète</b> — ${S.lecturesKo.map(escH).join(' · ')}. Les informations affichées peuvent être fausses : rechargez la page ; si l'écart persiste, signalez-le.`:''; } }
   if(!pt.complet) toast(`⚠ Pointages incomplets (${pt.recu}/${pt.attendu==null?'?':pt.attendu}) — les heures de l'onglet Badgeuse peuvent être fausses. Rechargez la page.`);
-  S.retards=rt.data||[];
+  S.retards=rt.rows||[];
   // Filtre rôles dynamique
   const fR=document.getElementById('fRole');
   if(fR) fR.innerHTML='<option value="">Tous les rôles</option>'+S.orgRoles.map(x=>`<option value="${x.cle}">${escH(x.nom)}</option>`).join('');
@@ -1454,7 +1463,8 @@ async function addDispo(){
   else row.jour_semaine=parseInt(document.getElementById('nd_jour').value);
   const{error}=await EatimeScope.from('salarie_dispos').insert(row);
   if(error){toast('Erreur: '+error.message);return;}
-  const{data}=await EatimeScope.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();toast('Ajoutée');
+  const lu=await fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).order('id'));
+  S.dispos=lu.rows||[];renderDispoList();render();toast(lu.complet?'Ajoutée':`Ajoutée — ⚠ liste incomplète (${lu.recu}/${lu.attendu}), rechargez la page`);
 }
 async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await EatimeScope.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const{data}=await EatimeScope.from('salarie_dispos').select('*');S.dispos=data||[];renderDispoList();render();}
 async function addContrainte(){
