@@ -14,7 +14,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.7"></script>
+<script src="../utils.js?v=1.9"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a;--info:#5b9cff}
@@ -138,7 +138,6 @@ const JOURS_SH=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
 let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200);}
 function val(id){const e=document.getElementById(id);return e?(e.value||'').trim():'';}
 /* fmtD factorisé dans utils.js (C3) */
-function fmtDS(d){if(!d)return'—';return new Date(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});}
 
 async function login(){
   const{error}=await sb.auth.signInWithPassword({email:val('loginEmail'),password:val('loginPw')});
@@ -304,13 +303,19 @@ async function renderDispos(el){
   const list=lu.rows||[];
   let html=`<div class="h2">Mes indisponibilités</div>
     <div class="h2-sub">${list.filter(d=>d.statut_demande==='en_attente').length} en attente · ${list.filter(d=>d.statut_demande==='validee').length} validées</div>`;
+  // Même liste que la fiche Salariés (utils.js listeIndispos) : récurrentes, puis aujourd'hui et à venir par
+  // date croissante, puis l'historique replié. Affichage seul — aucune ligne n'est retirée ni modifiée.
+  const E=EatimeUtils.escapeHtml;
+  const badge=e=>{const st=e.lignes[0].statut_demande||'validee'; // absent = validée, comme le planning
+    return st==='validee'?'<span class="badge ok">Validée</span>':st==='refusee'?'<span class="badge bad">Refusée</span>':'<span class="badge warn">En attente</span>';};
+  const item=e=>`<div class="dispo-item"><div class="hd"><div style="font-weight:700">${E(e.quand)}${e.periode?` <span style="font-weight:400;color:var(--muted);font-size:12px">· ${e.nbJours} jours</span>`:''}</div>${badge(e)}</div><div style="color:var(--muted);font-size:12.5px">${E(EatimeUtils.indispoStatut(e.lignes[0]))} · ${E(e.plage.charAt(0).toUpperCase()+e.plage.slice(1))}${e.motif?' · '+E(e.motif):''}</div></div>`;
+  const L=EatimeUtils.listeIndispos(list,{cutoff:ORG.journee_exploitation_debut});
   if(!list.length) html+='<div class="card-x" style="text-align:center;color:var(--muted)">Aucune indisponibilité déclarée</div>';
-  else list.forEach(d=>{
-    const stat=d.statut_demande==='validee'?'<span class="badge ok">Validée</span>':d.statut_demande==='refusee'?'<span class="badge bad">Refusée</span>':'<span class="badge warn">En attente</span>';
-    const txt=d.type==='recurrente'?`Tous les ${JOURS[d.jour_semaine].toLowerCase()}s`:d.date_specifique?fmtDS(d.date_specifique):'—';
-    const plage=(d.heure_debut||d.heure_fin)?`${(d.heure_debut||'').slice(0,5)} → ${(d.heure_fin||'').slice(0,5)}`:'Journée entière';
-    html+=`<div class="dispo-item"><div class="hd"><div style="font-weight:700">${txt}</div>${stat}</div><div style="color:var(--muted);font-size:12.5px">${plage}${d.motif?' · '+d.motif:''}</div></div>`;
-  });
+  else{
+    const vis=[...L.recurrentes,...L.aVenir,...L.aCompleter];
+    html+=vis.length?vis.map(item).join(''):'<div class="card-x" style="text-align:center;color:var(--muted)">Aucune indisponibilité à venir</div>';
+    if(L.comptes.historique) html+=`<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--muted);font-size:13px;font-weight:600;padding:6px 2px">Historique (${L.comptes.historique})</summary>${L.historique.map(m=>`<div style="color:var(--muted);font-size:12px;margin:10px 2px 6px">${E(m.label)}</div>${m.entrees.map(item).join('')}`).join('')}</details>`;
+  }
   el.innerHTML=html+'<button class="fab" onclick="openDispo()">+</button>';
 }
 function openDispo(){

@@ -11,7 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.7"></script>
+<script src="../utils.js?v=1.9"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
@@ -122,6 +122,14 @@ button{cursor:pointer;border:none;background:none}
 .doc .sz{color:var(--muted);font-size:11px}
 
 /* ── DISPO / CONTRAINTE ── */
+.dl-grp>summary,.dl-hist>summary,.dl-mois>summary{cursor:pointer;list-style:none}
+.dl-grp>summary::-webkit-details-marker,.dl-hist>summary::-webkit-details-marker,.dl-mois>summary::-webkit-details-marker{display:none}
+.dl-hist{margin-top:10px}
+.dl-hist>summary{font-size:12.5px;font-weight:600;color:var(--muted);padding:6px 2px}
+.dl-hist>summary::before,.dl-mois>summary::before{content:'▸ '}
+.dl-hist[open]>summary::before,.dl-mois[open]>summary::before{content:'▾ '}
+.dl-mois{margin-left:10px}
+.dl-mois>summary{font-size:12px;color:var(--muted);padding:5px 2px}
 .subitem{display:flex;align-items:center;gap:10px;padding:9px 13px;background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:7px;font-size:12.5px;flex-wrap:wrap}
 .add-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:14px;border-top:1px dashed var(--line-2)}
 .add-row select,.add-row input{padding:7px 10px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);font-size:12px;outline:none}
@@ -241,7 +249,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.27 · le bandeau « lecture incomplète » reste visible dans la fiche salarié (il disparaissait à l\'ouverture d\'une fiche) · récapitulatif du CSV de pointages en option, nombre de pointages dans le nom du fichier';
+const VERSION='v0.28 · indisponibilités de la fiche lisibles : dates en toutes lettres (« Samedi 24 octobre »), triées, périodes consécutives regroupées « Du … au … » (dépliables), passé rangé dans « Historique » replié par mois — sans rien supprimer en base';
 let ME=null, ORG={};
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -778,11 +786,11 @@ function setSnackFilter(rid){selectedSnack=rid;renderFiche();}
 
 // ===== DEMANDES INDISPOS =====
 function openDemandes(){
-  const JOURS_LBL=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
-  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  // Tri partagé : la demande la plus proche dans le temps en premier (avant : ordre d'arrivée).
+  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort(EatimeUtils.indispoTri);
   const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
-  const fmt=d=>{if(d.type==='recurrente')return 'Tous les '+JOURS_LBL[d.jour_semaine].toLowerCase()+'s';if(d.date_specifique)return new Date(d.date_specifique).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});return '—';};
-  const plage=d=>(d.heure_debut||d.heure_fin)?((d.heure_debut||'').slice(0,5)+' → '+(d.heure_fin||'').slice(0,5)):'journée entière';
+  // Format partagé (utils.js) : la date est lue en composantes, jamais new Date('AAAA-MM-JJ').
+  const fmt=d=>EatimeUtils.indispoQuand(d), plage=d=>EatimeUtils.indispoPlage(d), _E=EatimeUtils.escapeHtml;
   let html=`<h2>Demandes d'indisponibilité</h2>
     <div style="color:var(--muted);font-size:12.5px;margin-bottom:14px">${pending.length} demande(s) en attente de validation</div>`;
   if(!pending.length){
@@ -792,9 +800,9 @@ function openDemandes(){
     pending.forEach((d,i)=>{
       html+=`<div style="padding:14px 16px;${i>0?'border-top:1px solid var(--line)':''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-          <div><div style="font-weight:600;font-size:13.5px">${nameOf(d.salarie_id)}</div>
-          <div style="color:var(--muted);font-size:11.5px;margin-top:2px">${fmt(d)} · ${plage(d)}</div>
-          ${d.motif?'<div style="color:var(--muted);font-size:12px;margin-top:4px;font-style:italic">'+d.motif+'</div>':''}</div>
+          <div><div style="font-weight:600;font-size:13.5px">${_E(nameOf(d.salarie_id))}</div>
+          <div style="color:var(--muted);font-size:11.5px;margin-top:2px">${_E(fmt(d))} · ${_E(plage(d))}</div>
+          ${d.motif?'<div style="color:var(--muted);font-size:12px;margin-top:4px;font-style:italic">'+_E(d.motif)+'</div>':''}</div>
           <div style="display:flex;gap:8px">
             <button class="btn ghost sm" style="color:var(--bad);border-color:rgba(196,90,90,.4)" onclick="decideDispo('${d.id}','refusee')">Refuser</button>
             <button class="btn sm" onclick="decideDispo('${d.id}','validee')">Valider</button>
@@ -1280,13 +1288,45 @@ function triggerUpload(key){
 
 function fmtSize(n){if(!n)return'';if(n<1024)return n+' o';if(n<1048576)return(n/1024).toFixed(0)+' Ko';return(n/1048576).toFixed(1)+' Mo';}
 
+// Liste des indisponibilités de la fiche. AFFICHAGE SEUL (listeIndispos, utils.js) : récurrentes, puis
+// aujourd'hui et à venir, puis « Historique (N) » replié par mois. Aucune ligne n'est supprimée,
+// fusionnée ni modifiée — ce sont des absences RH réelles (arrêts maladie, congés) qui peuvent servir
+// en cas de litige, pour la paie ou un contrôle. Le planning lit toujours toutes les lignes brutes.
+const _dlOpen=new Set(); // blocs dépliés (période, historique, mois) — conservés d'un rendu à l'autre
+function dlToggle(el){ if(el.open)_dlOpen.add(el.dataset.k); else _dlOpen.delete(el.dataset.k); }
+function _dlLigne(e,{sousLigne=false}={}){
+  const E=EatimeUtils.escapeHtml;
+  const det=[E(e.plage),E(e.statut)].concat(e.motif?[E(e.motif)]:[]).join(' · ');
+  const dem=e.demande?` <span style="font-size:10.5px;font-weight:700;color:var(--warn,#e0a93a);border:1px solid currentColor;border-radius:4px;padding:0 5px">${E(e.demande)}</span>`:'';
+  if(sousLigne) return e.lignes.map(d=>`<div class="subitem" style="margin:0 0 5px 18px;padding:6px 11px"><span>${E(EatimeUtils.indispoQuand(d))}</span><button class="btn danger sm" style="margin-left:auto" title="Supprimer ce jour seulement" onclick="delDispo('${d.id}')">×</button></div>`).join('');
+  if(e.lignes.length===1){
+    const d=e.lignes[0];
+    return `<div class="subitem"><div><b>${E(e.quand)}</b> · ${det}${dem}</div><button class="btn danger sm" style="margin-left:auto" onclick="delDispo('${d.id}')">×</button></div>`;
+  }
+  const k='g:'+e.cle, n=e.lignes.length;
+  const compte=e.nbJours+' jour'+(e.nbJours>1?'s':'')+(n>e.nbJours?` · ${n} saisies`:'');
+  return `<details class="dl-grp" data-k="${k}" ${_dlOpen.has(k)?'open':''} ontoggle="dlToggle(this)">
+    <summary class="subitem"><div><b>${E(e.quand)}</b> · ${compte} · ${det}${dem}</div><span style="margin-left:auto;color:var(--muted);font-size:11px">déplier</span></summary>
+    ${_dlLigne(e,{sousLigne:true})}</details>`;
+}
 function renderDispoList(){
   const id=currentFiche.id;
-  document.getElementById('dispoList').innerHTML=disposOf(id).map(d=>{
-    const when=d.type==='ponctuelle'?(d.date_specifique||''):JOURS[d.jour_semaine]||'';
-    const plage=(d.heure_debut||d.heure_fin)?`${(d.heure_debut||'').slice(0,5)}–${(d.heure_fin||'').slice(0,5)}`:'journée';
-    return `<div class="subitem"><b>${when}</b> · ${plage} · ${d.statut} ${d.motif?'· '+d.motif:''}<button class="btn danger sm" style="margin-left:auto" onclick="delDispo('${d.id}')">×</button></div>`;
-  }).join('')||'<div style="color:var(--muted);font-size:13px">Aucune disponibilité enregistrée</div>';
+  const L=EatimeUtils.listeIndispos(disposOf(id),{cutoff:_cutoff()});
+  const c=L.comptes;
+  const el=document.getElementById('dispoList');
+  if(!c.total){ el.innerHTML='<div style="color:var(--muted);font-size:13px">Aucune indisponibilité enregistrée</div>'; return; }
+  const visibles=[...L.recurrentes,...L.aVenir,...L.aCompleter];
+  let html=visibles.map(e=>_dlLigne(e)).join('')
+    ||'<div style="color:var(--muted);font-size:13px;margin-bottom:7px">Aucune indisponibilité aujourd’hui ni à venir.</div>';
+  if(c.historique){
+    const kH='hist';
+    html+=`<details class="dl-hist" data-k="${kH}" ${_dlOpen.has(kH)?'open':''} ontoggle="dlToggle(this)">
+      <summary>Historique (${c.historique})</summary>
+      ${L.historique.map(m=>{const k='m:'+m.ym;return `<details class="dl-mois" data-k="${k}" ${_dlOpen.has(k)?'open':''} ontoggle="dlToggle(this)">
+        <summary>${EatimeUtils.escapeHtml(m.label)} (${m.n})</summary>${m.entrees.map(e=>_dlLigne(e)).join('')}</details>`;}).join('')}
+    </details>`;
+  }
+  el.innerHTML=html;
 }
 function renderContrList(){
   const id=currentFiche.id;
@@ -1481,7 +1521,7 @@ async function addDispo(){
   const lu=await fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).order('id'));
   S.dispos=lu.rows||[];renderDispoList();render();toast(lu.complet?'Ajoutée':`Ajoutée — ⚠ liste incomplète (${lu.recu}/${lu.attendu}), rechargez la page`);
 }
-async function delDispo(did){if(!confirm('Supprimer cette indisponibilité ?'))return;const{error}=await EatimeScope.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const lu=await fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).order('id'));S.dispos=lu.rows||[];renderDispoList();render();if(!lu.complet)toast(`⚠ liste des indisponibilités incomplète (${lu.recu}/${lu.attendu}) — rechargez la page`);}
+async function delDispo(did){const _d=S.dispos.find(x=>x.id===did);if(!confirm('Supprimer l’indisponibilité « '+(_d?EatimeUtils.indispoQuand(_d)+' · '+EatimeUtils.indispoPlage(_d):'?')+' » ?\n\nLa ligne sera effacée définitivement (elle ne sera plus visible dans l’historique).'))return;const{error}=await EatimeScope.from('salarie_dispos').delete().eq('id',did);if(error){toast('Erreur : '+error.message);return;}const lu=await fetchAllRows((c,o)=>EatimeScope.from('salarie_dispos').select(c,o).order('id'));S.dispos=lu.rows||[];renderDispoList();render();if(!lu.complet)toast(`⚠ liste des indisponibilités incomplète (${lu.recu}/${lu.attendu}) — rechargez la page`);}
 async function addContrainte(){
   const id=currentFiche.id;
   const cle=document.getElementById('nc_cle').value;

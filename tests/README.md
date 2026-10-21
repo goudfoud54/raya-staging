@@ -145,3 +145,23 @@ les noms de table **littéraux** : `finMk(table,…)` (finance) et `hMk(table,�
 
 `tests/fakedb.js` est la base simulée PARTAGÉE (plafond, count/head, range, contraintes, crochets de panne) —
 l'importer, ne pas la recopier.
+
+## Affichage des indisponibilités (`indispo_affichage_test.js`, salariés v0.28, utils.js v1.9)
+
+Le format des indisponibilités vient d'**une seule source**, `utils.js` (`ymdLong`, `ymdRange`, `indispoPlage`,
+`indispoStatut`, `indispoQuand`, `indispoTri`, `indispoPassee`, `listeIndispos`), utilisée par Salariés (fiche +
+demandes), Planning (demandes), « Moi » et Dispos. Le harnais :
+
+1. **se relance lui-même sous 6 fuseaux** (`TZ=` Paris, Los Angeles, Martinique, Tahiti, Kiritimati, UTC) et exige
+   des textes identiques — le défaut `new Date('AAAA-MM-JJ')` ne se voit PAS sur un poste à Paris, un test lancé
+   seulement en métropole ne prouve rien ; contre-preuve : l'ancienne expression affiche « vendredi 23 » à LA ;
+2. vérifie la journée d'exploitation avec **trois instants** (23:30, 04:30 le lendemain, 05:30) — c'est 04:30 qui
+   distingue la bonne règle de « passé = avant minuit » ;
+3. vérifie la complétude **sur les id** (chaque ligne dans exactement une entrée), pas sur un total ;
+4. exécute le **vrai** `renderDispoList` (un bouton × par ligne, aucun accès base, lignes non modifiées, motif
+   échappé) et les vraies listes des autres pages ;
+5. interdit `new Date(…date_specifique)` dans les pages et exige `utils.js?v=1.9` partout où les nouvelles
+   fonctions sont appelées (un `utils.js` ancien en cache = liste vide).
+
+Les aides de rendu sont extraites de façon tolérante : remettre l'ancien `salaries/index.html` (`git show`) fait
+échouer 12 vérifications — c'est la contre-preuve.

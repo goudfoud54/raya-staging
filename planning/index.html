@@ -14,7 +14,7 @@
      SUPPRIMÉE au profit de celle-ci, pour ne pas maintenir deux moteurs de bulles. -->
 <link rel="stylesheet" href="../ui.css?v=2">
 <script src="../ui.js?v=2"></script>
-<script src="../utils.js?v=1.7"></script>
+<script src="../utils.js?v=1.9"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../access.js?v=6.31"></script>
 <script src="../orgscope.js?v=1"></script>
@@ -334,7 +334,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.71 · lectures complètes : le planning ne charge plus que les indisponibilités utiles à la semaine (≈160 lignes au lieu de toute la table) et les lit en entier malgré le plafond de 1 000 lignes du serveur ; créneaux de la semaine, purge, PDF et rapport aussi · une lecture incomplète affiche un bandeau rouge et bloque l\'auto-fill';
+const VERSION='v0.72 · demandes d\'indisponibilité : dates en toutes lettres justes dans tous les fuseaux (« Samedi 24 octobre »), plages en mots (« 18:00 → minuit »), la plus proche d\'abord';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -2819,11 +2819,12 @@ async function openDemandes(){
   // verrait plus dès l'ouverture de cette fenêtre.
   const d=await loadDisposPlanning(MONDAY);
   S.dispos=d.rows; S.lectures=Object.assign(S.lectures||{},{'indisponibilités':d}); renderLectureBar(); updateDemandesBadge();
-  const JOURS_LBL=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
-  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  // Format et tri PARTAGÉS (utils.js, mêmes textes que Salariés) : la date est lue en composantes, jamais
+  // new Date('AAAA-MM-JJ') (lu en UTC → la veille à l'ouest de Greenwich). Tri : la plus proche d'abord.
+  const pending=S.dispos.filter(d=>d.statut_demande==='en_attente').sort(EatimeUtils.indispoTri);
   const nameOf=sid=>{const s=S.salaries.find(x=>x.id===sid);return [s?.prenom,s?.nom].filter(Boolean).join(' ')||s?.nom||'?';};
-  const fmt=d=>{if(d.type==='recurrente')return 'Tous les '+JOURS_LBL[d.jour_semaine].toLowerCase()+'s';if(d.date_specifique)return new Date(d.date_specifique).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});return '—';};
-  const plage=d=>(d.heure_debut||d.heure_fin)?((d.heure_debut||'').slice(0,5)+' → '+(d.heure_fin||'').slice(0,5)):'journée entière';
+  const fmt=d=>escP(EatimeUtils.indispoQuand(d));
+  const plage=d=>escP(EatimeUtils.indispoPlage(d));
   let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px">
     <div><h3 style="margin:0;font-size:17px">Demandes d'indisponibilité</h3>
     <div style="color:var(--muted);font-size:12.5px;margin-top:4px">${pending.length} en attente · L'auto-fill et l'alerte ne tiennent compte que des validées.</div></div>
@@ -2836,7 +2837,7 @@ async function openDemandes(){
     pending.forEach((d,i)=>{
       html+=`<div style="padding:14px 16px;${i>0?'border-top:1px solid var(--line)':''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
-          <div><div style="font-weight:600;font-size:13.5px">${nameOf(d.salarie_id)}</div>
+          <div><div style="font-weight:600;font-size:13.5px">${escP(nameOf(d.salarie_id))}</div>
           <div style="color:var(--muted);font-size:11.5px;margin-top:3px">${fmt(d)} · ${plage(d)}</div>
           ${(d.motif && voirMotifAbsence(d.salarie_id))?'<div style="color:var(--muted);font-size:12px;margin-top:5px;font-style:italic">'+escP(d.motif)+'</div>':''}</div>
           <div style="display:flex;gap:8px">

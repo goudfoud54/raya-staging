@@ -6,7 +6,7 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Raya — Mes indisponibilités</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../utils.js?v=1.2"></script>
+<script src="../utils.js?v=1.9"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root, [data-theme="dark"]{--gold:#c8a035;--bg:#0b0b15;--card:#15151f;--surface:#1c1c28;--line:rgba(255,255,255,.06);--line-2:rgba(255,255,255,.14);--text:#e8e8ec;--muted:#7b7b8a;--ok:#3fb87f;--warn:#e0a93a;--bad:#c45a5a}
@@ -129,7 +129,7 @@ button{cursor:pointer;border:none;background:none;color:var(--text);font-family:
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.1';
+const VERSION='v0.2'; // dates en toutes lettres justes dans tous les fuseaux, tri par date, demandes passées repliées
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 let SALARIES=[],ME=null,curSal=null,pinBuf='';
 let SNACK_ID=null,SNACK_ORG=null;
@@ -188,19 +188,28 @@ async function showApp(){
 async function loadMine(){
   const{data}=await sb.from('salarie_dispos')/* borné : .limit(30) VOULU — les 30 dernières demandes du salarié */.select('*').eq('salarie_id',ME.id).order('created_at',{ascending:false}).limit(30);
   const list=data||[];
-  const fmt=d=>{if(d.type==='recurrente')return 'Tous les '+JOURS[d.jour_semaine].toLowerCase()+'s';if(d.date_specifique)return new Date(d.date_specifique).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'});return '—';};
-  const plage=d=>(d.heure_debut||d.heure_fin)?((d.heure_debut||'').slice(0,5)+'→'+(d.heure_fin||'').slice(0,5)):'journée entière';
-  document.getElementById('myList').innerHTML=list.length?list.map(d=>{
+  // Format et tri PARTAGÉS (utils.js, mêmes textes que Salariés et « Moi ») : date lue en composantes, jamais
+  // new Date('AAAA-MM-JJ'). Récurrentes puis dates croissantes ; les demandes déjà passées sont repliées
+  // sous « Passées (N) ». Page tablette sans lecture des réglages de l'organisation : la bascule de la
+  // journée est celle par défaut (05:00) — ne joue que sur le repli, jamais sur le planning.
+  const E=EatimeUtils.escapeHtml, now=Date.now();
+  const tri=list.slice().sort(EatimeUtils.indispoTri);
+  const aVenir=tri.filter(d=>!EatimeUtils.indispoPassee(d,now,null)), passees=tri.filter(d=>EatimeUtils.indispoPassee(d,now,null));
+  const item=d=>{
     const st=d.statut_demande||'validee';
     const canDel=st==='en_attente';
     return `<div class="item">
-      <div><b>${fmt(d)}</b> · ${plage(d)}${d.motif?'<div style="color:var(--muted);font-size:11.5px;margin-top:2px">'+d.motif+'</div>':''}</div>
+      <div><b>${E(EatimeUtils.indispoQuand(d))}</b> · ${E(EatimeUtils.indispoPlage(d))}${d.motif?'<div style="color:var(--muted);font-size:11.5px;margin-top:2px">'+E(d.motif)+'</div>':''}</div>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="tag ${st}">${st==='en_attente'?'En attente':st==='validee'?'Validée':'Refusée'}</span>
         ${canDel?`<button class="btn danger sm" onclick="delMine('${d.id}')">×</button>`:''}
       </div>
     </div>`;
-  }).join(''):'<div style="color:var(--muted);font-size:12.5px;text-align:center;padding:14px">Aucune demande pour l\'instant.</div>';
+  };
+  document.getElementById('myList').innerHTML=list.length
+    ? (aVenir.map(item).join('')||'<div style="color:var(--muted);font-size:12.5px;text-align:center;padding:10px">Aucune demande à venir.</div>')
+      + (passees.length?`<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted);font-size:12.5px;font-weight:600;padding:6px 2px">Passées (${passees.length})</summary>${passees.map(item).join('')}</details>`:'')
+    : '<div style="color:var(--muted);font-size:12.5px;text-align:center;padding:14px">Aucune demande pour l\'instant.</div>';
 }
 
 async function submitDispo(){
