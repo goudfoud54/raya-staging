@@ -165,3 +165,15 @@ demandes), Planning (demandes), « Moi » et Dispos. Le harnais :
 
 Les aides de rendu sont extraites de façon tolérante : remettre l'ancien `salaries/index.html` (`git show`) fait
 échouer 12 vérifications — c'est la contre-preuve.
+
+## HACCP — archivage, refus jamais silencieux, tablette cloisonnée (`haccp_archivage_test.js`, HACCP v0.3)
+
+Une écriture refusée par une politique RLS **ne renvoie pas d'erreur** : elle touche 0 ligne. Le harnais exécute
+le vrai code de `haccp/index.html` contre un faux client qui renvoie « 0 ligne, pas d'erreur » et exige un
+message (contre-preuve : l'ancien `delEq`, commit `00c7149`, se taisait). Il vérifie aussi que les boutons
+affichés suivent `access.js` (`canAccessModule('haccp')` pour gérer, `isAdminOrSuper` pour supprimer
+définitivement — comparé au relevé de production `tests/fixtures/is_admin_or_super.sql`), qu'un équipement
+archivé sort des formulaires de saisie mais pas du registre ni du PDF, et que la tablette n'envoie plus le PIN.
+
+Les politiques RLS elles-mêmes ne se testent pas hors ligne : elles ont été prouvées en base dans une
+transaction annulée (tablette anonyme, manager avec / sans accès HACCP, admin) avant d'appliquer v6.39.

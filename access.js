@@ -158,5 +158,16 @@
     return !!(salarieId && profile.salarie_id && profile.salarie_id === salarieId);
   }
 
-  g.EatimeAccess = { DEFAULT_PERMS, canAccessModule, effectiveAccess, exceptionFor, describeAccess, rolesFor, renderAccessDenied, canSeeAbsenceMotif, ROLES_ENCADREMENT };
+  // ── ACTIONS RÉSERVÉES À L'ADMINISTRATEUR ─────────────────────────────────────────────────────────
+  // Miroir EXACT de `is_admin_or_super()` en Postgres (role in ('admin','super_admin')), qui protège
+  // les suppressions dans les politiques RLS (ex. haccp_equipements_delete). Une page qui veut savoir
+  // si elle doit AFFICHER un bouton de suppression passe par ici, jamais par un test de rôle recopié :
+  // si la règle change en base, elle change ici et nulle part ailleurs (tests/haccp_archivage_test.js
+  // compare ce tableau au corps SQL de la fonction).
+  const ROLES_ADMIN = ['admin', 'super_admin'];
+  function isAdminOrSuper(profile) {
+    return !!(profile && ROLES_ADMIN.indexOf(profile.role) >= 0);
+  }
+
+  g.EatimeAccess = { DEFAULT_PERMS, canAccessModule, effectiveAccess, exceptionFor, describeAccess, rolesFor, renderAccessDenied, canSeeAbsenceMotif, ROLES_ENCADREMENT, ROLES_ADMIN, isAdminOrSuper };
 })(typeof window !== 'undefined' ? window : globalThis);

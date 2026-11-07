@@ -83,12 +83,16 @@ async function init(){
   const curSnack=SNACKS.find(s=>s.id===SNACK_ID);
   if(!curSnack){EatimeKiosk.clearSnackConfig();location.href='../kiosk/';return;}
   SNACK_ORG=curSnack.organization_id;  // org du snack → isole le lookup PIN (S2)
-  const[e,z]=await Promise.all([
-    sb.from('haccp_equipements').select('*').eq('actif',true),
-    sb.from('haccp_zones_nettoyage').select('*').eq('actif',true)
-  ]);
-  EQS=(e.data||[]).filter(x=>!x.restaurant_id||x.restaurant_id===SNACK_ID);
-  ZONES=(z.data||[]).filter(x=>!x.restaurant_id||x.restaurant_id===SNACK_ID);
+  // Référentiel de CE restaurant (équipements et zones ACTIFS de son organisation), par une fonction serveur
+  // (migration v6.39). Avant, la tablette lisait les équipements actifs de TOUTES les organisations et ne
+  // filtrait que sur le restaurant : un équipement « tous restaurants » d'une autre organisation s'affichait.
+  // Les équipements archivés n'y figurent plus. Un échec est AFFICHÉ, jamais une liste vide en silence.
+  const ref=await sb.rpc('kiosk_haccp_referentiel',{p_restaurant:SNACK_ID});
+  if(ref.error||!ref.data){
+    document.body.insertAdjacentHTML('afterbegin','<div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#5a1d1d;color:#fff;padding:12px 16px;font-size:15px;text-align:center">⚠ Liste des équipements indisponible ('+String((ref.error&&ref.error.message)||'réponse vide').replace(/[<>&]/g,'')+'). Vérifiez la connexion puis rechargez la page.</div>');
+  }
+  EQS=(ref.data&&ref.data.equipements)||[];
+  ZONES=(ref.data&&ref.data.zones)||[];
   pinScreen();
   EatimeKiosk.initWakeLock();
   EatimeKiosk.watchOnline(renderNetPill);
@@ -173,7 +177,7 @@ async function saveTemp(){
   if(isNaN(v)){document.getElementById('t_err').textContent='T° requise';return;}
   const eq=EQS.find(x=>x.id===eqId);
   const conforme=!((eq.t_min!=null && v<eq.t_min) || (eq.t_max!=null && v>eq.t_max));
-  const{error}=await sb.from('haccp_releves_temperature').insert({organization_id:eq.organization_id,equipement_id:eqId,valeur:v,conforme,action_corrective:document.getElementById('t_act')?.value||null,salarie_id:SALARIE.id,saisi_par_pin:PIN});
+  const{error}=await sb.from('haccp_releves_temperature').insert({organization_id:eq.organization_id,equipement_id:eqId,valeur:v,conforme,action_corrective:document.getElementById('t_act')?.value||null,salarie_id:SALARIE.id});
   if(error){document.getElementById('t_err').textContent=error.message;return;}
   successScreen(conforme?'Relevé OK ✓':'Relevé hors seuil enregistré ⚠');
 }
@@ -196,7 +200,7 @@ function huileScreen(){
 }
 async function saveHuile(){
   const eqId=document.getElementById('h_eq').value;const eq=EQS.find(x=>x.id===eqId);
-  const{error}=await sb.from('haccp_huiles').insert({organization_id:eq.organization_id,equipement_id:eqId,action:document.getElementById('h_act').value,polarite_pct:parseFloat(document.getElementById('h_pol').value)||null,conforme:document.getElementById('h_conf').value==='true',salarie_id:SALARIE.id,saisi_par_pin:PIN});
+  const{error}=await sb.from('haccp_huiles').insert({organization_id:eq.organization_id,equipement_id:eqId,action:document.getElementById('h_act').value,polarite_pct:parseFloat(document.getElementById('h_pol').value)||null,conforme:document.getElementById('h_conf').value==='true',salarie_id:SALARIE.id});
   if(error){document.getElementById('h_err').textContent=error.message;return;}
   successScreen('Contrôle huile enregistré ✓');
 }
@@ -223,7 +227,7 @@ async function saveRecep(){
   // Trouver organization_id à partir du snack
   const{data:snack}=await sb.from('restaurants').select('organization_id').eq('id',SNACK_ID).maybeSingle();
   if(!snack){document.getElementById('r_err').textContent='Snack introuvable';return;}
-  const{data:rec,error}=await sb.from('haccp_receptions').insert({organization_id:snack.organization_id,restaurant_id:SNACK_ID,fournisseur:document.getElementById('r_four').value||null,produit:prod,lot:document.getElementById('r_lot').value||null,dluo:document.getElementById('r_dluo').value||null,t_reception:parseFloat(document.getElementById('r_t').value)||null,conforme:document.getElementById('r_conf').value==='true',salarie_id:SALARIE.id,saisi_par_pin:PIN}).select().single();
+  const{data:rec,error}=await sb.from('haccp_receptions').insert({organization_id:snack.organization_id,restaurant_id:SNACK_ID,fournisseur:document.getElementById('r_four').value||null,produit:prod,lot:document.getElementById('r_lot').value||null,dluo:document.getElementById('r_dluo').value||null,t_reception:parseFloat(document.getElementById('r_t').value)||null,conforme:document.getElementById('r_conf').value==='true',salarie_id:SALARIE.id}).select('id').single();
   if(error){document.getElementById('r_err').textContent=error.message;return;}
   recepPhotoScreen(rec.id,snack.organization_id,prod);
 }
@@ -309,7 +313,7 @@ function netScreen(){
 async function saveNet(){
   const zid=document.getElementById('n_z').value;
   const z=ZONES.find(x=>x.id===zid);
-  const{error}=await sb.from('haccp_nettoyages').insert({organization_id:z.organization_id,zone_id:zid,salarie_id:SALARIE.id,saisi_par_pin:PIN,notes:document.getElementById('n_notes').value||null});
+  const{error}=await sb.from('haccp_nettoyages').insert({organization_id:z.organization_id,zone_id:zid,salarie_id:SALARIE.id,notes:document.getElementById('n_notes').value||null});
   if(error){document.getElementById('n_err').textContent=error.message;return;}
   successScreen('Nettoyage enregistré ✓');
 }

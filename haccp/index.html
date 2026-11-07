@@ -6,9 +6,9 @@
 <script>(function(){var t=localStorage.getItem("eatime_theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");})();</script>
 <title>Eatime360 — HACCP</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../access.js?v=6.31"></script>
+<script src="../access.js?v=6.32"></script>
 <script src="../orgscope.js?v=1"></script>
-<script src="../utils.js?v=1.8"></script>
+<script src="../utils.js?v=1.9"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -95,7 +95,7 @@ table.tbl tr:hover{background:rgba(255,255,255,.02)}
 
 <div id="app" class="hidden">
   <div class="header">
-    <div class="brand">Eatime360 <small>· HACCP · v0.2</small></div>
+    <div class="brand">Eatime360 <small>· HACCP · <span id="ver"></span></small></div>
     <div style="display:flex;gap:8px;align-items:center">
       <select id="snackSelect" onchange="onSnackChange()" style="padding:7px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-size:12.5px"></select>
       <a href="../" class="btn ghost sm">Portail</a>
@@ -123,6 +123,8 @@ table.tbl tr:hover{background:rgba(255,255,255,.02)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+const VERSION='v0.3 · équipements et zones ARCHIVÉS au lieu d\'être supprimés (relevés conservés pour la DDPP) · suppression définitive réservée à l\'administrateur et refusée s\'il existe un relevé · plus aucun refus silencieux';
+document.addEventListener('DOMContentLoaded',()=>{const v=document.getElementById('ver');if(v){v.textContent=VERSION.split(' · ')[0];v.title=VERSION;}});
 let ME=null,ORG={},SNACK=null;
 let TAB='dashboard';
 const S={ snacks:[], equipements:[], zones:[], salaries:[] };
@@ -256,7 +258,7 @@ async function renderDashboard(el){
 async function renderTemperatures(el){
   el.innerHTML=`
     <div class="toolbar">
-      <select id="filtEq"><option value="">Tous équipements</option>${eqOfSnack().filter(e=>['frigo','congel','vitrine','sonde'].includes(e.type)).map(e=>`<option value="${e.id}">${e.nom}</option>`).join('')}</select>
+      <select id="filtEq"><option value="">Tous équipements</option>${eqOfSnack().filter(e=>['frigo','congel','vitrine','sonde'].includes(e.type)).map(e=>`<option value="${e.id}">${lblArch(e)}</option>`).join('')}</select>
       <input type="date" id="filtFrom"><span style="color:var(--muted)">→</span><input type="date" id="filtTo">
       <button class="btn sm" onclick="renderTemperatures(document.getElementById('content'))">Filtrer</button>
       <div style="flex:1"></div>
@@ -273,13 +275,13 @@ async function renderTemperatures(el){
   else list.forEach(x=>{
     const e=x.haccp_equipements||{};
     const plage=(e.t_min!=null||e.t_max!=null)?`${e.t_min??''}°C → ${e.t_max??''}°C`:'—';
-    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${e.nom||'—'}</td><td><b>${x.valeur}°C</b></td><td style="color:var(--muted)">${plage}</td><td>${x.conforme===false?'<span class="badge bad">Hors seuil</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td style="color:var(--muted);font-size:11.5px">${x.action_corrective||''}</td><td><button class="btn ghost sm" onclick="delReleve('${x.id}')">✕</button></td></tr>`;
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${e.nom||'—'}</td><td><b>${x.valeur}°C</b></td><td style="color:var(--muted)">${plage}</td><td>${x.conforme===false?'<span class="badge bad">Hors seuil</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td style="color:var(--muted);font-size:11.5px">${x.action_corrective||''}</td><td>${estAdminH()?`<button class="btn ghost sm" title="Supprimer (administrateur)" onclick="delReleve('${x.id}')">✕</button>`:''}</td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('releveList').innerHTML=html;
 }
 function openReleve(){
-  const eqs=eqOfSnack().filter(e=>['frigo','congel','vitrine','sonde'].includes(e.type));
+  const eqs=eqSaisie().filter(e=>['frigo','congel','vitrine','sonde'].includes(e.type)); // saisie : actifs seulement
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>Nouveau relevé de température</h2>
     <div class="fld"><label>Équipement</label><select id="r_eq">${eqs.map(e=>`<option value="${e.id}">${e.nom} (${e.t_min??''}→${e.t_max??''}°C)</option>`).join('')}</select></div>
@@ -305,13 +307,13 @@ async function saveReleve(){
   toast(conforme?'Relevé OK ✓':'Relevé hors seuil ⚠');
   closeModal();renderTemperatures(document.getElementById('content'));
 }
-async function delReleve(id){if(!confirm('Supprimer ce relevé ?'))return;const{error}=await EatimeScope.from('haccp_releves_temperature').delete().eq('id',id);if(error){toast(error.message);return;}toast('Supprimé');renderTemperatures(document.getElementById('content'));}
+async function delReleve(id){if(!confirm('Supprimer ce relevé ?'))return;const r=await ecrireH(EatimeScope.from('haccp_releves_temperature').delete().eq('id',id),{action:'supprimer un relevé'});if(!r.ok)return;toast('Supprimé');renderTemperatures(document.getElementById('content'));}
 
 // ────────────── HUILES ──────────────
 async function renderHuiles(el){
   el.innerHTML=`
     <div class="toolbar">
-      <select id="filtFr"><option value="">Toutes friteuses</option>${eqOfSnack().filter(e=>e.type==='friteuse').map(e=>`<option value="${e.id}">${e.nom}</option>`).join('')}</select>
+      <select id="filtFr"><option value="">Toutes friteuses</option>${eqOfSnack().filter(e=>e.type==='friteuse').map(e=>`<option value="${e.id}">${lblArch(e)}</option>`).join('')}</select>
       <button class="btn sm" onclick="renderHuiles(document.getElementById('content'))">Filtrer</button>
       <div style="flex:1"></div>
       <button class="btn" onclick="openHuile()">+ Nouveau contrôle</button>
@@ -325,13 +327,13 @@ async function renderHuiles(el){
   let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Friteuse</th><th>Action</th><th>Polarité %</th><th>Marque</th><th>Statut</th><th>Salarié</th><th></th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Aucun contrôle</td></tr>';
   else list.forEach(x=>{
-    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.haccp_equipements?.nom||'—'}</td><td>${ACTIONS_HUILE[x.action]||x.action}</td><td>${x.polarite_pct??'—'}</td><td>${x.marque||'—'}</td><td>${x.conforme===false?'<span class="badge bad">Vidange</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delHuile('${x.id}')">✕</button></td></tr>`;
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.haccp_equipements?.nom||'—'}</td><td>${ACTIONS_HUILE[x.action]||x.action}</td><td>${x.polarite_pct??'—'}</td><td>${x.marque||'—'}</td><td>${x.conforme===false?'<span class="badge bad">Vidange</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td>${estAdminH()?`<button class="btn ghost sm" title="Supprimer (administrateur)" onclick="delHuile('${x.id}')">✕</button>`:''}</td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('huileList').innerHTML=html;
 }
 function openHuile(){
-  const friteuses=eqOfSnack().filter(e=>e.type==='friteuse');
+  const friteuses=eqSaisie().filter(e=>e.type==='friteuse'); // saisie : actives seulement
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>Nouveau contrôle / opération huile</h2>
     <div class="fld"><label>Friteuse</label><select id="h_eq">${friteuses.map(e=>`<option value="${e.id}">${e.nom}</option>`).join('')}</select></div>
@@ -357,7 +359,7 @@ async function saveHuile(){
   const{error}=await EatimeScope.from('haccp_huiles').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderHuiles(document.getElementById('content'));
 }
-async function delHuile(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('haccp_huiles').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderHuiles(document.getElementById('content'));}
+async function delHuile(id){if(!confirm('Supprimer ce contrôle d’huile ?'))return;const r=await ecrireH(EatimeScope.from('haccp_huiles').delete().eq('id',id),{action:'supprimer un contrôle d’huile'});if(!r.ok)return;toast('Supprimé');renderHuiles(document.getElementById('content'));}
 
 // ────────────── RÉCEPTIONS ──────────────
 async function renderReceptions(el){
@@ -380,7 +382,7 @@ async function renderReceptions(el){
     const ctrls=x.haccp_reception_controles||[];
     const ctrlHtml=ctrls.length?ctrls.map(c=>{const emoji={viande:'🥩',surgele:'❄',fromage:'🧀',autre:'•'}[c.type_produit]||'•';return `<span class="badge ${c.conforme===false?'bad':'ok'}" title="${c.type_produit} · lot ${c.lot} · DLC ${fmtD(c.dluo)} · ${c.temperature}°C">${emoji} ${c.temperature}°</span>`;}).join(' '):'<span style="color:var(--muted);font-size:11px">—</span>';
     const photoHtml=x.photo_url?`<img src="${x.photo_url}" onclick="voirPhotoReception('${x.photo_url}')" style="width:40px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--line-2)">`:'<span style="color:var(--muted);font-size:11px">—</span>';
-    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.fournisseur||'—'}</td><td><b>${x.produit||'—'}</b></td><td>${ctrlHtml}</td><td>${photoHtml}</td><td>${x.conforme===false?'<span class="badge bad">Refusé</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td><button class="btn ghost sm" onclick="delReception('${x.id}')">✕</button></td></tr>`;
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td>${x.fournisseur||'—'}</td><td><b>${x.produit||'—'}</b></td><td>${ctrlHtml}</td><td>${photoHtml}</td><td>${x.conforme===false?'<span class="badge bad">Refusé</span>':'<span class="badge ok">OK</span>'}</td><td>${nameSal(x.salarie_id)}</td><td>${estAdminH()?`<button class="btn ghost sm" title="Supprimer (administrateur)" onclick="delReception('${x.id}')">✕</button>`:''}</td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('recList').innerHTML=html;
@@ -456,7 +458,7 @@ async function saveReception(){
   if(e2){toast('Réception créée mais erreur contrôles : '+e2.message);return;}
   toast(`Réception enregistrée + ${controles.length} contrôles ✓`);closeModal();renderReceptions(document.getElementById('content'));
 }
-async function delReception(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('haccp_receptions').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderReceptions(document.getElementById('content'));}
+async function delReception(id){if(!confirm('Supprimer cette réception ?'))return;const r=await ecrireH(EatimeScope.from('haccp_receptions').delete().eq('id',id),{action:'supprimer une réception'});if(!r.ok)return;toast('Supprimé');renderReceptions(document.getElementById('content'));}
 function voirPhotoReception(url){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:90vw;text-align:center;padding:14px">
     <img src="${url}" style="max-width:100%;max-height:80vh;border-radius:8px">
@@ -471,7 +473,7 @@ function voirPhotoReception(url){
 async function renderNettoyage(el){
   el.innerHTML=`
     <div class="toolbar">
-      <select id="filtZone"><option value="">Toutes zones</option>${zonesOfSnack().map(z=>`<option value="${z.id}">${z.nom}</option>`).join('')}</select>
+      <select id="filtZone"><option value="">Toutes zones</option>${zonesOfSnack().map(z=>`<option value="${z.id}">${lblArch(z)}</option>`).join('')}</select>
       <input type="date" id="filtFromN"><span style="color:var(--muted)">→</span><input type="date" id="filtToN">
       <button class="btn sm" onclick="renderNettoyage(document.getElementById('content'))">Filtrer</button>
       <div style="flex:1"></div>
@@ -486,7 +488,7 @@ async function renderNettoyage(el){
   let html=`<table class="tbl"><thead><tr><th>Quand</th><th>Zone</th><th>Périodicité</th><th>Salarié</th><th>Notes</th><th></th></tr></thead><tbody>`;
   if(!list.length) html+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Aucun nettoyage saisi</td></tr>';
   else list.forEach(x=>{
-    html+=`<tr><td>${fmtDt(x.ts)}</td><td><b>${x.haccp_zones_nettoyage?.nom||'—'}</b></td><td>${PERIODICITES[x.haccp_zones_nettoyage?.periodicite]||'—'}</td><td>${nameSal(x.salarie_id)}</td><td style="color:var(--muted);font-size:12px">${x.notes||''}</td><td><button class="btn ghost sm" onclick="delNettoyage('${x.id}')">✕</button></td></tr>`;
+    html+=`<tr><td>${fmtDt(x.ts)}</td><td><b>${x.haccp_zones_nettoyage?.nom||'—'}</b></td><td>${PERIODICITES[x.haccp_zones_nettoyage?.periodicite]||'—'}</td><td>${nameSal(x.salarie_id)}</td><td style="color:var(--muted);font-size:12px">${x.notes||''}</td><td>${estAdminH()?`<button class="btn ghost sm" title="Supprimer (administrateur)" onclick="delNettoyage('${x.id}')">✕</button>`:''}</td></tr>`;
   });
   html+='</tbody></table>';
   document.getElementById('netList').innerHTML=html;
@@ -494,7 +496,7 @@ async function renderNettoyage(el){
 function openNettoyage(){
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>Saisir un nettoyage</h2>
-    <div class="fld"><label>Zone</label><select id="n_zone">${zonesOfSnack().map(z=>`<option value="${z.id}">${z.nom} (${PERIODICITES[z.periodicite]||''})</option>`).join('')}</select></div>
+    <div class="fld"><label>Zone</label><select id="n_zone">${zonesSaisie().map(z=>`<option value="${z.id}">${z.nom} (${PERIODICITES[z.periodicite]||''})</option>`).join('')}</select></div>
     <div class="fld"><label>Date / heure</label><input type="datetime-local" id="n_ts" value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)}"></div>
     <div class="fld"><label>Salarié</label><select id="n_sal"><option value="">—</option>${S.salaries.map(s=>`<option value="${s.id}">${s.prenom||''} ${s.nom}</option>`).join('')}</select></div>
     <div class="fld"><label>Notes</label><input id="n_notes" placeholder="ex: dégraissage complet + désinfection"></div>
@@ -506,72 +508,164 @@ async function saveNettoyage(){
   const{error}=await EatimeScope.from('haccp_nettoyages').insert(payload);
   if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();renderNettoyage(document.getElementById('content'));
 }
-async function delNettoyage(id){if(!confirm('Supprimer ?'))return;const{error}=await EatimeScope.from('haccp_nettoyages').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}renderNettoyage(document.getElementById('content'));}
+async function delNettoyage(id){if(!confirm('Supprimer ce nettoyage ?'))return;const r=await ecrireH(EatimeScope.from('haccp_nettoyages').delete().eq('id',id),{action:'supprimer un nettoyage'});if(!r.ok)return;toast('Supprimé');renderNettoyage(document.getElementById('content'));}
+
+// ────────────── ÉCRITURES : JAMAIS D'ÉCHEC SILENCIEUX ──────────────
+// Une modification ou une suppression REFUSÉE par la base (politique RLS) ne renvoie PAS d'erreur : elle
+// touche simplement 0 ligne. C'est ainsi qu'un « Supprimer » cliqué par un non-administrateur ne faisait
+// rien, sans un mot. Toute écriture de cette page passe donc par ecrireH : elle demande les lignes
+// réellement touchées (.select('id')) et transforme « 0 ligne » en message clair. Une suppression bloquée
+// par des relevés rattachés (clé étrangère, code 23503) a aussi son message.
+async function ecrireH(q, {action, refus23503}={}){
+  let r;
+  try{ r=await q.select('id'); }catch(e){ r={error:e}; }
+  const err=r&&r.error;
+  if(err){
+    if(err.code==='23503'){ toast(refus23503||'Impossible : des relevés y sont rattachés.'); return {ok:false,n:0,refus:'releves'}; }
+    toast('Erreur : '+(err.message||err)); return {ok:false,n:0,refus:'erreur'};
+  }
+  const n=Array.isArray(r.data)?r.data.length:0;
+  if(!n){ toast(`Vous n’avez pas les droits pour ${action||'faire cette modification'} — demandez à un administrateur.`); return {ok:false,n:0,refus:'droits'}; }
+  return {ok:true,n};
+}
+// Droits AFFICHÉS = ceux de la base, lus au même endroit qu'elle (access.js) :
+//  - gérer (ajouter, modifier, archiver, réactiver) équipements et zones = accès au module HACCP
+//    (has_module_access('haccp') en base, canAccessModule ici — réglable par établissement dans Paramètres) ;
+//  - supprimer DÉFINITIVEMENT (et supprimer un relevé) = administrateur (is_admin_or_super en base).
+// Garde `typeof` : un access.js ancien resté en cache masque le bouton au lieu de casser la page.
+function peutGererH(){ try{ return !!(ME && EatimeAccess.canAccessModule('haccp', ME, ORG.permissions)); }catch(e){ return false; } }
+function estAdminH(){ return !!(ME && typeof EatimeAccess.isAdminOrSuper==='function' && EatimeAccess.isAdminOrSuper(ME)); }
+const escH=s=>(s==null?'':String(s)).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+// Listes de SAISIE (formulaires) : actifs seulement. Listes de CONSULTATION (filtres, registre, PDF) : tout,
+// archivés compris — sinon les relevés d'un équipement archivé ne seraient plus filtrables.
+function eqSaisie(){return eqOfSnack().filter(e=>e.actif!==false);}
+function zonesSaisie(){return zonesOfSnack().filter(z=>z.actif!==false);}
+const lblArch=x=>escH(x.nom)+(x.actif===false?' (archivé)':'');
+
+// ────────────── ÉQUIPEMENTS & ZONES : ARCHIVER AU LIEU DE SUPPRIMER ──────────────
+// Les relevés (températures, huiles, nettoyages) sont la preuve de traçabilité présentée à un contrôle
+// sanitaire (DDPP). Supprimer un équipement les effaçait en cascade. Désormais :
+//  - « Archiver » (actif = false) : l'équipement disparaît des formulaires de saisie et des tablettes ;
+//    ses relevés restent dans les listes, les filtres et le PDF ;
+//  - « Supprimer définitivement » : administrateur seulement, et seulement sans aucun relevé (créé par
+//    erreur). La base le garantit aussi (clé étrangère sans cascade, migration v6.39).
+const REF={
+  eq:{table:'haccp_equipements', liste:()=>eqOfSnack(), nom:'équipement', nomPl:'équipements', une:'cet équipement',
+      releves:[['haccp_releves_temperature','equipement_id','relevé(s) de température'],['haccp_huiles','equipement_id','contrôle(s) d’huile']],
+      rendre:()=>renderEquipements(document.getElementById('content'))},
+  zone:{table:'haccp_zones_nettoyage', liste:()=>zonesOfSnack(), nom:'zone', nomPl:'zones', une:'cette zone',
+      releves:[['haccp_nettoyages','zone_id','nettoyage(s)']],
+      rendre:()=>renderZones(document.getElementById('content'))},
+};
+function _boutonsRef(kind,x){
+  const R=REF[kind]; if(!peutGererH()) return '';
+  const edit=kind==='eq'?`openEq(${escH(JSON.stringify(x))})`:`openZone(${escH(JSON.stringify(x))})`;
+  if(x.actif!==false) return `<button class="btn ghost sm" title="Modifier" onclick="${edit}">✎</button> <button class="btn ghost sm" title="Archiver : disparaît de la saisie, ses relevés sont conservés" onclick="archiverRef('${kind}','${x.id}',false)">Archiver</button>`;
+  return `<button class="btn ghost sm" onclick="archiverRef('${kind}','${x.id}',true)">Réactiver</button>`
+    +(estAdminH()?` <button class="btn ghost sm" style="color:var(--bad)" title="Seulement s'il n'a aucun relevé" onclick="supprimerRefDefinitif('${kind}','${x.id}')">Supprimer définitivement</button>`:'');
+}
+function _blocArchives(kind, ligne, nbCols){
+  const R=REF[kind], arch=R.liste().filter(x=>x.actif===false);
+  if(!arch.length) return '';
+  return `<details style="margin-top:16px"><summary style="cursor:pointer;color:var(--muted);font-weight:600;font-size:13px;padding:6px 2px">${R.nomPl.charAt(0).toUpperCase()+R.nomPl.slice(1)} archivé${kind==='zone'?'e':''}s (${arch.length})</summary>
+    <div style="color:var(--muted);font-size:12px;margin:4px 2px 8px">Absent${kind==='zone'?'e':''}s des formulaires de saisie et des tablettes. Leurs relevés restent dans les listes et dans le PDF.</div>
+    <table class="tbl" style="opacity:.85"><tbody>${arch.map(ligne).join('')}</tbody></table></details>`;
+}
+async function archiverRef(kind,id,actif){
+  const R=REF[kind], x=R.liste().find(y=>y.id===id)||S.equipements.concat(S.zones).find(y=>y.id===id);
+  if(!actif && !confirm(`Archiver « ${(x&&x.nom)||R.nom} » ?\n\nIl${kind==='zone'?'le':''} disparaît des formulaires de saisie et des tablettes. Ses relevés sont CONSERVÉS (listes, PDF DDPP). Vous pourrez le réactiver.`)) return;
+  const res=await ecrireH(EatimeScope.from(R.table).update({actif}).eq('id',id), {action:(actif?'réactiver ':'archiver ')+R.une});
+  if(!res.ok) return;
+  toast(actif?'Réactivé ✓':'Archivé ✓ — relevés conservés');
+  await loadCommonData(); R.rendre();
+}
+// Nombre de relevés rattachés (comptage seul, aucune ligne rapatriée).
+async function compterReleves(kind,id){
+  const R=REF[kind]; let total=0; const detail=[];
+  for(const [table,col,lbl] of R.releves){
+    const {count,error}=await EatimeScope.from(table).select('id',{count:'exact',head:true}).eq(col,id);
+    if(error) return {erreur:error.message};
+    if(count){ total+=count; detail.push(count+' '+lbl); }
+  }
+  return {total,detail};
+}
+async function supprimerRefDefinitif(kind,id){
+  const R=REF[kind], x=R.liste().find(y=>y.id===id);
+  if(!estAdminH()){ toast(`Vous n’avez pas les droits pour supprimer définitivement ${R.une} — demandez à un administrateur.`); return; }
+  const c=await compterReleves(kind,id);
+  if(c.erreur){ toast('Vérification des relevés impossible : '+c.erreur); return; }
+  if(c.total){ toast(`Suppression refusée : ${c.detail.join(' et ')} rattaché(s). ${R.une.charAt(0).toUpperCase()+R.une.slice(1)} reste archivé${kind==='zone'?'e':''} — ses relevés sont la preuve de traçabilité.`); return; }
+  if(!confirm(`Supprimer définitivement « ${(x&&x.nom)||R.nom} » ?\n\nAucun relevé n'y est rattaché. Cette suppression est irréversible.`)) return;
+  const res=await ecrireH(EatimeScope.from(R.table).delete().eq('id',id), {action:'supprimer définitivement '+R.une,
+    refus23503:'Suppression refusée par la base : des relevés y sont rattachés. Il reste archivé.'});
+  if(!res.ok) return;
+  toast('Supprimé définitivement'); await loadCommonData(); R.rendre();
+}
 
 // ────────────── ÉQUIPEMENTS ──────────────
 function renderEquipements(el){
-  const list=eqOfSnack();
-  let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openEq()">+ Ajouter un équipement</button></div>
-    <table class="tbl"><thead><tr><th>Nom</th><th>Type</th><th>Snack</th><th>T° min</th><th>T° max</th><th>Actif</th><th></th></tr></thead><tbody>`;
-  if(!list.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px">Aucun équipement — ajoute frigos, congel, friteuses</td></tr>';
-  else list.forEach(e=>{
-    html+=`<tr><td><b>${e.nom}</b></td><td>${TYPES_EQ[e.type]||e.type}</td><td>${S.snacks.find(s=>s.id===e.restaurant_id)?.nom||'—'}</td><td>${e.t_min??'—'}°C</td><td>${e.t_max??'—'}°C</td><td>${e.actif?'<span class="badge ok">Oui</span>':'<span class="badge bad">Non</span>'}</td><td><button class="btn ghost sm" onclick='openEq(${JSON.stringify(e).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delEq('${e.id}')">✕</button></td></tr>`;
-  });
-  html+='</tbody></table>';
+  const list=eqOfSnack().filter(e=>e.actif!==false);
+  const ligne=e=>`<tr><td><b>${escH(e.nom)}</b></td><td>${TYPES_EQ[e.type]||escH(e.type)}</td><td>${escH(S.snacks.find(s=>s.id===e.restaurant_id)?.nom||'—')}</td><td>${e.t_min??'—'}°C</td><td>${e.t_max??'—'}°C</td><td style="white-space:nowrap">${_boutonsRef('eq',e)}</td></tr>`;
+  let html=`<div class="toolbar"><div style="flex:1"></div>${peutGererH()?'<button class="btn" onclick="openEq()">+ Ajouter un équipement</button>':''}</div>
+    <table class="tbl"><thead><tr><th>Nom</th><th>Type</th><th>Snack</th><th>T° min</th><th>T° max</th><th></th></tr></thead><tbody>`;
+  html+=list.length?list.map(ligne).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Aucun équipement actif — ajoute frigos, congel, friteuses</td></tr>';
+  html+='</tbody></table>'+_blocArchives('eq',ligne,6);
   el.innerHTML=html;
 }
 function openEq(eq){
   eq=eq||{};
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>${eq.id?'Modifier':'Nouvel'} équipement</h2>
-    <div class="fld"><label>Nom *</label><input id="eq_nom" value="${eq.nom||''}" placeholder="ex: Frigo cuisine A"></div>
+    <div class="fld"><label>Nom *</label><input id="eq_nom" value="${escH(eq.nom)}" placeholder="ex: Frigo cuisine A"></div>
     <div class="grid2">
       <div class="fld"><label>Type</label><select id="eq_type">${Object.entries(TYPES_EQ).map(([k,v])=>`<option value="${k}" ${eq.type===k?'selected':''}>${v}</option>`).join('')}</select></div>
-      <div class="fld"><label>Snack</label><select id="eq_sn"><option value="">— Tous</option>${S.snacks.map(s=>`<option value="${s.id}" ${eq.restaurant_id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+      <div class="fld"><label>Snack</label><select id="eq_sn"><option value="">— Tous</option>${S.snacks.map(s=>`<option value="${s.id}" ${eq.restaurant_id===s.id?'selected':''}>${escH(s.nom)}</option>`).join('')}</select></div>
     </div>
     <div class="grid2">
       <div class="fld"><label>T° min (°C)</label><input type="number" step="0.1" id="eq_tmin" value="${eq.t_min??''}" placeholder="0"></div>
       <div class="fld"><label>T° max (°C)</label><input type="number" step="0.1" id="eq_tmax" value="${eq.t_max??''}" placeholder="4"></div>
     </div>
-    <div class="fld"><label>QR code (optionnel)</label><input id="eq_qr" value="${eq.qr_code||''}"></div>
-    <div class="fld"><label>Notes</label><input id="eq_notes" value="${eq.notes||''}"></div>
-    <div class="fld"><label><input type="checkbox" id="eq_actif" ${eq.actif!==false?'checked':''}> Actif</label></div>
+    <div class="fld"><label>QR code (optionnel)</label><input id="eq_qr" value="${escH(eq.qr_code)}"></div>
+    <div class="fld"><label>Notes</label><input id="eq_notes" value="${escH(eq.notes)}"></div>
     <input type="hidden" id="eq_id" value="${eq.id||''}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveEq()">Enregistrer</button></div>
   </div></div>`;
 }
+// L'état actif/archivé ne s'écrit QUE par archiverRef (un seul chemin) : la case « Actif » du formulaire
+// a été retirée — deux chemins vers le même état finissent toujours par diverger.
 async function saveEq(){
   if(!val('eq_nom')){toast('Nom requis');return;}
-  const payload={organization_id:ORG.id,nom:val('eq_nom'),type:val('eq_type'),restaurant_id:val('eq_sn')||null,t_min:num('eq_tmin'),t_max:num('eq_tmax'),qr_code:val('eq_qr')||null,notes:val('eq_notes')||null,actif:document.getElementById('eq_actif').checked};
+  const payload={organization_id:ORG.id,nom:val('eq_nom'),type:val('eq_type'),restaurant_id:val('eq_sn')||null,t_min:num('eq_tmin'),t_max:num('eq_tmax'),qr_code:val('eq_qr')||null,notes:val('eq_notes')||null};
   const id=val('eq_id');
-  const{error}=id?await EatimeScope.from('haccp_equipements').update(payload).eq('id',id):await EatimeScope.from('haccp_equipements').insert(payload);
-  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderEquipements(document.getElementById('content'));
+  const q=id?EatimeScope.from('haccp_equipements').update(payload).eq('id',id):EatimeScope.from('haccp_equipements').insert(payload);
+  const res=await ecrireH(q,{action:id?'modifier cet équipement':'ajouter un équipement'});
+  if(!res.ok) return;
+  toast('Enregistré ✓');closeModal();await loadCommonData();renderEquipements(document.getElementById('content'));
 }
-async function delEq(id){if(!confirm('Supprimer cet équipement (et tous ses relevés) ?'))return;const{error}=await EatimeScope.from('haccp_equipements').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderEquipements(document.getElementById('content'));}
+// Ancien point d'entrée, conservé pour un éventuel appel resté en cache : n'efface plus rien, archive.
+async function delEq(id){ return archiverRef('eq',id,false); }
 
 // ────────────── ZONES NETTOYAGE ──────────────
 function renderZones(el){
-  const list=zonesOfSnack();
-  let html=`<div class="toolbar"><div style="flex:1"></div><button class="btn" onclick="openZone()">+ Ajouter une zone</button></div>
+  const list=zonesOfSnack().filter(z=>z.actif!==false);
+  const ligne=z=>`<tr><td><b>${escH(z.nom)}</b></td><td>${PERIODICITES[z.periodicite]||'—'}</td><td>${escH(S.snacks.find(s=>s.id===z.restaurant_id)?.nom||'—')}</td><td>${escH(z.produit_utilise||'—')}</td><td style="white-space:nowrap">${_boutonsRef('zone',z)}</td></tr>`;
+  let html=`<div class="toolbar"><div style="flex:1"></div>${peutGererH()?'<button class="btn" onclick="openZone()">+ Ajouter une zone</button>':''}</div>
     <table class="tbl"><thead><tr><th>Nom</th><th>Périodicité</th><th>Snack</th><th>Produit utilisé</th><th></th></tr></thead><tbody>`;
-  if(!list.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucune zone — définis ton plan de nettoyage</td></tr>';
-  else list.forEach(z=>{
-    html+=`<tr><td><b>${z.nom}</b></td><td>${PERIODICITES[z.periodicite]||'—'}</td><td>${S.snacks.find(s=>s.id===z.restaurant_id)?.nom||'—'}</td><td>${z.produit_utilise||'—'}</td><td><button class="btn ghost sm" onclick='openZone(${JSON.stringify(z).replace(/'/g,"&#39;")})'>✎</button> <button class="btn ghost sm" onclick="delZone('${z.id}')">✕</button></td></tr>`;
-  });
-  html+='</tbody></table>';
+  html+=list.length?list.map(ligne).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucune zone active — définis ton plan de nettoyage</td></tr>';
+  html+='</tbody></table>'+_blocArchives('zone',ligne,5);
   el.innerHTML=html;
 }
 function openZone(z){
   z=z||{};
   document.getElementById('modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>${z.id?'Modifier':'Nouvelle'} zone de nettoyage</h2>
-    <div class="fld"><label>Nom *</label><input id="z_nom" value="${z.nom||''}" placeholder="ex: Plonge, Sol cuisine, Plan de travail"></div>
+    <div class="fld"><label>Nom *</label><input id="z_nom" value="${escH(z.nom)}" placeholder="ex: Plonge, Sol cuisine, Plan de travail"></div>
     <div class="grid2">
       <div class="fld"><label>Périodicité</label><select id="z_per">${Object.entries(PERIODICITES).map(([k,v])=>`<option value="${k}" ${z.periodicite===k?'selected':''}>${v}</option>`).join('')}</select></div>
-      <div class="fld"><label>Snack</label><select id="z_sn"><option value="">— Tous</option>${S.snacks.map(s=>`<option value="${s.id}" ${z.restaurant_id===s.id?'selected':''}>${s.nom}</option>`).join('')}</select></div>
+      <div class="fld"><label>Snack</label><select id="z_sn"><option value="">— Tous</option>${S.snacks.map(s=>`<option value="${s.id}" ${z.restaurant_id===s.id?'selected':''}>${escH(s.nom)}</option>`).join('')}</select></div>
     </div>
-    <div class="fld"><label>Produit utilisé</label><input id="z_prod" value="${z.produit_utilise||''}" placeholder="ex: Dégraissant alcalin + désinfectant"></div>
-    <div class="fld"><label>Notes</label><input id="z_notes" value="${z.notes||''}"></div>
+    <div class="fld"><label>Produit utilisé</label><input id="z_prod" value="${escH(z.produit_utilise)}" placeholder="ex: Dégraissant alcalin + désinfectant"></div>
+    <div class="fld"><label>Notes</label><input id="z_notes" value="${escH(z.notes)}"></div>
     <input type="hidden" id="z_id" value="${z.id||''}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveZone()">Enregistrer</button></div>
   </div></div>`;
@@ -580,10 +674,12 @@ async function saveZone(){
   if(!val('z_nom')){toast('Nom requis');return;}
   const payload={organization_id:ORG.id,nom:val('z_nom'),periodicite:val('z_per'),restaurant_id:val('z_sn')||null,produit_utilise:val('z_prod')||null,notes:val('z_notes')||null};
   const id=val('z_id');
-  const{error}=id?await EatimeScope.from('haccp_zones_nettoyage').update(payload).eq('id',id):await EatimeScope.from('haccp_zones_nettoyage').insert(payload);
-  if(error){toast(error.message);return;}toast('Enregistré ✓');closeModal();await loadCommonData();renderZones(document.getElementById('content'));
+  const q=id?EatimeScope.from('haccp_zones_nettoyage').update(payload).eq('id',id):EatimeScope.from('haccp_zones_nettoyage').insert(payload);
+  const res=await ecrireH(q,{action:id?'modifier cette zone':'ajouter une zone'});
+  if(!res.ok) return;
+  toast('Enregistré ✓');closeModal();await loadCommonData();renderZones(document.getElementById('content'));
 }
-async function delZone(id){if(!confirm('Supprimer cette zone ?'))return;const{error}=await EatimeScope.from('haccp_zones_nettoyage').delete().eq('id',id);if(error){toast('Erreur : '+error.message);return;}await loadCommonData();renderZones(document.getElementById('content'));}
+async function delZone(id){ return archiverRef('zone',id,false); }
 
 // ────────────── EXPORT PDF DDPP ──────────────
 function renderExport(el){
