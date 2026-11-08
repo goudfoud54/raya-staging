@@ -102,6 +102,11 @@ const reset = () => { journal.length = 0; toasts.length = 0; reponseEcriture = {
   t('modifier refusé (0 ligne) → message, plus de « Enregistré ✓ » trompeur',
     toasts.some(m => /droits pour modifier cet équipement/.test(m)) && !toasts.some(m => /Enregistré/.test(m)), toasts.join(' | '));
   t('le formulaire n\'écrit plus `actif` (un seul chemin : archiver / réactiver)', journal.every(j => !j.patch || !('actif' in j.patch)));
+  reset(); reponseEcriture = { data: null, error: { code: '42501', message: 'new row violates row-level security policy for table "haccp_equipements"' } };
+  global.val = id => ({ eq_nom: 'Frigo B' }[id] || '');
+  await saveEq();
+  t('AJOUT refusé par la base (42501) → même message clair, pas le texte technique anglais',
+    toasts.some(m => /droits pour ajouter un équipement/.test(m)) && !toasts.some(m => /row-level security/.test(m)), toasts.join(' | '));
   global.val = () => '';
   reset(); reponseEcriture = { data: [], error: null };
   await delHuile('h1');

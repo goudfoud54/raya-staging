@@ -123,7 +123,7 @@ table.tbl tr:hover{background:rgba(255,255,255,.02)}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.3 · équipements et zones ARCHIVÉS au lieu d\'être supprimés (relevés conservés pour la DDPP) · suppression définitive réservée à l\'administrateur et refusée s\'il existe un relevé · plus aucun refus silencieux';
+const VERSION='v0.4 · un ajout refusé par la base affiche « pas les droits » (plus le message technique) · v0.3 : équipements et zones ARCHIVÉS au lieu d\'être supprimés (relevés conservés pour la DDPP) · suppression définitive réservée à l\'administrateur et refusée s\'il existe un relevé · plus aucun refus silencieux';
 document.addEventListener('DOMContentLoaded',()=>{const v=document.getElementById('ver');if(v){v.textContent=VERSION.split(' · ')[0];v.title=VERSION;}});
 let ME=null,ORG={},SNACK=null;
 let TAB='dashboard';
@@ -522,6 +522,8 @@ async function ecrireH(q, {action, refus23503}={}){
   const err=r&&r.error;
   if(err){
     if(err.code==='23503'){ toast(refus23503||'Impossible : des relevés y sont rattachés.'); return {ok:false,n:0,refus:'releves'}; }
+    // Un AJOUT refusé par une politique RLS, lui, lève une erreur (42501) — même message que le refus silencieux.
+    if(err.code==='42501'){ toast(`Vous n’avez pas les droits pour ${action||'faire cette modification'} — demandez à un administrateur.`); return {ok:false,n:0,refus:'droits'}; }
     toast('Erreur : '+(err.message||err)); return {ok:false,n:0,refus:'erreur'};
   }
   const n=Array.isArray(r.data)?r.data.length:0;
