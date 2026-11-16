@@ -177,3 +177,19 @@ archivé sort des formulaires de saisie mais pas du registre ni du PDF, et que l
 
 Les politiques RLS elles-mêmes ne se testent pas hors ligne : elles ont été prouvées en base dans une
 transaction annulée (tablette anonyme, manager avec / sans accès HACCP, admin) avant d'appliquer v6.39.
+
+## Multi-snack selon la réalité (`multisnack_reel_test.js`, planning v0.73)
+
+`weekMinutesOf` lit **toujours** `S.allCreneauxWeek` (tous restaurants). Avant v0.73 il bifurquait sur
+`isMultiSnack` (la fiche) : un salarié déclaré « mono » mais posé dans un autre snack voyait ses heures
+de là-bas ignorées par le plafond, le minimum, la colonne Heures et la phase 3. `isMultiSnack` ne sert
+plus qu'au départage d'affectation « mono avant multi » de `sortCandidates`.
+
+Le harnais contient une **copie verbatim** de l'ancien `weekMinutesOf` (artefact de contre-preuve,
+jamais réutilisé) : le plafond inter-snack doit refuser avec le nouveau code ET passer avec l'ancien,
+sinon le test ne prouve rien. Section D : vraies données de la semaine du 16/11/2026
+(`multisnack_reel.json`, lu en lecture seule) passées au vrai `renderChecks` — l'alerte « Snack absent
+de la fiche » doit apparaître pour Samya sur Grand Cœur et Carnot, pas sur Lobau.
+
+Impact sur une semaine réelle, ancien code contre nouveau : `scripts/audit_multisnack_reel.js`
+(hors `run.js`, jeu de données non versionné).

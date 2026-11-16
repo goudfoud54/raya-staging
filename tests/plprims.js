@@ -40,6 +40,9 @@ const FNS = [
   // planRepair : sans ces symboles, tout harnais qui extrait autoFillCore casse sur « planRepair is not
   // defined ». _chainRow est la mise en forme partagée entre la chaîne exécutée et la chaîne suggérée.
   '_simRemove', 'origineOf', 'movablePool', 'planRepair', '_chainRow', '_afResetPosed',
+  // Multi-snack DE FAIT (v0.73) : mention « · multi-snack » des rapports (autoFillCore, analyseWeek) et
+  // alerte « snack absent de la fiche » (renderChecks). Testés pour eux-mêmes par multisnack_reel_test.
+  'restosTravaillesOf', 'estMultiDeFait', 'snacksHorsFiche',
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];

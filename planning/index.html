@@ -334,7 +334,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.72 · demandes d\'indisponibilité : dates en toutes lettres justes dans tous les fuseaux (« Samedi 24 octobre »), plages en mots (« 18:00 → minuit »), la plus proche d\'abord';
+const VERSION='v0.73 · multi-snack selon la réalité : les heures faites dans un autre snack comptent pour tous (plafond, minimum, Σ), alerte « snack absent de la fiche »';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1407,7 +1407,8 @@ function renderTable(){
 // initial) ET recomputeAggregates (recalcul en place après chaque ajout/modif/suppression), pour ne
 // plus jamais désynchroniser la couleur et la ligne Σ inter-snack. Chiffre principal = total du snack
 // COURANT (S.creneaux) ; COULEUR = total INTER-SNACK (weekHoursOf) vs contrat global heures_min/plafondOf ;
-// ligne « Σ …h tous snacks » ajoutée uniquement pour les multi-snack (mono : globalH == totH).
+// ligne « Σ …h » ajoutée dès qu'il existe des heures sur un AUTRE snack cette semaine (globalH > totH),
+// que la fiche le déclare multi-snack ou non (v0.73 : la réalité, pas la déclaration).
 function rowHoursCell(s){
   const totH=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60;
   const minH=s.heures_min||0, maxH=plafondOf(s), globalH=weekHoursOf(s.id);
@@ -1421,7 +1422,7 @@ function rowHoursCell(s){
   // par snack va dans le title (survol), formaté à partir d'otherSnackBreakdown (source déjà partagée
   // avec la pop-up du nom) + le snack courant, pour un total cohérent avec globalH.
   let allSnacksLine='';
-  if(isMultiSnack(s)){
+  if(globalH-totH>0.01){   // = otherSnackHoursOf(s.id)>0 : heures ailleurs, déclaré ou non
     const parts=[{nom:(SNACK&&SNACK.nom||'ce snack').replace('Raya ',''),h:totH},...otherSnackBreakdown(s.id)].filter(p=>p.h>0.01);
     const detail=parts.map(p=>`${p.nom} : ${fmtH1(p.h)}h`).join(' · ');
     const tip=escP(`Total toutes plannings confondus (${fmtH1(globalH)}h)`+(detail?` — ${detail}`:''));
@@ -1431,9 +1432,10 @@ function rowHoursCell(s){
 }
 // Texte d'info-bulle de la colonne « Heures » — fonction PURE (testée par harnais). La couleur de cette
 // colonne (rouge au-dessus du plafond, orange sous le minimum, vert sinon) n'était expliquée nulle part.
-// Le total comparé est TOUJOURS le total inter-snack, ce que la bulle doit dire pour un multi-snack.
+// Le total comparé est TOUJOURS le total inter-snack, ce que la bulle doit dire dès qu'il y a des heures
+// ailleurs — même prédicat que la ligne Σ (globalH > totH), PAS la fiche (v0.73).
 function _hoursCellTip(s, totH, globalH, minH, maxH){
-  const multi=isMultiSnack(s);
+  const multi=globalH-totH>0.01;
   const base=multi
     ? `${fmtH1(totH)} h ici · ${fmtH1(globalH)} h au total, tous restaurants confondus.`
     : `${fmtH1(globalH)} h cette semaine.`;
@@ -1757,16 +1759,22 @@ function renderChecks(){
   // onRoster EXCLUT les salariés sortis (actif=false / date_sortie < lundi) — sans lui, les checks
   // off/plafond/min listaient des partis (ex RIAD, ALAMIN 0h) alors que le rapport auto-fill, qui filtre
   // onRoster, ne les compte pas → divergence 12 vs 10. Même filtre que le rapport → cohérence.
-  const list=S.salaries.filter(s=>onRoster(s) && worksAt(s,SNACK.id));
-  list.forEach(s=>{const d=new Set(S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut).map(c=>c.date));const off=7-d.size;if(d.size>0 && off<offMin)noOff.push(`${nameOf(s.id)} : ${d.size} jours travaillés (${off} repos < ${offMin})`);});
+  // v0.73 : la liste suit la RÉALITÉ comme la grille (_rosterList) — rattachés au snack OU ayant un créneau
+  // ici. Sans ça, un salarié posé sur un snack absent de sa fiche échappait à tous les contrôles ci-dessous.
+  const _sidsIci=new Set(S.creneaux.filter(c=>c.heure_debut).map(c=>c.salarie_id));
+  const list=S.salaries.filter(s=>onRoster(s) && (worksAt(s,SNACK.id) || _sidsIci.has(s.id)));
+  // Créneaux de la semaine du salarié sur TOUS les restaurants — les règles hebdo portent sur la personne.
+  const allOf=sid=>(S.allCreneauxWeek||[]).filter(c=>c.salarie_id===sid && c.heure_debut);
+  list.forEach(s=>{const d=new Set(allOf(s.id).map(c=>c.date));const off=7-d.size;if(d.size>0 && off<offMin)noOff.push(`${nameOf(s.id)} : ${d.size} jours travaillés tous restaurants confondus (${off} repos < ${offMin})`);});
   CHECKS.push({lbl:`≥ ${offMin} jour(s) off`,ok:noOff.length===0,details:noOff});
 
   // 5. Plafond heures — plafond UNIFIÉ (plafondOf : heures_max → plafond_heures → plafond_hebdo → 48),
-  //    exactement le même que le blocage dur de checkPlacement.
+  //    exactement le même que le blocage dur de checkPlacement — ET le même total (weekMinutesOf, tous
+  //    restaurants). Avant v0.73 ce panneau sommait le seul snack courant : vert ici, refus à la pose.
   const over=[];
   list.forEach(s=>{
     const plaf=plafondOf(s,_rc)*60;
-    const total=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+dur(c.heure_debut,c.heure_fin),0);
+    const total=weekMinutesOf(s.id);
     if(total>plaf) over.push(`${nameOf(s.id)} : ${(total/60).toFixed(1)}h > ${plaf/60}h`);
   });
   CHECKS.push({lbl:'Plafond heures hebdo',ok:over.length===0,details:over});
@@ -1851,10 +1859,10 @@ function renderChecks(){
   //     affichée (segments de travail fusionnés, en minutes depuis lundi 00:00, plus les
   //     bords de semaine). Un simple « 1 jour off » ne garantit pas toujours 35h.
   const repos35=[];
-  const listW=S.salaries.filter(s=>onRoster(s) && worksAt(s,SNACK.id));
+  const listW=list;   // même population que les autres contrôles (v0.73)
   listW.forEach(s=>{
     const segs=[];
-    S.creneaux.filter(c=>c.salarie_id===s.id && c.heure_debut && c.heure_fin).forEach(c=>{
+    allOf(s.id).filter(c=>c.heure_fin).forEach(c=>{   // repos hebdo = la PERSONNE, tous restaurants
       const di=dayIdxOfDate(c.date); let a=di*1440+toMin(c.heure_debut), b=di*1440+toMin(c.heure_fin);
       if(b<=a)b+=1440; segs.push([a,b]);
     });
@@ -1926,7 +1934,7 @@ function renderChecks(){
     listW.forEach(s=>{
       const base=Number(s.heures_max); if(!(base>0 && base<35)) return;
       const cap=base*pct;
-      const h=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+dur(c.heure_debut,c.heure_fin),0)/60;
+      const h=weekHoursOf(s.id);   // tous restaurants (v0.73)
       if(h>cap+1e-6) tp.push(`${nameOf(s.id)} : ${h.toFixed(1)}h > ${cap.toFixed(1)}h (contrat ${base}h × ${(pct*100).toFixed(0)}%)`);
     });
     CHECKS.push({lbl:'Heures compl. temps partiel',ok:tp.length===0,details:tp});
@@ -1977,6 +1985,14 @@ function renderChecks(){
     });
   }
   CHECKS.push({lbl:'Couverture horaire (pas de sur-effectif)',ok:overCov.length===0,details:overCov});
+
+  // Snack absent de la fiche (v0.73) : un salarié a des créneaux cette semaine dans un restaurant qui ne
+  // figure pas dans sa fiche. Signalement SANS blocage — les heures sont déjà comptées partout (calculs
+  // fondés sur la réalité) ; c'est au patron de compléter la fiche (ou de retirer les créneaux).
+  // Population : salariés de ce snack OU ayant un créneau ici (même liste que les autres contrôles).
+  const horsFiche=[];
+  list.forEach(s=>{ snacksHorsFiche(s).forEach(x=>horsFiche.push(`${nameOf(s.id)} travaille à ${x.nom} (${fmtH1(x.h)} h cette semaine), qui n'est pas dans sa fiche`)); });
+  if(horsFiche.length) CHECKS.push({lbl:'Snack absent de la fiche',ok:false,details:horsFiche});
 
   document.getElementById('checks').innerHTML=CHECKS.map((c,i)=>{
     const n=c.details.length;const hasD=n>0;
@@ -3271,8 +3287,9 @@ async function autoFillMultiWeek(ids){
   hideAutofillOverlay();
   // ── Sous-minimum CONSOLIDÉ : calculé UNE SEULE FOIS, après TOUS les snacks, sur les heures GLOBALES
   // (S.allCreneauxWeek, indépendant du snack affiché) — sinon (a) un multi-snack sous son min après le
-  // 1er snack mais complété par les suivants serait faussement listé, et (b) weekHoursOf est relatif au
-  // snack courant pour un MONO-snack → un mono travaillant sur un snack non restauré lirait 0h.
+  // 1er snack mais complété par les suivants serait faussement listé, et (b) avant v0.73 weekHoursOf était
+  // relatif au snack courant pour un MONO-snack (il est désormais global pour tous ; on garde ce calcul
+  // explicite, qui ne dépend d'aucun snack affiché).
   const underMin=[];
   const _weekDates=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
   const globalHoursAll=sid=>S.allCreneauxWeek.filter(c=>c.salarie_id===sid && c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60;
@@ -3281,7 +3298,7 @@ async function autoFillMultiWeek(ids){
     if(have >= mn-0.01) return;
     const blocked=_weekDates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
     const proratedMin=mn*(7-blocked)/7;
-    if(have < proratedMin-0.01) underMin.push({sid:s.id, name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
+    if(have < proratedMin-0.01) underMin.push({sid:s.id, name:fullName(s), have, min:mn, multi:estMultiDeFait(s), blocked, proratedMin});
   });
   underMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
   showMultiSolveReport(results, underMin);
@@ -3409,20 +3426,40 @@ function _finAbsM(deb,fin){ let a=_pmin(deb),b=_pmin(fin); if(a==null||b==null)r
 // Nom court d'un restaurant à partir de son id (« Raya Lobau » → « Lobau ») — utilisé par les messages
 // de refus inter-snack, qui doivent nommer l'établissement où se trouve la donnée déclenchante.
 function _restoNom(rid){ const r=(S.restos||[]).find(x=>x.id===rid); return (r&&r.nom)?String(r.nom).replace('Raya ','').trim():'autre restaurant'; }
-// ── Heures hebdo d'un salarié pour la répartition auto-fill (calcul du « manque » vs heures_min) ──
-// Multi-snack (est_multi, ou >1 restaurant dans snacks_priorites) : total TOUS restaurants de l'org
-// (S.allCreneauxWeek), car il cumule ses heures sur plusieurs sites → son vrai manque restant.
-// Mono-snack : uniquement le snack courant (S.creneaux), sa seule source d'heures possible.
-// Lit toujours l'état À JOUR (rappelé à chaque candFor, après chaque pose).
+// ── Multi-snack DÉCLARÉ (fiche) vs multi-snack DE FAIT (créneaux réels) ────────────────────────────
+// isMultiSnack lit la FICHE (est_multi, ou >1 restaurant dans snacks_priorites). Elle ne sert plus
+// QU'AUX décisions d'AFFECTATION, où la fiche fait foi (départage « mono avant multi » de l'auto-fill).
+// Elle ne doit JAMAIS choisir la source d'un calcul d'heures, de repos, de coupure ou de plafond :
+// v0.73 — Samya (fiche : Grand Cœur seul) travaillait aussi à Carnot ; ses 10 h là-bas étaient
+// ignorées par le plafond, le minimum, la couleur de la colonne Heures et la phase 3.
 function isMultiSnack(s){ const a=Array.isArray(s&&s.snacks_priorites)?s.snacks_priorites:null; return (a&&a.length>1)||!!(s&&s.est_multi); }
-// Total MINUTES hebdo d'un salarié — SOURCE UNIQUE des heures cumulées : global tous snacks
-// (S.allCreneauxWeek) pour un MULTI-snack, local (S.creneaux) pour un mono. Exclusion optionnelle du
-// créneau en cours de remplacement (excludeSelf par restaurant_id+date+service) pour ne pas le compter
-// deux fois. Utilisé par weekHoursOf ET par le blocage plafond inter-snack de checkPlacement.
+// Restaurants où le salarié a RÉELLEMENT un créneau cette semaine (S.allCreneauxWeek, tous snacks).
+// Indépendant du snack affiché.
+function restosTravaillesOf(sid){ return [...new Set((S.allCreneauxWeek||[]).filter(c=>c.salarie_id===sid && c.heure_debut).map(c=>c.restaurant_id))]; }
+// Multi-snack « pour l'affichage » (mention « · multi-snack » des rapports) : déclaré OU constaté.
+function estMultiDeFait(s){ return !!s && (isMultiSnack(s) || restosTravaillesOf(s.id).length>1); }
+// Restaurants où le salarié a des créneaux cette semaine SANS qu'ils figurent dans sa fiche (worksAt,
+// source unique du rattachement, fallback legacy compris). Alerte du panneau Vérifications : on ne
+// bloque rien, on signale — c'est au patron de compléter la fiche (ou de retirer les créneaux).
+// Retourne [{rid, nom, h}] trié par heures décroissantes ; [] si tout est cohérent.
+function snacksHorsFiche(s){
+  if(!s) return [];
+  const by={};
+  (S.allCreneauxWeek||[]).forEach(c=>{
+    if(c.salarie_id!==s.id || !c.heure_debut || worksAt(s,c.restaurant_id)) return;
+    by[c.restaurant_id]=(by[c.restaurant_id]||0)+_pdur(c.heure_debut,c.heure_fin);
+  });
+  return Object.entries(by).map(([rid,m])=>({rid, nom:_restoNom(rid), h:m/60})).sort((a,b)=>b.h-a.h);
+}
+// Total MINUTES hebdo d'un salarié — SOURCE UNIQUE des heures cumulées : TOUJOURS le global tous snacks
+// (S.allCreneauxWeek), quel que soit ce que dit la fiche. Pour un vrai mono-snack le résultat est
+// identique (tous ses créneaux sont sur un seul snack) ; pour un multi-snack non déclaré il devient
+// juste. Avant v0.73 un « mono » selon la fiche ne lisait que S.creneaux (snack courant) : ses heures
+// ailleurs disparaissaient du plafond, du minimum et de la phase 3. NE PAS réintroduire de bifurcation.
+// Exclusion optionnelle du créneau en cours de remplacement (excludeSelf par restaurant_id+date+service)
+// pour ne pas le compter deux fois. Utilisé par weekHoursOf ET par le blocage plafond de checkPlacement.
 function weekMinutesOf(sid, ex){
-  const s=salById(sid);
-  const src=(s&&isMultiSnack(s))?S.allCreneauxWeek:S.creneaux;
-  return src.filter(c=>c.salarie_id===sid && c.heure_debut
+  return (S.allCreneauxWeek||[]).filter(c=>c.salarie_id===sid && c.heure_debut
       && !(ex && ex.excludeSelf && c.date===ex.date && c.service===ex.svc && c.restaurant_id===ex.restaurant_id))
     .reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0);
 }
@@ -3497,7 +3534,9 @@ function sortCandidates(ids, h){
     if(Math.abs(lack[a]-lack[b])>0.01) return lack[b]-lack[a];                                     // (1) manque
     const pa=snackPrioriteOf(salById(a),SNACK.id), pb=snackPrioriteOf(salById(b),SNACK.id);
     if(pa!==pb) return pa-pb;                                                                       // (2) priorité snack (DOMINANT)
-    const mA=isMultiSnack(salById(a))?1:0, mB=isMultiSnack(salById(b))?1:0; if(mA!==mB) return mA-mB; // (3) mono>multi
+    // (3) mono>multi — FICHE volontairement : c'est une préférence d'AFFECTATION (garder la souplesse des
+    // salariés déclarés polyvalents pour les autres snacks), pas un calcul d'heures.
+    const mA=isMultiSnack(salById(a))?1:0, mB=isMultiSnack(salById(b))?1:0; if(mA!==mB) return mA-mB;
     if(h.shift.exp){const ae=isExp(a,h.shift.role)?0:1,be=isExp(b,h.shift.role)?0:1;if(ae!==be)return ae-be;} // (4) exp
     if(Math.abs(hw[a]-hw[b])>1.5) return hw[a]-hw[b];                                               // (5) équilibrage heures
     return 0;
@@ -3929,15 +3968,17 @@ function checkPlacement(sid, shift, date, svc, di, opt){
     }
   }
   // plafond hebdo UNIFIÉ (heures_max → plafond_heures → règle plafond_hebdo → 48h) — plafond DUR
-  // Plafond DUR — INTER-SNACK pour un multi-snack : le total comparé au plafond est le cumul GLOBAL tous
-  // snacks (weekMinutesOf lit S.allCreneauxWeek), pas seulement le snack courant. En auto-fill multi-snack
+  // Plafond DUR — INTER-SNACK pour TOUS (v0.73, déclaré multi ou non) : le total comparé au plafond est le
+  // cumul GLOBAL tous snacks (weekMinutesOf lit S.allCreneauxWeek), pas seulement le snack courant. En auto-fill multi-snack
   // séquentiel, sans ça, les heures déjà posées sur les autres snacks n'étaient pas comptées → heures_max
   // dépassé (même défaut que la coupure/repos avant f2eb648). excludeSelf : on retire le créneau en cours
-  // de remplacement (restaurant_id=snack courant) pour ne pas le compter deux fois. Mono : cumul local inchangé.
+  // de remplacement (restaurant_id=snack courant) pour ne pas le compter deux fois. Vrai mono : identique.
   const plaf=plafondOf(sal, R)*60;
   const wk=weekMinutesOf(sid, {excludeSelf:opt.excludeSelf, date, svc, restaurant_id:SNACK.id});
   if(wk + _pdur(shift.deb,shift.fin) > plaf+1e-6) return {cle:'plafond',label:`${PLACE_RULES.plafond} (>${(plaf/60)}h)`,
-    _plaf:{deja:wk/60, ajout:_pdur(shift.deb,shift.fin)/60, max:plaf/60, multi:isMultiSnack(sal)}};
+    _plaf:{deja:wk/60, ajout:_pdur(shift.deb,shift.fin)/60, max:plaf/60,
+           // « (tous restaurants confondus) » dans le motif : dès que le total compté inclut un autre snack.
+           multi:(S.allCreneauxWeek||[]).some(c=>c.salarie_id===sid && c.heure_debut && c.restaurant_id!==SNACK.id)}};
   return null; // ✅ aucune règle active violée
 }
 // Rapport des postes non comblés (modale)
@@ -4680,16 +4721,16 @@ function analyseWeek(opt){
   const roster=_rosterList();
   const sousMin=[], surPlafond=[], prochePlafond=[], sansCreneau=[];
   roster.forEach(s=>{
-    const have=weekHoursOf(s.id);                    // inter-snack pour un multi (même source que la colonne Heures)
+    const have=weekHoursOf(s.id);                    // inter-snack pour TOUS (même source que la colonne Heures)
     const mn=Number(s.heures_min)||0, mx=plafondOf(s,rg);
     const blocked=dates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
     const proratedMin=mn*(7-blocked)/7;
-    if(mn>0 && have<proratedMin-0.01) sousMin.push({sid:s.id,name:fullName(s),have,min:mn,multi:isMultiSnack(s),blocked,proratedMin});
-    if(mx>0 && have>mx+0.01)                      surPlafond.push({sid:s.id,name:fullName(s),have,max:mx,multi:isMultiSnack(s),ecart:have-mx});
-    else if(mx>0 && have>=mx*PLAFOND_PROCHE_PCT) prochePlafond.push({sid:s.id,name:fullName(s),have,max:mx,multi:isMultiSnack(s),reste:mx-have});
+    if(mn>0 && have<proratedMin-0.01) sousMin.push({sid:s.id,name:fullName(s),have,min:mn,multi:estMultiDeFait(s),blocked,proratedMin});
+    if(mx>0 && have>mx+0.01)                      surPlafond.push({sid:s.id,name:fullName(s),have,max:mx,multi:estMultiDeFait(s),ecart:have-mx});
+    else if(mx>0 && have>=mx*PLAFOND_PROCHE_PCT) prochePlafond.push({sid:s.id,name:fullName(s),have,max:mx,multi:estMultiDeFait(s),reste:mx-have});
     // « Sans aucun créneau » se juge sur le total GLOBAL : un multi-snack à 0 h ici mais 20 h ailleurs
     // n'est pas sans planning. Un salarié absent toute la semaine n'est pas une anomalie non plus.
-    if(have<=0.01 && blocked<7) sansCreneau.push({sid:s.id,name:fullName(s),multi:isMultiSnack(s),blocked});
+    if(have<=0.01 && blocked<7) sansCreneau.push({sid:s.id,name:fullName(s),multi:estMultiDeFait(s),blocked});
   });
   sousMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
   surPlafond.sort((a,b)=>b.ecart-a.ecart);
@@ -5160,7 +5201,7 @@ async function autoFillCore(dayIndices, opt={}){
     const blocked=_weekDates.filter(d=>hasPonctuelleAbsence(s.id,d)||isSuspended(s.id,d)).length;
     const dispo=7-blocked;
     const proratedMin=mn*dispo/7;
-    if(have < proratedMin-0.01) underMin.push({sid:s.id, name:fullName(s), have, min:mn, multi:isMultiSnack(s), blocked, proratedMin});
+    if(have < proratedMin-0.01) underMin.push({sid:s.id, name:fullName(s), have, min:mn, multi:estMultiDeFait(s), blocked, proratedMin});
   });
   underMin.sort((a,b)=>(b.proratedMin-b.have)-(a.proratedMin-a.have));
   window._lastUnderMin=underMin;

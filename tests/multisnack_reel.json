@@ -1,0 +1,35 @@
+{
+  "_source": "Projet ynnqvtfayrdteqtgxeuk (production), org Groupe Raya, lu le 2026-11-16 en LECTURE SEULE. Semaine du lundi 16/11/2026. Fiches (est_multi, snacks_priorites, heures) et créneaux non vides des trois salariés cités ; rien d'autre.",
+  "monday": "2026-11-16",
+  "restos": [
+    {"id": "46068c53-c6ba-40ff-ab57-7c187904ff89", "nom": "Raya Carnot"},
+    {"id": "8a9487fa-a3b2-4342-b2eb-3c0958e67f01", "nom": "Raya Lobau"},
+    {"id": "d77ce169-2e1b-4a52-8861-73408658a19e", "nom": "Raya Grand Coeur"}
+  ],
+  "sal": [
+    {"id": "ec3a4e03-c536-4117-bbbb-d6d542bb6d53", "nom": "Samya", "prenom": null, "est_multi": false, "snack_origine_id": "d77ce169-2e1b-4a52-8861-73408658a19e", "snacks_priorites": [{"priorite": 1, "restaurant_id": "d77ce169-2e1b-4a52-8861-73408658a19e"}], "heures_min": 35, "heures_max": 45, "plafond_heures": 48, "actif": true, "date_sortie": null},
+    {"id": "d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5", "nom": "KOUYATE", "prenom": "Ousmane", "est_multi": false, "snack_origine_id": "8a9487fa-a3b2-4342-b2eb-3c0958e67f01", "snacks_priorites": [{"priorite": 1, "restaurant_id": "8a9487fa-a3b2-4342-b2eb-3c0958e67f01"}], "heures_min": 35, "heures_max": 48, "plafond_heures": 48, "actif": true, "date_sortie": null},
+    {"id": "788d9c5b-1477-40bf-b244-015a383c0436", "nom": "SEBILLE", "prenom": "Ninon", "est_multi": false, "snack_origine_id": "8a9487fa-a3b2-4342-b2eb-3c0958e67f01", "snacks_priorites": [{"priorite": 1, "restaurant_id": "8a9487fa-a3b2-4342-b2eb-3c0958e67f01"}], "heures_min": 35, "heures_max": 45, "plafond_heures": 48, "actif": true, "date_sortie": null}
+  ],
+  "cre": [
+    ["ec3a4e03-c536-4117-bbbb-d6d542bb6d53","46068c53-c6ba-40ff-ab57-7c187904ff89","2026-11-16","midi","11:00","15:00","caisse"],
+    ["ec3a4e03-c536-4117-bbbb-d6d542bb6d53","46068c53-c6ba-40ff-ab57-7c187904ff89","2026-11-16","soir","18:00","00:00","caisse"],
+    ["ec3a4e03-c536-4117-bbbb-d6d542bb6d53","d77ce169-2e1b-4a52-8861-73408658a19e","2026-11-19","soir","18:00","02:00","caisse"],
+    ["ec3a4e03-c536-4117-bbbb-d6d542bb6d53","d77ce169-2e1b-4a52-8861-73408658a19e","2026-11-20","soir","19:00","02:00","caisse"],
+    ["ec3a4e03-c536-4117-bbbb-d6d542bb6d53","d77ce169-2e1b-4a52-8861-73408658a19e","2026-11-21","soir","18:00","00:00","caisse"],
+    ["ec3a4e03-c536-4117-bbbb-d6d542bb6d53","d77ce169-2e1b-4a52-8861-73408658a19e","2026-11-22","soir","17:00","00:00","caisse"],
+    ["d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-16","midi","10:00","14:00","cuisine"],
+    ["d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-16","soir","18:00","00:00","cuisine"],
+    ["d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-18","midi","10:00","14:00","cuisine"],
+    ["d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-19","midi","10:00","14:00","cuisine"],
+    ["d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-19","soir","18:00","02:00","cuisine"],
+    ["d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-21","midi","10:00","18:00","cuisine"],
+    ["d610b4d9-b4d0-48cf-9294-b55c0fcfc4d5","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-22","soir","16:30","23:00","cuisine"],
+    ["788d9c5b-1477-40bf-b244-015a383c0436","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-17","soir","18:00","00:00","caisse"],
+    ["788d9c5b-1477-40bf-b244-015a383c0436","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-18","soir","18:00","00:00","caisse"],
+    ["788d9c5b-1477-40bf-b244-015a383c0436","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-19","midi","11:00","18:00","caisse"],
+    ["788d9c5b-1477-40bf-b244-015a383c0436","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-20","midi","11:00","18:00","caisse"],
+    ["788d9c5b-1477-40bf-b244-015a383c0436","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-21","midi","11:00","18:00","caisse"],
+    ["788d9c5b-1477-40bf-b244-015a383c0436","8a9487fa-a3b2-4342-b2eb-3c0958e67f01","2026-11-22","soir","19:00","23:30","caisse"]
+  ]
+}

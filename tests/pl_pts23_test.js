@@ -39,7 +39,9 @@ function colorOf(s){
   if(maxH && globalH>maxH)color='bad';
   else if(minH && globalH<minH)color='warn';
   else if(globalH>0)color='ok';
-  return {totH, globalH, color, showLine:isMultiSnack(s)};
+  // showLine : MÊME prédicat que rowHoursCell depuis v0.73 (heures ailleurs, pas la fiche). Réplique
+  // locale — la vraie fonction est couverte par rowhours_test et multisnack_reel_test.
+  return {totH, globalH, color, showLine:globalH-totH>0.01};
 }
 // make GC contribute 22h: 3 GC shifts
 S.allCreneauxWeek=[...S.creneaux,
