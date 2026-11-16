@@ -249,7 +249,7 @@ button{cursor:pointer;border:none;background:none}
 const SUPA_URL='https://ynnqvtfayrdteqtgxeuk.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubnF2dGZheXJkdGVxdGd4ZXVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTE1MTQsImV4cCI6MjA5NTQ2NzUxNH0._mfVAGexu7ew38UQk6adn42az4Gt_J3ePxR6O6wuWHc';
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
-const VERSION='v0.28 · indisponibilités de la fiche lisibles : dates en toutes lettres (« Samedi 24 octobre »), triées, périodes consécutives regroupées « Du … au … » (dépliables), passé rangé dans « Historique » replié par mois — sans rien supprimer en base';
+const VERSION='v0.29 · nouvelle contrainte individuelle « Maximum de fermetures tardives par semaine » (remplace la règle du planning pour ce salarié)';
 let ME=null, ORG={};
 let selectedMonth=null, selectedSnack=null;
 function fmtH(h){if(h==null||isNaN(h))return'';const tot=Math.round(h*60);return `${Math.floor(tot/60)}h ${String(tot%60).padStart(2,'0')}m`;}
@@ -258,7 +258,7 @@ function ymLabel(ym){const[y,m]=ym.split('-');return new Date(parseInt(y),parseI
 const MOIS_FR={janvier:1,février:2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,décembre:12,decembre:12};
 
 const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
-const CONTRAINTE_PRESETS=['pas_apres','pas_avant','pas_de_coupure','max_soirs_semaine','jours_off_consecutifs','indispo_jour','autre'];
+const CONTRAINTE_PRESETS=['pas_apres','pas_avant','pas_de_coupure','max_soirs_semaine','max_fermetures_tardives','jours_off_consecutifs','indispo_jour','autre'];
 // Saisie GUIDÉE des contraintes (fini les clés techniques + « valeur (ex 19:00, true, 1) »).
 // blocking=true → dure (appliquée par le planning via checkPlacement) ; false → indicative (souple).
 const CONTRAINTE_META={
@@ -266,6 +266,10 @@ const CONTRAINTE_META={
   pas_avant:            {label:'Ne peut pas commencer avant',               input:'time',   blocking:true},
   pas_de_coupure:       {label:'Pas de coupure (midi + soir le même jour)', input:'bool',   blocking:true},
   max_soirs_semaine:    {label:'Maximum de soirs par semaine',              input:'number', blocking:true},
+  // v0.29 — remplace, pour CE salarié, la règle « Limiter les fermetures tardives » du planning (même si
+  // elle est décochée). Compte les services finissant à l'heure réglée dans le planning ou plus tard —
+  // PAS les soirs : un 18:00→23:00 n'est pas une fermeture à 2 h (c'est max_soirs_semaine qui compte les soirs).
+  max_fermetures_tardives:{label:'Maximum de fermetures tardives par semaine', input:'number', blocking:true},
   jours_off_consecutifs:{label:'Jours de repos consécutifs souhaités',      input:'number', blocking:false},
   indispo_jour:         {label:'Jour non travaillé',                        input:'day',    blocking:true},
   autre:                {label:'Note libre',                                input:'text',   blocking:false},
@@ -281,6 +285,7 @@ function contrPhrase(c){
     case 'pas_avant': return `Ne peut pas commencer avant ${(v||'').slice(0,5)}`;
     case 'pas_de_coupure': return 'Pas de coupure (midi + soir le même jour)';
     case 'max_soirs_semaine': return `Maximum ${v} soir(s) par semaine`;
+    case 'max_fermetures_tardives': return `Maximum ${v} fermeture(s) tardive(s) par semaine (l'heure qui fait une fermeture tardive se règle dans Réglages du planning → « Limiter les fermetures tardives »)`;
     case 'jours_off_consecutifs': return `${v} jour(s) de repos consécutifs souhaités`;
     case 'indispo_jour': { const ji=contrDayIdx(v); return `Jour non travaillé : ${ji!=null?JOURS[ji]:v}`; }
     case 'autre': return v||'';

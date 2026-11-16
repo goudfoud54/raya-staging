@@ -43,6 +43,10 @@ const FNS = [
   // Multi-snack DE FAIT (v0.73) : mention « · multi-snack » des rapports (autoFillCore, analyseWeek) et
   // alerte « snack absent de la fiche » (renderChecks). Testés pour eux-mêmes par multisnack_reel_test.
   'restosTravaillesOf', 'estMultiDeFait', 'snacksHorsFiche',
+  // Fermetures tardives (v0.74) : appelées par checkPlacement, _revalPhrase, explainViolation, renderChecks.
+  // contrOf est une DÉPENDANCE de fermeturesTardivesRegle (exception de fiche) : plusieurs harnais ne
+  // stubbent que _contrainteBlocking. Un harnais qui définit son propre contrOf l'écrase après coup.
+  'contrOf', '_ftSeuilAbs', 'estFermetureTardive', 'fermeturesTardivesRegle', 'fermeturesTardivesOf', '_jourCourt', '_ftListe',
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];
@@ -56,6 +60,7 @@ const CONST_LINES = [
   { first: '_fh', names: ['_fh'] },
   { first: '_hhmm', names: ['_hhmm'] },
   { first: 'F2H_SEUIL_DEF', names: ['F2H_SEUIL_DEF', 'F2H_MATIN_MIN'] },
+  { first: 'FT_SEUIL_DEF', names: ['FT_SEUIL_DEF'] },
   { first: 'PLAFOND_PROCHE_PCT', names: ['PLAFOND_PROCHE_PCT'] },
   { first: 'REVAL_SEMAINE', names: ['REVAL_SEMAINE'] },
   { first: '_creKey', names: ['_creKey'] },

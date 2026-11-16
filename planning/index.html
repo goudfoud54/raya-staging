@@ -334,7 +334,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.73 · multi-snack selon la réalité : les heures faites dans un autre snack comptent pour tous (plafond, minimum, Σ), alerte « snack absent de la fiche »';
+const VERSION='v0.74 · fermetures tardives : réglage « pas plus de N fermetures finissant à HH:MM ou plus tard par semaine » (désactivé par défaut) + exception dans la fiche du salarié';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1986,6 +1986,18 @@ function renderChecks(){
   }
   CHECKS.push({lbl:'Couverture horaire (pas de sur-effectif)',ok:overCov.length===0,details:overCov});
 
+  // Fermetures tardives par semaine (v0.74) — signale les dépassements DÉJÀ POSÉS (planning saisi avant
+  // l'activation de la règle, import Excel, dérogation). Même source que checkPlacement
+  // (fermeturesTardivesRegle + fermeturesTardivesOf, tous restaurants). Ligne affichée si la règle
+  // d'organisation est cochée (verte quand tout va bien) ou dès qu'une exception de fiche est dépassée.
+  { const ftOrg=_rc.raw('fermetures_tardives_max'), ftOn=!!(ftOrg && ftOrg.active!==false);
+    const ftViol=[]; let ftLbl=null;
+    list.forEach(s=>{ const ft=fermeturesTardivesRegle(s.id,_rc); if(!ft) return;
+      if(ft.source==='org' && !ftLbl) ftLbl=`Fermetures tardives (max ${ft.max} à ${ft.seuil}+ / sem.)`;
+      const all=fermeturesTardivesOf(s.id, ft.seuilAbs);
+      if(all.length>ft.max) ftViol.push(`${nameOf(s.id)} : ${all.length} fermetures à ${ft.seuil} ou plus tard (${_ftListe(all)}) — maximum ${ft.max}${ft.source==='fiche'?' (fiche)':''}`); });
+    if(ftOn || ftViol.length) CHECKS.push({lbl:ftLbl||'Fermetures tardives par semaine', ok:ftViol.length===0, details:ftViol}); }
+
   // Snack absent de la fiche (v0.73) : un salarié a des créneaux cette semaine dans un restaurant qui ne
   // figure pas dans sa fiche. Signalement SANS blocage — les heures sont déjà comptées partout (calculs
   // fondés sur la réalité) ; c'est au patron de compléter la fiche (ou de retirer les créneaux).
@@ -2296,6 +2308,13 @@ const RULE_META={
   // Libellé volontairement autonome : le tri de l'écran sépare les cases à cocher des valeurs, ce
   // réglage n'est donc PAS affiché sous la règle qu'il paramètre (même situation que repos_quotidien_h).
   fin_matin_seuil:{lbl:'Heure de fin au-delà de laquelle le matin du lendemain est interdit',type:'time',defVal:'00:30',help:'Une fin STRICTEMENT postérieure à cette heure (après minuit) interdit le matin du lendemain. Par défaut 00:30 : une fermeture à minuit pile — la plus courante — ne déclenche donc RIEN. Un établissement qui ferme à 2 h mettra 02:00 ou 02:30. Sans effet si la règle ci-dessus est décochée.'},
+  // ── FERMETURES TARDIVES (v0.74) — demande du patron : « mes salariés ne veulent pas faire plus de 2
+  // fermetures à 2 h du matin chacun ». Deux lignes en base, UNE ligne à l'écran (rendu dédié dans
+  // l'écran Réglages) : la case + le nombre (fermetures_tardives_max) et l'heure (fermeture_tardive_seuil,
+  // `inline` → pas de ligne propre). Désactivée par défaut : un autre établissement n'aura pas de limite.
+  // L'heure reste modifiable case décochée : elle sert aussi aux exceptions individuelles de la fiche.
+  fermetures_tardives_max:{lbl:'Limiter les fermetures tardives',type:'bool',defActive:false,defVal:'2',help:'Une fermeture tardive est un service qui finit à l\'heure réglée ou plus tard — ici ou dans un autre restaurant, tous restaurants confondus. Exemple : « 2 fermetures à 02:00 » interdit à chaque salarié une 3ᵉ fermeture à 2 h du matin dans la même semaine, en auto-fill comme en saisie manuelle (la phase 3 ne peut pas non plus rallonger un créneau jusque-là). Une fermeture compte pour le jour où le service COMMENCE : samedi 19:00 → dimanche 02:00 est la fermeture du samedi. Une heure jusqu\'à 06:00 s\'entend après minuit (02:00 = 2 h du matin, 00:00 = minuit) ; au-delà, le soir même (23:00). Un salarié peut avoir sa propre limite, plus haute ou plus basse : fiche du salarié → contraintes individuelles → « Maximum de fermetures tardives par semaine ». Elle remplace alors celle-ci pour lui, même si cette case est décochée.'},
+  fermeture_tardive_seuil:{lbl:'Heure à partir de laquelle un service est une fermeture tardive',type:'time',defVal:'02:00',inline:true},
   repos_quotidien:{lbl:'Repos quotidien minimum (fin d\'un service → début du suivant)',type:'bool',help:'Toujours actif : c\'est une obligation légale. La DURÉE se règle juste en dessous, dans « Limites & valeurs ».'},
   repos_quotidien_h:{lbl:'Durée du repos quotidien',type:'number',unit:'h',min:0,max:24,help:'Nombre d\'heures minimum entre la fin d\'un service et le début du suivant, tous restaurants confondus. C\'est une DURÉE : décaler la reprise suffit à la respecter. À ne pas confondre avec « Interdire le service du matin après une fermeture APRÈS MINUIT », qui est un interdit absolu s\'appliquant EN PLUS de celle-ci — les deux peuvent bloquer un même créneau, pour des raisons différentes.'},
   fin_veille_ecole:{lbl:'Heure max de fin de shift la veille d\'un jour d\'école (alternants)',type:'time',help:'Au-delà, l\'auto-fill refuse et une alerte rouge apparaît. Défaut 22:00.'},
@@ -2447,7 +2466,7 @@ function openReglages(){
   // doivent plus être modifiables — deux champs qui pilotent le même plafond, c'est la garantie que
   // l'un des deux sera édité sans effet.
   const _cles=[...new Set([...Object.keys(RULE_META), ...(S.regles||[]).map(r=>r.cle)])]
-                .filter(c=>!(RULE_META[c]||{}).deprecated);
+                .filter(c=>!(RULE_META[c]||{}).deprecated && !(RULE_META[c]||{}).inline);   // inline : rendu DANS la ligne d'une autre règle
   const _rows=_cles.map(_regleOf).filter(Boolean);
   if(!_rows.length){
     html+='<div style="padding:18px;color:var(--muted);font-size:12px">Aucune règle configurée. Les vérifications utilisent les valeurs par défaut.</div>';
@@ -2507,6 +2526,8 @@ function openReglages(){
             <span style="font-size:13.5px">${meta.lbl} <span style="color:var(--gold);font-size:11px;font-weight:600;border:1px solid var(--gold);border-radius:4px;padding:1px 6px;margin-left:6px">🔒 obligation légale</span></span>
           </label>${helpHtml}
         </div>`;
+      } else if(isBool && r.cle==='fermetures_tardives_max'){
+        html+=fermeturesTardivesRuleHtml(r, helpHtml);
       } else if(isBool){
         html+=`<div style="padding:12px 16px;border-top:1px solid var(--line)">
           <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
@@ -2641,6 +2662,26 @@ async function toggleInterSnackRule(on){
     if(data)S.regles.push(data);
   }
   setSS('ok', on?'Déplacement inter-restaurant autorisé (dernier recours)':'Déplacement inter-restaurant désactivé');
+}
+// Ligne « Limiter les fermetures tardives » de l'écran Réglages (v0.74) : la case + le nombre + l'heure
+// sur UNE ligne, comme le patron l'a formulée. Le nombre et l'heure restent modifiables case décochée :
+// l'heure sert aussi aux exceptions individuelles. Un nombre illisible case cochée est SIGNALÉ (la règle
+// serait sans effet — fermeturesTardivesRegle renvoie null), jamais avalé en silence.
+function fermeturesTardivesRuleHtml(r, helpHtml){
+  const sRow=_regleOf('fermeture_tardive_seuil')||{valeur:FT_SEUIL_DEF};
+  const n=parseInt(r.valeur,10), nOk=isFinite(n)&&n>=0;
+  const st='padding:5px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:13px;font-weight:600';
+  const warn=(r.active && !nOk)?`<div style="font-size:11.5px;color:var(--bad);margin-top:5px;padding-left:28px">⚠ Nombre illisible : la limite n'est PAS appliquée tant qu'il n'est pas corrigé.</div>`:'';
+  return `<div style="padding:12px 16px;border-top:1px solid var(--line)">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13.5px">
+      <input type="checkbox" ${r.active?'checked':''} onchange="saveRegle('fermetures_tardives_max','active',this.checked)" style="width:18px;height:18px;cursor:pointer" aria-label="Limiter les fermetures tardives">
+      <span>Limiter les fermetures tardives : pas plus de</span>
+      <input type="number" min="0" max="7" step="1" value="${nOk?n:''}" onblur="saveRegle('fermetures_tardives_max','valeur',String(parseInt(this.value,10)))" style="${st};width:60px;text-align:center" aria-label="Nombre maximum de fermetures tardives">
+      <span>par salarié et par semaine, une fermeture tardive étant un service qui finit à</span>
+      <input type="time" value="${escP(String(sRow.valeur||FT_SEUIL_DEF).slice(0,5))}" onblur="if(this.value)saveRegle('fermeture_tardive_seuil','valeur',this.value)" style="${st}" aria-label="Heure de fermeture tardive">
+      <span>ou plus tard.</span>
+    </div>${warn}${helpHtml}
+  </div>`;
 }
 // Enregistre un réglage, repéré par sa CLÉ et non par son id : un réglage jamais inséré en base n'a pas
 // d'id. Dans ce cas on CRÉE la ligne au premier changement, avec les défauts de RULE_META pour les autres
@@ -3550,11 +3591,53 @@ function sortCandidates(ids, h){
 //   presque toutes les fermetures normales alors que le repos légal était respecté.)
 // F2H_MATIN_MIN : un shift commençant avant cette heure est un « matin » (900 = 15:00).
 const F2H_SEUIL_DEF='00:30', F2H_MATIN_MIN=15*60;
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_lu_me:'fin trop tardive (lun→mer)', fin_je:'fin trop tardive (jeudi)', fin_ve:'fin trop tardive (vendredi)', fin_sa:'fin trop tardive (samedi)', fin_di:'fin trop tardive (dimanche)', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', hors_poste:'horaire en dehors des postes définis', releve:'relève en plein service', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
+// FT_SEUIL_DEF : valeur par DÉFAUT du réglage `fermeture_tardive_seuil` (v0.74) — 2 h du matin, l'exemple
+//   du patron. Lu seulement si la ligne n'existe pas en base (cf. fermeturesTardivesRegle).
+const FT_SEUIL_DEF='02:00';
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_lu_me:'fin trop tardive (lun→mer)', fin_je:'fin trop tardive (jeudi)', fin_ve:'fin trop tardive (vendredi)', fin_sa:'fin trop tardive (samedi)', fin_di:'fin trop tardive (dimanche)', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', hors_poste:'horaire en dehors des postes définis', releve:'relève en plein service', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', fermetures_tardives:'trop de fermetures tardives cette semaine', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
 // ── Contraintes individuelles (salarie_contraintes) ─────────────────────────────────────────────
 // Longtemps configurables sur la fiche salarié mais JAMAIS lues côté planning → purement décoratives.
 // Désormais branchées dans checkPlacement (donc auto-fill ET saisie manuelle, dérogeables à la main).
 function contrOf(sid){ return (S.contraintes||[]).filter(c=>c.salarie_id===sid && c.active!==false && c.valeur!=null && c.valeur!==''); }
+// ── FERMETURES TARDIVES (v0.74) ─────────────────────────────────────────────────────────────────
+// Heure-seuil → minutes ABSOLUES depuis 00:00 du jour où le service COMMENCE. Même convention que la
+// contrainte pas_apres : jusqu'à 06:00 l'heure s'entend APRÈS minuit (+1440) — 02:00 = 2 h du matin,
+// 00:00 = minuit ; au-delà, le soir même (23:00). null si l'heure est illisible.
+function _ftSeuilAbs(hhmm){ let m=_pmin(hhmm); if(m==null) return null; if(m<=360) m+=1440; return m; }
+// Un service est une fermeture tardive s'il FINIT au seuil OU PLUS TARD (inclusif : « 2 fermetures à
+// 02:00 » compte un 19:00→02:00). La fin est prise en absolu (_finAbsM, fin ≤ début ⇒ +1440) : un
+// 11:00→15:00 finit à 15:00 (900), pas « 15 > 2 » ; un 19:00→02:00 finit à 26:00 (1560).
+// Aucun filtre sur le libellé midi/soir : seule l'heure de fin compte (un « midi » 11:00→23:00 finit à 23:00).
+function estFermetureTardive(deb, fin, seuilAbs){ const e=_finAbsM(deb,fin); return e!=null && seuilAbs!=null && e>=seuilAbs; }
+// Limite EFFECTIVE pour un salarié → {max, seuil, seuilAbs, source:'fiche'|'org'} ou null (aucune limite).
+// La contrainte individuelle `max_fermetures_tardives` REMPLACE la règle d'organisation pour ce salarié,
+// et s'applique même si la case d'organisation est décochée (même logique que les autres contraintes de
+// la fiche). L'heure-seuil vient TOUJOURS du réglage d'organisation (la fiche ne porte qu'un nombre).
+// N = 0 est une valeur légitime (« aucune fermeture tardive ») : lu par parseInt, pas par R.num (qui
+// remplace 0 par le défaut). Ligne absente → règle désactivée (défaut), seuil = FT_SEUIL_DEF.
+function fermeturesTardivesRegle(sid, R){
+  R=R||_ruleCtx();
+  const sRow=R.raw?R.raw('fermeture_tardive_seuil'):null;
+  const seuil=String((sRow&&sRow.valeur)||FT_SEUIL_DEF).slice(0,5);
+  const seuilAbs=_ftSeuilAbs(seuil); if(seuilAbs==null) return null;
+  const ci=contrOf(sid).find(c=>c.cle==='max_fermetures_tardives');
+  if(ci){ const n=parseInt(ci.valeur,10); if(isFinite(n) && n>=0) return {max:n, seuil, seuilAbs, source:'fiche'}; }
+  const row=R.raw?R.raw('fermetures_tardives_max'):null;
+  if(!row || row.active===false) return null;
+  const n=parseInt(row.valeur,10); if(!isFinite(n) || n<0) return null;
+  return {max:n, seuil, seuilAbs, source:'org'};
+}
+// Fermetures tardives d'un salarié dans la semaine chargée, TOUS restaurants (S.allCreneauxWeek), triées
+// par date. Rattachement à la DATE DU CRÉNEAU (= jour où le service commence). `skip(c)` exclut un créneau
+// (le créneau en cours de remplacement, pour ne pas le compter deux fois).
+function fermeturesTardivesOf(sid, seuilAbs, skip){
+  return (S.allCreneauxWeek||[]).filter(c=>c.salarie_id===sid && c.heure_debut && c.heure_fin && !(skip&&skip(c))
+      && estFermetureTardive(c.heure_debut,c.heure_fin,seuilAbs))
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+}
+// « mar. 18 » (+ « à Lobau » si autre restaurant que celui affiché) — liste lisible des fermetures.
+function _jourCourt(d){ try{ const x=new Date(d+'T00:00:00'); return `${JOURS[(x.getDay()+6)%7].slice(0,3).toLowerCase()}. ${x.getDate()}`; }catch(e){ return d; } }
+function _ftListe(cres){ return cres.map(c=>_jourCourt(c.date)+((c.restaurant_id && SNACK && c.restaurant_id!==SNACK.id)?` à ${_restoNom(c.restaurant_id)}`:'')).join(', '); }
 // ═══ POURQUOI CE REFUS ═══════════════════════════════════════════════════════════════════════════
 // checkPlacement renvoie {cle,label} + une charge utile `_xxx` décrivant le FAIT qui a déclenché la
 // règle. Ici on transforme ça en une phrase que le patron peut trancher SANS lire le code : la règle,
@@ -3566,6 +3649,7 @@ function contrOf(sid){ return (S.contraintes||[]).filter(c=>c.salarie_id===sid &
 const RULE_SETTING_OF={
   coupure_min:'coupure_min', repos_quot:'repos_quotidien_h', amplitude_max:'amplitude_max',
   jour_off_min:'jour_off_min', fin_2h_pas_matin:'fin_2h_pas_matin', plafond:'plafond_hebdo',
+  fermetures_tardives:'fermetures_tardives_max',   // sauf exception de la fiche (cf. explainViolation)
   fin_lu_me:'fin_lu_me', fin_je:'fin_je', fin_ve:'fin_ve', fin_sa:'fin_sa', fin_di:'fin_di',
   fin_semaine:'fin_semaine', fin_weekend:'fin_weekend', hors_poste:null, releve:null,
   fin_veille_ecole:'fin_veille_ecole', fin_veille_examen:'fin_veille_examen',
@@ -3689,6 +3773,12 @@ function explainViolation(v, ctx){
       break;
     }
     case 'cfa': why=`L'alternant est au CFA ce jour-là : ${v.label}.`; break;
+    case 'fermetures_tardives': {
+      const p=v._ft; if(!p) break;
+      why=`Déjà ${p.deja.length} fermeture${p.deja.length>1?'s':''} à ${p.seuil} ou plus tard cette semaine (${_ftListe(p.deja)||'—'}) ; ce créneau en ferait ${p.deja.length+1}, le maximum est de ${p.max}${p.source==='fiche'?' (limite propre à sa fiche)':''}.`;
+      if(p.source==='fiche') reglage='Fiche du salarié → contraintes individuelles (l\'heure se règle dans Réglages du planning → « Limiter les fermetures tardives »)';
+      break;
+    }
     case 'c_pas_apres': case 'c_pas_avant': case 'c_pas_coupure': case 'c_max_soirs': case 'c_indispo_jour': {
       const p=v._contr; if(!p) break;
       why=`Contrainte individuelle saisie dans sa fiche : ${p.fait}.`;
@@ -3721,6 +3811,7 @@ function _contrLabelOf(c){
     case 'pas_avant': return `pas de début avant ${v}`;
     case 'pas_de_coupure': return 'pas de coupure (midi + soir le même jour)';
     case 'max_soirs_semaine': return `max ${v} soir(s)/semaine`;
+    case 'max_fermetures_tardives': return `max ${v} fermeture(s) tardive(s)/semaine`;
     case 'jours_off_consecutifs': return `${v} jours de repos groupés (préférence)`;
     case 'indispo_jour': { const ji=_dayIndexOf(v); return `indisponible le ${ji!=null?JOURS[ji].toLowerCase():v}`; }
     case 'autre': return `note : ${v}`;
@@ -3967,6 +4058,19 @@ function checkPlacement(sid, shift, date, svc, di, opt){
       if(nm) return {cle:'fin_2h_pas_matin',label:PLACE_RULES.fin_2h_pas_matin,_f2h:{cre:nm,role:'lendemain',seuil:_hhmm(_lim)}};
     }
   }
+  // Fermetures tardives par semaine (v0.74) — INTER-SNACK (S.allCreneauxWeek), règle d'organisation ou
+  // exception de la fiche (fermeturesTardivesRegle). Ne se déclenche que si CE créneau est lui-même une
+  // fermeture tardive. excludeSelf retire le créneau remplacé (même forme que mineAll) : une rallonge de
+  // phase 3 d'un créneau déjà tardif ne le compte pas deux fois, et une rallonge qui le REND tardif est
+  // jugée comme une fermeture de plus.
+  { const ft=fermeturesTardivesRegle(sid, R);
+    if(ft && estFermetureTardive(shift.deb, shift.fin, ft.seuilAbs)){
+      const deja=fermeturesTardivesOf(sid, ft.seuilAbs, c=>opt.excludeSelf && c.date===date && c.service===svc && c.restaurant_id===SNACK.id);
+      if(deja.length+1>ft.max) return {cle:'fermetures_tardives',
+        label:`max ${ft.max} fermeture(s) finissant à ${ft.seuil} ou plus tard par semaine`,
+        _ft:{max:ft.max, seuil:ft.seuil, source:ft.source, deja,
+             cand:{salarie_id:sid, date, service:svc, restaurant_id:SNACK.id, heure_debut:shift.deb, heure_fin:shift.fin}}};
+    } }
   // plafond hebdo UNIFIÉ (heures_max → plafond_heures → règle plafond_hebdo → 48h) — plafond DUR
   // Plafond DUR — INTER-SNACK pour TOUS (v0.73, déclaré multi ou non) : le total comparé au plafond est le
   // cumul GLOBAL tous snacks (weekMinutesOf lit S.allCreneauxWeek), pas seulement le snack courant. En auto-fill multi-snack
@@ -4539,7 +4643,7 @@ function _withSnack(rid, fn){
 }
 // Règles dont la violation porte sur la SEMAINE d'un salarié, pas sur un créneau : elles se déclencheraient
 // depuis chacun de ses créneaux (Youcef en produirait neuf). On n'en garde qu'une par salarié.
-const REVAL_SEMAINE=new Set(['jour_off_min','plafond','c_max_soirs']);
+const REVAL_SEMAINE=new Set(['jour_off_min','plafond','c_max_soirs','fermetures_tardives']);
 // Identité stable d'un créneau, même sans id (harnais, ligne pas encore enregistrée).
 const _creKey=c=>(c&&c.id)||`${c&&c.date}|${c&&c.service}|${c&&c.restaurant_id}`;
 // Phrase de l'infraction. Pour les règles de SEMAINE, explainViolation parle d'un placement qu'on tente
@@ -4556,6 +4660,10 @@ function _revalPhrase(v, ctx){
     return `${name} totalise ${_fh(tot)} h du ${_dateFr(p1)} au ${_dateFr(p7)} (${restos}), au-delà du plafond de ${_fh(v._plaf.max)} h.`;
   }
   if(v.cle==='c_max_soirs' && v._contr) return `${name} : ${v._contr.fait} (maximum ${v._contr.valeur}).`;
+  if(v.cle==='fermetures_tardives' && v._ft){
+    const tout=[...v._ft.deja, v._ft.cand].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    return `${name} fait ${tout.length} fermetures à ${v._ft.seuil} ou plus tard cette semaine (${_ftListe(tout)}) ; le maximum est de ${v._ft.max}${v._ft.source==='fiche'?' (limite propre à sa fiche)':''}.`;
+  }
   return (R&&R.why)||v.label||'';
 }
 function _dateFr(d){ try{ const x=new Date(d+'T00:00:00'); return `${JOURS[(x.getDay()+6)%7].toLowerCase()} ${x.getDate()}`; }catch(e){ return d; } }
@@ -4650,7 +4758,15 @@ function revalidateWeek(){
     // du côté du créneau testé ferait ressurgir comme « non vue » une infraction pourtant assumée.
     const derFor=x=> x ? derogs.find(d=>d.salarie_id===x.salarie_id && d.date===x.date
                           && (d.service||null)===(x.service||null) && d.restaurant_id===x.restaurant_id) : null;
-    const der=derFor(c)||derFor(autre);
+    // Règle HEBDOMADAIRE à ensemble de créneaux (fermetures tardives, v0.74) : l'entrée est dédoublonnée
+    // par salarié et portée par le PREMIER créneau rencontré, alors que la dérogation est posée sur celui
+    // que le manager a forcé — souvent le dernier. On cherche donc aussi une dérogation DE CETTE RÈGLE sur
+    // les autres fermetures de la semaine. (regle_cle exigée pour ceux-là : une dérogation « repos » sur le
+    // lundi ne doit pas absoudre un dépassement de fermetures.) ⚠ plafond et jour_off_min ont le même
+    // défaut d'appariement (pas de liste de créneaux dans leur charge utile) — non traité ici.
+    const derSet=(v._ft && v._ft.deja)
+      ? v._ft.deja.map(x=>derFor(x)).find(d=>d && d.regle_cle===v.cle) : null;
+    const der=derFor(c)||derFor(autre)||derSet||null;
     const entry={sid:c.salarie_id, name:fullName(sal), date:c.date, jour:JOURS[di], svc:c.service,
                  restaurant:_restoNom(c.restaurant_id), restaurantId:c.restaurant_id,
                  horaire:`${shift.deb}→${shift.fin}`, cle:v.cle, label:v.label,

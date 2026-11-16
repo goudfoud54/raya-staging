@@ -23,6 +23,8 @@ t('phrase jours_off_consecutifs "2"', contrPhrase({cle:'jours_off_consecutifs',v
 t('phrase autre = texte libre', contrPhrase({cle:'autre',valeur:'préfère le matin'})==='préfère le matin');
 
 // blocking vs indicatif (cohérence avec le planning v0.48)
+t('phrase max_fermetures_tardives "3" (dit où se règle l\'heure)', /^Maximum 3 fermeture\(s\) tardive\(s\) par semaine .*Réglages du planning/.test(contrPhrase({cle:'max_fermetures_tardives',valeur:'3'})));
+t('max_fermetures_tardives = bloquant, saisie numérique', CONTRAINTE_META.max_fermetures_tardives.blocking===true && CONTRAINTE_META.max_fermetures_tardives.input==='number');
 t('pas_apres = bloquant', CONTRAINTE_META.pas_apres.blocking===true);
 t('indispo_jour = bloquant', CONTRAINTE_META.indispo_jour.blocking===true);
 t('jours_off_consecutifs = indicatif', CONTRAINTE_META.jours_off_consecutifs.blocking===false);

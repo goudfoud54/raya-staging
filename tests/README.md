@@ -193,3 +193,17 @@ de la fiche » doit apparaître pour Samya sur Grand Cœur et Carnot, pas sur Lo
 
 Impact sur une semaine réelle, ancien code contre nouveau : `scripts/audit_multisnack_reel.js`
 (hors `run.js`, jeu de données non versionné).
+
+## Fermetures tardives par semaine (`fermetures_tardives_test.js`, planning v0.74, salariés v0.29)
+
+Règle d'organisation `fermetures_tardives_max` (case + nombre, désactivée par défaut) et
+`fermeture_tardive_seuil` (heure, défaut 02:00, rendue dans la même ligne de l'écran Réglages), plus
+l'exception de fiche `max_fermetures_tardives` qui la REMPLACE pour un salarié (même règle décochée).
+Source unique : `fermeturesTardivesRegle` / `fermeturesTardivesOf` / `estFermetureTardive`, appelées par
+`checkPlacement` — donc auto-fill, saisie manuelle, rallonge et revalidation.
+
+Le harnais lit le réglage par le **vrai** `_ruleCtx` (lignes `S.regles`), jamais par un stub : le §6
+rejoue le même auto-fill sans ligne / ligne décochée / ligne cochée, les deux premiers doivent être
+identiques et le troisième différent. Le §7 exerce la vraie rallonge de phase 3 avec sa contre-épreuve
+(sans la règle, la rallonge va jusqu'à 02:00). Le §8 couvre l'appariement des dérogations dans
+l'Analyse : la dérogation est posée sur la fermeture forcée, pas forcément sur celle qui porte l'entrée.
