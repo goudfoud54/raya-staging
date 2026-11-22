@@ -207,3 +207,22 @@ rejoue le même auto-fill sans ligne / ligne décochée / ligne cochée, les deu
 identiques et le troisième différent. Le §7 exerce la vraie rallonge de phase 3 avec sa contre-épreuve
 (sans la règle, la rallonge va jusqu'à 02:00). Le §8 couvre l'appariement des dérogations dans
 l'Analyse : la dérogation est posée sur la fermeture forcée, pas forcément sur celle qui porte l'entrée.
+
+## Jours d'école CFA = temps de travail, jeunes travailleurs (`ecole_heures_test.js`, `ecole_autofill_test.js`, planning v0.75)
+
+Réglage `heures_jour_ecole` (nombre, défaut 7 h, **0 = ancien calcul** : lu par `heuresJourEcoleMin`,
+pas par `_ruleCtx().num` qui relit 0 comme « invalide »). Les heures d'école entrent dans
+`weekMinutesOf` — source unique du total hebdo (colonne Heures, plafond, minimum, phase 3, Analyse) — et
+les jours d'école sont des jours TRAVAILLÉS (`_ecoleDatesOf`) dans `jour_off_min` et le repos de 35 h du
+panneau (plage supposée `ecolePlageAbs`, 08:00 → 08:00 + durée + 1 h).
+
+`ecole_heures_test.js` : fonctions unitaires et `checkPlacement` (plafond, repos hebdo, colonne Heures,
+réglage à 0, CFA + fermeture le même jour, mineurs : nuit / 8 h par jour / 35 h par semaine, âge à la
+date du créneau). Le cas « école 7 h + 2 h pour un mineur » est refusé par la règle `cfa` (aucun service
+un jour d'école, placée avant) ; le harnais neutralise ce blocage pour prouver AUSSI que l'école entre
+dans la durée du jour (`mineur_jour`). Chaque refus est vérifié par sa `cle`, pas seulement par « refusé ».
+
+`ecole_autofill_test.js` : vrai `autoFillCore` (3 jours d'école + contrat 35 h → 14 h posées, arrêt par le
+plafond ; contre-épreuves réglage 0 et sans école), vraie phase 3 (la rallonge vise le minimum école
+comprise), `revalidateWeek` (motif « dont X h d'école ») et `renderChecks` (jours off, repos 35 h,
+ligne Mineurs absente sans mineur).

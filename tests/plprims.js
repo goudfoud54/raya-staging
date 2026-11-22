@@ -47,6 +47,11 @@ const FNS = [
   // contrOf est une DÉPENDANCE de fermeturesTardivesRegle (exception de fiche) : plusieurs harnais ne
   // stubbent que _contrainteBlocking. Un harnais qui définit son propre contrOf l'écrase après coup.
   'contrOf', '_ftSeuilAbs', 'estFermetureTardive', 'fermeturesTardivesRegle', 'fermeturesTardivesOf', '_jourCourt', '_ftListe',
+  // Jours d'école / examen CFA = temps de travail (v0.75) : appelés par weekMinutesOf, checkPlacement,
+  // rowHoursCell et renderChecks.
+  '_ecoleDatesOf', 'heuresJourEcoleMin', 'ecoleMinutesOf', 'ecoleMinutesDuJour', 'ecolePlageAbs',
+  // Jeunes travailleurs (v0.75) : appelés par checkPlacement, explainViolation et renderChecks.
+  'mineurAuJour', '_mineurNuit', '_mineurQui',
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];
@@ -61,6 +66,8 @@ const CONST_LINES = [
   { first: '_hhmm', names: ['_hhmm'] },
   { first: 'F2H_SEUIL_DEF', names: ['F2H_SEUIL_DEF', 'F2H_MATIN_MIN'] },
   { first: 'FT_SEUIL_DEF', names: ['FT_SEUIL_DEF'] },
+  { first: 'ECOLE_H_DEF', names: ['ECOLE_H_DEF'] },
+  { first: 'MINEUR_JOUR_MAX_MIN', names: ['MINEUR_JOUR_MAX_MIN', 'MINEUR_SEMAINE_MAX_MIN'] },
   { first: 'PLAFOND_PROCHE_PCT', names: ['PLAFOND_PROCHE_PCT'] },
   { first: 'REVAL_SEMAINE', names: ['REVAL_SEMAINE'] },
   { first: '_creKey', names: ['_creKey'] },

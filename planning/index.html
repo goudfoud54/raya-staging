@@ -334,7 +334,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.74 · fermetures tardives : réglage « pas plus de N fermetures finissant à HH:MM ou plus tard par semaine » (désactivé par défaut) + exception dans la fiche du salarié';
+const VERSION='v0.75 · jours d\'école / examen CFA comptés comme temps de travail (réglage « Heures comptées pour un jour d\'école », défaut 7 h, 0 = ancien calcul) et comme jours travaillés · mineurs : pas de nuit, 8 h / jour et 35 h / semaine école comprise';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1410,35 +1410,41 @@ function renderTable(){
 // ligne « Σ …h » ajoutée dès qu'il existe des heures sur un AUTRE snack cette semaine (globalH > totH),
 // que la fiche le déclare multi-snack ou non (v0.73 : la réalité, pas la déclaration).
 function rowHoursCell(s){
-  const totH=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60;
+  // v0.75 : ecoleH = heures d'école/examen CFA (déjà incluses dans globalH via weekMinutesOf). Elles sont
+  // AJOUTÉES au chiffre principal (l'alternant les fait « pour » son employeur, quel que soit le snack
+  // affiché) et retirées du test « heures ailleurs », sinon tout alternant afficherait une ligne Σ.
+  const ecoleH=(typeof ecoleMinutesOf==='function'?ecoleMinutesOf(s.id):0)/60;
+  const totH=S.creneaux.filter(c=>c.salarie_id===s.id).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60 + ecoleH;
   const minH=s.heures_min||0, maxH=plafondOf(s), globalH=weekHoursOf(s.id);
   let color='var(--text)';
   if(maxH && globalH>maxH) color='var(--bad)';
   else if(minH && globalH<minH) color='var(--warn)';
   else if(globalH>0) color='var(--ok)';
-  const tip=_hoursCellTip(s, totH, globalH, minH, maxH);
+  const tip=_hoursCellTip(s, totH, globalH, minH, maxH, ecoleH);
+  const ecoleLine=ecoleH>0.01?`<small style="color:#5b9cff;font-weight:600;display:block;font-size:9.5px;margin-top:1px">🎓 dont ${fmtH1(ecoleH)}h école</small>`:'';
   const range=minH||maxH?`<small style="color:var(--muted);font-weight:400;display:block;font-size:9.5px;margin-top:1px">${minH||0}–${maxH||'?'}h</small>`:'';
   // Multi-snack : compact « Σ Xh » (le libellé « tous snacks » débordait sur petits écrans) ; le détail
   // par snack va dans le title (survol), formaté à partir d'otherSnackBreakdown (source déjà partagée
   // avec la pop-up du nom) + le snack courant, pour un total cohérent avec globalH.
   let allSnacksLine='';
   if(globalH-totH>0.01){   // = otherSnackHoursOf(s.id)>0 : heures ailleurs, déclaré ou non
-    const parts=[{nom:(SNACK&&SNACK.nom||'ce snack').replace('Raya ',''),h:totH},...otherSnackBreakdown(s.id)].filter(p=>p.h>0.01);
+    const parts=[{nom:(SNACK&&SNACK.nom||'ce snack').replace('Raya ',''),h:totH-ecoleH},...otherSnackBreakdown(s.id),{nom:'École CFA',h:ecoleH}].filter(p=>p.h>0.01);
     const detail=parts.map(p=>`${p.nom} : ${fmtH1(p.h)}h`).join(' · ');
     const tip=escP(`Total toutes plannings confondus (${fmtH1(globalH)}h)`+(detail?` — ${detail}`:''));
     allSnacksLine=`<small data-tip="${tip}" style="color:var(--gold);font-weight:600;display:block;font-size:9.5px;margin-top:1px;cursor:help">Σ ${fmtH1(globalH)}h</small>`;
   }
-  return {color, tip, html:`${totH.toFixed(1)}h${allSnacksLine}${range}`};
+  return {color, tip, html:`${totH.toFixed(1)}h${ecoleLine}${allSnacksLine}${range}`};
 }
 // Texte d'info-bulle de la colonne « Heures » — fonction PURE (testée par harnais). La couleur de cette
 // colonne (rouge au-dessus du plafond, orange sous le minimum, vert sinon) n'était expliquée nulle part.
 // Le total comparé est TOUJOURS le total inter-snack, ce que la bulle doit dire dès qu'il y a des heures
 // ailleurs — même prédicat que la ligne Σ (globalH > totH), PAS la fiche (v0.73).
-function _hoursCellTip(s, totH, globalH, minH, maxH){
+function _hoursCellTip(s, totH, globalH, minH, maxH, ecoleH){
   const multi=globalH-totH>0.01;
-  const base=multi
+  const base=(multi
     ? `${fmtH1(totH)} h ici · ${fmtH1(globalH)} h au total, tous restaurants confondus.`
-    : `${fmtH1(globalH)} h cette semaine.`;
+    : `${fmtH1(globalH)} h cette semaine.`)
+    + (ecoleH>0.01 ? `\nDont ${fmtH1(ecoleH)} h d'école / examen CFA, comptées comme temps de travail (Réglages du planning → « Heures comptées pour un jour d'école »).` : '');
   const contrat=`Contrat : ${minH?`minimum ${fmtH1(minH)} h`:'pas de minimum'}${maxH?` · plafond ${fmtH1(maxH)} h`:''}.`;
   if(maxH && globalH>maxH)
     return `🔴 Au-dessus du plafond\n${base}\n${contrat}\nDépassement de ${fmtH1(globalH-maxH)} h.\n→ Retire des heures, ou relève le plafond (fiche du salarié, ou Réglages du planning → « Plafond d'heures par semaine »).`;
@@ -1765,7 +1771,8 @@ function renderChecks(){
   const list=S.salaries.filter(s=>onRoster(s) && (worksAt(s,SNACK.id) || _sidsIci.has(s.id)));
   // Créneaux de la semaine du salarié sur TOUS les restaurants — les règles hebdo portent sur la personne.
   const allOf=sid=>(S.allCreneauxWeek||[]).filter(c=>c.salarie_id===sid && c.heure_debut);
-  list.forEach(s=>{const d=new Set(allOf(s.id).map(c=>c.date));const off=7-d.size;if(d.size>0 && off<offMin)noOff.push(`${nameOf(s.id)} : ${d.size} jours travaillés tous restaurants confondus (${off} repos < ${offMin})`);});
+  // v0.75 : jours d'école/examen CFA comptés comme travaillés (jamais comme repos).
+  list.forEach(s=>{const ec=_ecoleDatesOf(s.id);const d=new Set([...allOf(s.id).map(c=>c.date),...ec]);const off=7-d.size;if(allOf(s.id).length>0 && off<offMin)noOff.push(`${nameOf(s.id)} : ${d.size} jours travaillés tous restaurants confondus${ec.length?` dont ${ec.length} d'école CFA`:''} (${off} repos < ${offMin})`);});
   CHECKS.push({lbl:`≥ ${offMin} jour(s) off`,ok:noOff.length===0,details:noOff});
 
   // 5. Plafond heures — plafond UNIFIÉ (plafondOf : heures_max → plafond_heures → plafond_hebdo → 48),
@@ -1866,6 +1873,11 @@ function renderChecks(){
       const di=dayIdxOfDate(c.date); let a=di*1440+toMin(c.heure_debut), b=di*1440+toMin(c.heure_fin);
       if(b<=a)b+=1440; segs.push([a,b]);
     });
+    // v0.75 : un jour d'école / examen CFA est du travail — il coupe le repos. Plage SUPPOSÉE (le
+    // calendrier ne donne pas d'horaires) : cf. ecolePlageAbs. Seulement s'il y a aussi des créneaux :
+    // une semaine 100 % école n'est pas jugée ici (le panneau ne liste que les salariés posés).
+    const _ec=_ecoleDatesOf(s.id);
+    if(segs.length && _ec.length){ const [pa,pb]=ecolePlageAbs(); _ec.forEach(d=>{ const di=dayIdxOfDate(d); segs.push([di*1440+pa, di*1440+pb]); }); }
     if(!segs.length) return; // aucun créneau → semaine entièrement de repos, conforme
     segs.sort((x,y)=>x[0]-y[0]);
     const merged=[segs[0].slice()];
@@ -1873,9 +1885,30 @@ function renderChecks(){
     let maxGap=merged[0][0];                       // repos du lundi 00:00 au 1er créneau
     maxGap=Math.max(maxGap, 10080-merged[merged.length-1][1]); // du dernier créneau au dimanche 24:00
     for(let i=1;i<merged.length;i++) maxGap=Math.max(maxGap, merged[i][0]-merged[i-1][1]);
-    if(maxGap < 35*60) repos35.push(`${nameOf(s.id)} : plus long repos continu ${(maxGap/60).toFixed(1)}h (min 35h)`);
+    if(maxGap < 35*60) repos35.push(`${nameOf(s.id)} : plus long repos continu ${(maxGap/60).toFixed(1)}h (min 35h)${_ec.length?` — ${_ec.length} jour(s) d'école CFA compté(s) comme travaillés (horaires supposés ${_hhmm(ecolePlageAbs()[0])}→${_hhmm(ecolePlageAbs()[1])})`:''}`);
   });
   CHECKS.push({lbl:'Repos hebdomadaire ≥ 35h',ok:repos35.length===0,details:repos35});
+
+  // 8c. Jeunes travailleurs (v0.75) — miroir a posteriori des trois règles dures de checkPlacement
+  //     (nuit, 8 h / jour école comprise, 35 h / semaine école comprise), TOUS restaurants confondus.
+  //     Affiché seulement s'il y a un mineur dans la liste : sinon une ligne verte permanente laisserait
+  //     croire à un contrôle alors que l'âge d'une partie des salariés est inconnu (pas de date de naissance).
+  {
+    const minBad=[]; let nMin=0;
+    list.forEach(s=>{
+      const cres=allOf(s.id); const dates=[...new Set([...cres.map(c=>c.date), ..._ecoleDatesOf(s.id)])];
+      if(!dates.some(d=>mineurAuJour(s,d)) && !mineurAuJour(s, fmtDate(dateOfDay(0)))) return;
+      nMin++;
+      cres.forEach(c=>{ const m=mineurAuJour(s,c.date); if(m && _mineurNuit(c.heure_debut,c.heure_fin,m.moins16))
+        minBad.push(`${nameOf(s.id)} · ${JOURS[dayIdxOfDate(c.date)]} ${(c.heure_debut||'').slice(0,5)}→${(c.heure_fin||'').slice(0,5)} : travail de nuit (interdit après ${m.moins16?'20:00':'22:00'} pour un mineur)`); });
+      dates.forEach(d=>{ if(!mineurAuJour(s,d)) return;
+        const m=cres.filter(c=>c.date===d).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)+ecoleMinutesDuJour(s.id,d);
+        if(m>MINEUR_JOUR_MAX_MIN+1e-6) minBad.push(`${nameOf(s.id)} · ${JOURS[dayIdxOfDate(d)]} : ${fmtH1(m/60)} h dans la journée${ecoleMinutesDuJour(s.id,d)?' (école comprise)':''} — maximum 8 h pour un mineur`); });
+      const wk=weekMinutesOf(s.id);
+      if(dates.some(d=>mineurAuJour(s,d)) && wk>MINEUR_SEMAINE_MAX_MIN+1e-6) minBad.push(`${nameOf(s.id)} : ${fmtH1(wk/60)} h dans la semaine${ecoleMinutesOf(s.id)?` dont ${fmtH1(ecoleMinutesOf(s.id)/60)} h d'école`:''} — maximum 35 h pour un mineur`);
+    });
+    if(nMin || minBad.length) CHECKS.push({lbl:'Mineurs : nuit, 8 h / jour, 35 h / semaine (loi)',ok:minBad.length===0,details:minBad});
+  }
 
   // 9. Alternance / CFA — aucun service sur jour école/examen + veille protégée
   if(S.altJours && Object.keys(S.altJours).length){
@@ -2317,8 +2350,11 @@ const RULE_META={
   fermeture_tardive_seuil:{lbl:'Heure à partir de laquelle un service est une fermeture tardive',type:'time',defVal:'02:00',inline:true},
   repos_quotidien:{lbl:'Repos quotidien minimum (fin d\'un service → début du suivant)',type:'bool',help:'Toujours actif : c\'est une obligation légale. La DURÉE se règle juste en dessous, dans « Limites & valeurs ».'},
   repos_quotidien_h:{lbl:'Durée du repos quotidien',type:'number',unit:'h',min:0,max:24,help:'Nombre d\'heures minimum entre la fin d\'un service et le début du suivant, tous restaurants confondus. C\'est une DURÉE : décaler la reprise suffit à la respecter. À ne pas confondre avec « Interdire le service du matin après une fermeture APRÈS MINUIT », qui est un interdit absolu s\'appliquant EN PLUS de celle-ci — les deux peuvent bloquer un même créneau, pour des raisons différentes.'},
-  fin_veille_ecole:{lbl:'Heure max de fin de shift la veille d\'un jour d\'école (alternants)',type:'time',help:'Au-delà, l\'auto-fill refuse et une alerte rouge apparaît. Défaut 22:00.'},
+  fin_veille_ecole:{lbl:'Heure max de fin de shift la veille d\'un jour d\'école (alternants)',type:'time',help:'Au-delà, l\'auto-fill refuse et une alerte rouge apparaît. Défaut 22:00. Le temps de CFA étant du temps de travail, le repos quotidien de 11 h s\'applique entre la fin du service et l\'entrée au CFA : avec 22:00, le CFA ne doit pas commencer avant 9 h. Si le CFA commence à 8 h, mettez 21:00.'},
   fin_veille_examen:{lbl:'Heure max de fin de shift la veille d\'un examen (alternants)',type:'time',help:'Seuil plus strict pour les examens. Défaut 19:00.'},
+  // v0.75 — Art. L6222-24 C. trav. : le temps passé au CFA est compris dans l'horaire de travail. La
+  // DURÉE d'une journée d'école dépend du CFA (7 h le plus souvent) → réglage, pas constante.
+  heures_jour_ecole:{lbl:'Heures comptées pour un jour d\'école / examen (alternants)',type:'number',unit:'h',min:0,max:12,defVal:'7',help:'Le temps passé au CFA est du temps de travail (art. L6222-24 du Code du travail). Chaque jour marqué École ou Examen dans le calendrier d\'alternance compte pour ce nombre d\'heures dans le total de la semaine : colonne Heures, minimum, plafond et auto-fill. Exemple : 3 jours d\'école à 7 h = 21 h déjà faites ; pour un contrat de 35 h, l\'auto-fill ne pose plus que 14 h. Mettez la durée réelle de votre CFA (6 h, 8 h…). Mettre 0 revient à l\'ancien comportement (les jours d\'école ne comptent pas dans les heures) — dans tous les cas, un jour d\'école n\'est JAMAIS un jour de repos, et aucun service ne peut y être posé.'},
   jour_off_min:{lbl:'Nombre minimum de jours de repos par semaine',type:'number',unit:'j',min:0,max:7,help:'Compté sur la PERSONNE, tous restaurants confondus : 4 jours dans un snack et 3 dans un autre font 7 jours travaillés, donc zéro repos.'},
   plafond_hebdo:{lbl:'Plafond d\'heures par semaine',type:'number',unit:'h',min:0,max:80},
   temps_partiel_max:{lbl:'Heures complémentaires max (temps partiel)',type:'number',unit:'%',min:100,max:200,defActive:false},
@@ -3333,7 +3369,7 @@ async function autoFillMultiWeek(ids){
   // explicite, qui ne dépend d'aucun snack affiché).
   const underMin=[];
   const _weekDates=[0,1,2,3,4,5,6].map(i=>fmtDate(dateOfDay(i)));
-  const globalHoursAll=sid=>S.allCreneauxWeek.filter(c=>c.salarie_id===sid && c.heure_debut).reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)/60;
+  const globalHoursAll=sid=>weekHoursOf(sid);   // v0.75 : source unique (créneaux tous snacks + école CFA)
   S.salaries.filter(s=>onRoster(s) && ordered.some(rid=>worksAt(s,rid)) && (s.heures_min||0)>0).forEach(s=>{
     const have=globalHoursAll(s.id), mn=s.heures_min||0;
     if(have >= mn-0.01) return;
@@ -3499,10 +3535,89 @@ function snacksHorsFiche(s){
 // ailleurs disparaissaient du plafond, du minimum et de la phase 3. NE PAS réintroduire de bifurcation.
 // Exclusion optionnelle du créneau en cours de remplacement (excludeSelf par restaurant_id+date+service)
 // pour ne pas le compter deux fois. Utilisé par weekHoursOf ET par le blocage plafond de checkPlacement.
+// v0.75 — les heures d'école/examen CFA (ecoleMinutesOf) sont AJOUTÉES ici, donc partout à la fois :
+// colonne Heures, plafond dur de checkPlacement, minimum, tri des candidats, phase 3, analyse. Garde
+// typeof : plusieurs harnais extraient weekMinutesOf seule, sans les helpers alternance.
 function weekMinutesOf(sid, ex){
   return (S.allCreneauxWeek||[]).filter(c=>c.salarie_id===sid && c.heure_debut
       && !(ex && ex.excludeSelf && c.date===ex.date && c.service===ex.svc && c.restaurant_id===ex.restaurant_id))
-    .reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0);
+    .reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)
+    + (typeof ecoleMinutesOf==='function' ? ecoleMinutesOf(sid) : 0);
+}
+// ── Jours d'école / examen CFA = temps de travail (v0.75) ─────────────────────────────────────────
+// Art. L6222-24 C. trav. : « le temps consacré par l'apprenti à la formation dispensée dans les CFA est
+// compris dans l'horaire de travail ». Avant v0.75 un jour d'école valait 0 h ET n'était pas compté
+// comme jour travaillé : l'auto-fill voyait un alternant loin de son minimum, posait des services sur
+// TOUS ses autres jours (zéro repos) et le total réel dépassait son contrat sans alerte.
+// Dates (lundi → dimanche de la semaine affichée, JAMAIS le lundi suivant que S.altJours charge aussi
+// pour la règle « veille ») où le salarié est en école ou examen.
+function _ecoleDatesOf(sid){
+  const aj=(typeof S!=='undefined' && S && S.altJours)||null;
+  if(!aj || typeof MONDAY==='undefined' || !MONDAY) return [];
+  const out=[];
+  for(let i=0;i<7;i++){ const d=fmtDate(dateOfDay(i)); const t=aj[`${sid}|${d}`]; if(t==='ecole'||t==='examen') out.push(d); }
+  return out;
+}
+// Minutes comptées pour UN jour d'école / examen. Réglage heures_jour_ecole (défaut 7 h).
+// ⚠ 0 est une valeur LÉGITIME (« ne pas compter les heures d'école » = comportement d'avant v0.75) :
+// _ruleCtx().num relit 0 comme « invalide » et retomberait sur 7 h — on lit donc la ligne brute.
+// Un réglage de type nombre n'a pas de case à cocher à l'écran ; active===false (ligne en base) vaut 0.
+// Les jours restent néanmoins des jours TRAVAILLÉS pour le repos hebdo, quelle que soit la valeur.
+const ECOLE_H_DEF=7;
+function heuresJourEcoleMin(){
+  const r=_ruleCtx().raw('heures_jour_ecole');
+  if(r && r.active===false) return 0;
+  const v=r!=null && r.valeur!=null && String(r.valeur).trim()!=='' ? parseFloat(String(r.valeur).replace(',','.')) : NaN;
+  return (isFinite(v) && v>=0 ? v : ECOLE_H_DEF)*60;
+}
+// Minutes d'école de la semaine affichée (lundi → dimanche).
+function ecoleMinutesOf(sid){
+  const n=_ecoleDatesOf(sid).length; if(!n) return 0;
+  return n*heuresJourEcoleMin();
+}
+// Minutes d'école d'UN jour donné (0 si ce n'est pas un jour d'école / examen). Sert à la durée
+// quotidienne des mineurs : en pratique checkPlacement refuse déjà TOUT service un jour d'école (règle
+// « cfa », placée avant) ; ce terme ne change le verdict que si ce blocage absolu est un jour assoupli
+// (demi-journées de CFA, dérogation). Il est là pour que la durée du jour reste juste dans ce cas.
+function ecoleMinutesDuJour(sid, date){
+  const aj=(typeof S!=='undefined' && S && S.altJours)||null; if(!aj) return 0;
+  const t=aj[`${sid}|${date}`]; return (t==='ecole'||t==='examen') ? heuresJourEcoleMin() : 0;
+}
+// Plage horaire SUPPOSÉE d'une journée de CFA, pour le seul contrôle « repos hebdomadaire ≥ 35 h » du
+// panneau Vérifications (qui raisonne en heures). Le calendrier d'alternance ne donne que le TYPE du
+// jour, pas ses horaires : hypothèse 08:00 → 08:00 + durée réglée + 1 h de pause déjeuner (7 h → 16:00).
+// Un CFA qui finit plus tard laisse en réalité MOINS de repos que ce que le panneau calcule.
+function ecolePlageAbs(){ const d=heuresJourEcoleMin(); return d>0 ? [8*60, 8*60+d+60] : [8*60, 18*60]; }
+
+// ── Jeunes travailleurs (moins de 18 ans) — v0.75 ────────────────────────────────────────────────
+// Sources (code.travail.gouv.fr, vérifiées le 22/11/2026) :
+//   L3162-1 : pas plus de 8 h de travail effectif par jour ni 35 h par semaine (les dérogations à
+//             10 h / 40 h de R3162-1 visent le BTP et le paysage, pas la restauration) ;
+//   L6222-25 : l'apprenti de moins de 18 ans suit L3162-1 ; L6222-24 : le temps de CFA est du travail ;
+//   L3163-1 : nuit interdite = 22 h → 6 h (16-17 ans), 20 h → 6 h (moins de 16 ans) ; L6222-26 idem
+//             pour l'apprenti ;
+//   L3163-2 + R3163-1/R3163-2 : en hôtellerie-restauration, l'INSPECTEUR DU TRAVAIL peut autoriser
+//             22 h → 23 h 30, au cas par cas — non géré ici (refus systématique après 22 h).
+// Âge calculé à la DATE DU CRÉNEAU depuis date_naissance (un salarié qui a 18 ans mercredi n'est plus
+// mineur jeudi) ; sans date de naissance, on retombe sur la case « Mineur » de la fiche (supposé 16-17 ans).
+// Retour : null (majeur ou inconnu) | {age:Number|null, moins16:Boolean, source:'naissance'|'case'}.
+function mineurAuJour(sal, date){
+  if(!sal) return null;
+  const dn=sal.date_naissance && /^\d{4}-\d{2}-\d{2}/.test(sal.date_naissance) ? sal.date_naissance.slice(0,10) : null;
+  if(dn){
+    const [y,m,d]=dn.split('-').map(Number), [Y,M,D]=String(date).slice(0,10).split('-').map(Number);
+    const age=Y-y-((M<m || (M===m && D<d))?1:0);
+    return age<18 ? {age, moins16:age<16, source:'naissance'} : null;
+  }
+  return sal.est_mineur ? {age:null, moins16:false, source:'case'} : null;
+}
+const MINEUR_JOUR_MAX_MIN=8*60, MINEUR_SEMAINE_MAX_MIN=35*60;
+// Le créneau [deb,fin] touche-t-il la nuit légale (22 h → 6 h, ou 20 h → 6 h avant 16 ans) ? Minutes
+// absolues depuis 00:00 du jour de début ; un créneau qui commence avant 6 h touche aussi la nuit.
+function _mineurNuit(deb, fin, moins16){
+  const a=_pmin(deb), e=_finAbsM(deb,fin); if(a==null || e==null) return false;
+  const nuitDeb=moins16?20*60:22*60;
+  return a<6*60 || e>nuitDeb;
 }
 function weekHoursOf(sid){ return weekMinutesOf(sid)/60; }
 // Heures déjà posées cette semaine sur les AUTRES snacks (hors snack courant) — pour l'annotation
@@ -3594,7 +3709,7 @@ const F2H_SEUIL_DEF='00:30', F2H_MATIN_MIN=15*60;
 // FT_SEUIL_DEF : valeur par DÉFAUT du réglage `fermeture_tardive_seuil` (v0.74) — 2 h du matin, l'exemple
 //   du patron. Lu seulement si la ligne n'existe pas en base (cf. fermeturesTardivesRegle).
 const FT_SEUIL_DEF='02:00';
-const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_lu_me:'fin trop tardive (lun→mer)', fin_je:'fin trop tardive (jeudi)', fin_ve:'fin trop tardive (vendredi)', fin_sa:'fin trop tardive (samedi)', fin_di:'fin trop tardive (dimanche)', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', hors_poste:'horaire en dehors des postes définis', releve:'relève en plein service', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', fermetures_tardives:'trop de fermetures tardives cette semaine', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
+const PLACE_RULES={ roster:'salarié hors effectif', resto:'ne travaille pas sur ce snack', role:'rôle non maîtrisé', exp:'expérimenté requis sur ce poste', indispo:'indisponibilité validée', cfa:'jour d\'école / examen CFA', dbl_svc:'déjà placé sur ce service', inter_snack:'chevauchement avec un autre snack', fin_veille_ecole:'veille d\'école : shift trop tardif', fin_veille_examen:'veille d\'examen : shift trop tardif', fin_lu_me:'fin trop tardive (lun→mer)', fin_je:'fin trop tardive (jeudi)', fin_ve:'fin trop tardive (vendredi)', fin_sa:'fin trop tardive (samedi)', fin_di:'fin trop tardive (dimanche)', fin_semaine:'fin trop tardive (lun→jeu)', fin_weekend:'fin trop tardive (ven & sam)', hors_poste:'horaire en dehors des postes définis', releve:'relève en plein service', coupure_min:'coupure midi↔soir insuffisante', amplitude_max:'amplitude consécutive dépassée', repos_quot:'repos quotidien < minimum légal', jour_off_min:'jours de repos hebdo insuffisants', fin_2h_pas_matin:'fin tardive la veille → pas de matin', plafond:'plafond d\'heures hebdo dépassé', fermetures_tardives:'trop de fermetures tardives cette semaine', mineur_nuit:'mineur : travail de nuit interdit', mineur_jour:'mineur : plus de 8 h dans la journée', mineur_semaine:'mineur : plus de 35 h dans la semaine', reserve_principal:'réservé à son restaurant principal', c_pas_apres:'contrainte perso : fin trop tardive', c_pas_avant:'contrainte perso : début trop tôt', c_pas_coupure:'contrainte perso : pas de coupure midi+soir', c_max_soirs:'contrainte perso : trop de soirs/semaine', c_indispo_jour:'contrainte perso : jour indisponible' };
 // ── Contraintes individuelles (salarie_contraintes) ─────────────────────────────────────────────
 // Longtemps configurables sur la fiche salarié mais JAMAIS lues côté planning → purement décoratives.
 // Désormais branchées dans checkPlacement (donc auto-fill ET saisie manuelle, dérogeables à la main).
@@ -3655,7 +3770,8 @@ const RULE_SETTING_OF={
   fin_veille_ecole:'fin_veille_ecole', fin_veille_examen:'fin_veille_examen',
   inter_snack:'doublon_inter_snack',
   roster:null, resto:null, role:null, exp:null, dbl_svc:null, indispo:null, cfa:null,
-  c_pas_apres:null, c_pas_avant:null, c_pas_coupure:null, c_max_soirs:null, c_indispo_jour:null
+  c_pas_apres:null, c_pas_avant:null, c_pas_coupure:null, c_max_soirs:null, c_indispo_jour:null,
+  mineur_nuit:null, mineur_jour:null, mineur_semaine:null   // la loi (L3162-1, L3163-1) : pas de réglage
 };
 // Où corriger quand ce n'est PAS un réglage du planning.
 const RULE_SOURCE_OF={
@@ -3667,8 +3783,13 @@ const RULE_SOURCE_OF={
   roster:'Fiche du salarié → actif / rattachement', resto:'Fiche du salarié → restaurants',
   c_pas_apres:'Fiche du salarié → contraintes individuelles', c_pas_avant:'Fiche du salarié → contraintes individuelles',
   c_pas_coupure:'Fiche du salarié → contraintes individuelles', c_max_soirs:'Fiche du salarié → contraintes individuelles',
-  c_indispo_jour:'Fiche du salarié → contraintes individuelles'
+  c_indispo_jour:'Fiche du salarié → contraintes individuelles',
+  mineur_nuit:'Fiche du salarié → date de naissance / case « Mineur » (si elle est fausse)',
+  mineur_jour:'Fiche du salarié → date de naissance / case « Mineur » (si elle est fausse)',
+  mineur_semaine:'Fiche du salarié → date de naissance / case « Mineur » (si elle est fausse)'
 };
+// « Mineur (17 ans) » / « Mineur (moins de 16 ans) » / « Mineur (case cochée dans sa fiche) ».
+function _mineurQui(m){ return m.age!=null ? `Mineur (${m.age} ans à cette date)` : 'Mineur (case cochée dans sa fiche, sans date de naissance)'; }
 function _jourDe(d){ try{ return JOURS[(new Date(d).getDay()+6)%7]||''; }catch(e){ return ''; } }
 // « Jeudi 18:00→00:30 » (+ « à Lobau » si le créneau est sur un AUTRE restaurant que celui affiché).
 function _creTxt(c){
@@ -3718,12 +3839,12 @@ function explainViolation(v, ctx){
     }
     case 'jour_off_min': {
       const p=v._off; if(!p) break;
-      why=`Il travaille déjà ${p.worked} jour(s) cette semaine${p.ailleurs?` (dont ${p.ailleurs} dans un autre restaurant)`:''} ; ce créneau ferait le ${p.worked+1}ᵉ et ne laisserait que ${7-p.worked-1} jour(s) de repos, contre ${p.offMin} exigé(s).`;
+      why=`Il travaille déjà ${p.worked} jour(s) cette semaine${[p.ailleurs?`${p.ailleurs} dans un autre restaurant`:'',p.ecole?`${p.ecole} à l'école / en examen CFA`:''].filter(Boolean).map((x,i)=>i?x:' (dont '+x).join(', ')}${(p.ailleurs||p.ecole)?')':''} ; ce créneau ferait le ${p.worked+1}ᵉ et ne laisserait que ${7-p.worked-1} jour(s) de repos, contre ${p.offMin} exigé(s).`;
       break;
     }
     case 'plafond': {
       const p=v._plaf; if(!p) break;
-      why=`Il totalise déjà ${_fh(p.deja)} h cette semaine${p.multi?' (tous restaurants confondus)':''} ; ce créneau de ${_fh(p.ajout)} h le porterait à ${_fh(p.deja+p.ajout)} h, au-delà du plafond de ${_fh(p.max)} h.`;
+      why=`Il totalise déjà ${_fh(p.deja)} h cette semaine${p.multi?' (tous restaurants confondus)':''}${p.ecole>0.01?`, dont ${_fh(p.ecole)} h d'école / examen CFA comptées comme temps de travail`:''} ; ce créneau de ${_fh(p.ajout)} h le porterait à ${_fh(p.deja+p.ajout)} h, au-delà du plafond de ${_fh(p.max)} h.`;
       break;
     }
     case 'inter_snack': {
@@ -3773,6 +3894,17 @@ function explainViolation(v, ctx){
       break;
     }
     case 'cfa': why=`L'alternant est au CFA ce jour-là : ${v.label}.`; break;
+    // Jeunes travailleurs (v0.75) — la loi, pas un réglage : `reglage` pointe vers la fiche (date de
+    // naissance / case Mineur), seule donnée qui puisse être fausse.
+    case 'mineur_nuit': { const m=v._min; if(!m) break;
+      why=`${_mineurQui(m)} : le travail de nuit lui est interdit entre ${m.nuit} et 06:00 (art. L3163-1 et L6222-26 du Code du travail). Ce créneau ${(sh.deb||'').slice(0,5)}→${(sh.fin||'').slice(0,5)} empiète sur cette plage.${m.moins16?'':' Seul l\'inspecteur du travail peut autoriser, personne par personne, un travail jusqu\'à 23:30 en restauration (art. R3163-2).'}`;
+      break; }
+    case 'mineur_jour': { const m=v._min; if(!m) break;
+      why=`${_mineurQui(m)} : 8 h de travail par jour au maximum (art. L3162-1). Il a déjà ${_fh(m.deja)} h ce jour-là${m.ecole>0.01?`, dont ${_fh(m.ecole)} h d'école / examen CFA (temps de travail, art. L6222-24)`:''} ; ce créneau de ${_fh(m.ajout)} h le porterait à ${_fh(m.deja+m.ajout)} h.`;
+      break; }
+    case 'mineur_semaine': { const m=v._min; if(!m) break;
+      why=`${_mineurQui(m)} : 35 h de travail par semaine au maximum (art. L3162-1). Il totalise déjà ${_fh(m.deja)} h${m.ecole>0.01?`, dont ${_fh(m.ecole)} h d'école / examen CFA`:''} ; ce créneau de ${_fh(m.ajout)} h le porterait à ${_fh(m.deja+m.ajout)} h.`;
+      break; }
     case 'fermetures_tardives': {
       const p=v._ft; if(!p) break;
       why=`Déjà ${p.deja.length} fermeture${p.deja.length>1?'s':''} à ${p.seuil} ou plus tard cette semaine (${_ftListe(p.deja)||'—'}) ; ce créneau en ferait ${p.deja.length+1}, le maximum est de ${p.max}${p.source==='fiche'?' (limite propre à sa fiche)':''}.`;
@@ -3941,6 +4073,12 @@ function checkPlacement(sid, shift, date, svc, di, opt){
     if(_seuil){ const _late=_pmin(shift.fin)<=_pmin(shift.deb) || _pmin(shift.fin)>_pmin(_seuil);
       if(_late) return {cle:_cle, label:_nextAd==='examen'?PLACE_RULES.fin_veille_examen:PLACE_RULES.fin_veille_ecole, _veille:{seuil:_seuil, type:_nextAd, date:_nd}}; }
   }
+  // Jeune travailleur (< 18 ans à la date du créneau) : travail de nuit interdit (L3163-1, L6222-26).
+  // Pas de réglage : c'est la loi, pas une habitude d'établissement. La dérogation 22 h → 23 h 30 de
+  // l'hôtellerie-restauration est accordée PAR L'INSPECTEUR DU TRAVAIL, personne par personne (R3163-2).
+  const _min=mineurAuJour(sal, date);
+  if(_min && _mineurNuit(shift.deb, shift.fin, _min.moins16))
+    return {cle:'mineur_nuit', label:PLACE_RULES.mineur_nuit, _min:{...(_min), nuit:_min.moins16?'20:00':'22:00'}};
   // doublon inter-snack : chevauchement HORAIRE réel (pas seulement même jour/service)
   const cand={heure_debut:shift.deb,heure_fin:shift.fin};
   { const _ov=S.allCreneauxWeek.find(c=>c.salarie_id===sid && c.date===date && c.restaurant_id!==SNACK.id && c.heure_debut && _overlap(cand,c));
@@ -4005,6 +4143,16 @@ function checkPlacement(sid, shift, date, svc, di, opt){
     else { cur=[a,b]; curSrc=src; }
     if(cur[1]-cur[0]>amp) return {cle:'amplitude_max',label:PLACE_RULES.amplitude_max,_amp:{h:(cur[1]-cur[0])/60,max:amp/60,deb:cur[0],fin:cur[1],other:curSrc&&curSrc.restaurant_id!==SNACK.id?curSrc:null}};
   }
+  // Jeune travailleur : 8 h de travail effectif par jour au plus (L3162-1), TOUS restaurants confondus,
+  // école / examen du jour compris (L6222-24). Le jour d'un créneau = son jour de DÉBUT (même convention
+  // que le reste du moteur). mineAll exclut déjà le créneau remplacé (excludeSelf).
+  if(_min){
+    const ecoleJ=ecoleMinutesDuJour(sid, date);
+    const autres=mineAll.filter(c=>c.date===date);
+    const jourM=autres.reduce((a,c)=>a+_pdur(c.heure_debut,c.heure_fin),0)+ecoleJ;
+    if(jourM+_pdur(shift.deb,shift.fin) > MINEUR_JOUR_MAX_MIN+1e-6)
+      return {cle:'mineur_jour', label:PLACE_RULES.mineur_jour, _min:{...(_min), deja:jourM/60, ecole:ecoleJ/60, ajout:_pdur(shift.deb,shift.fin)/60, autres}};
+  }
   // Heure de fin max selon le jour — UNE règle par jour-type, les 7 jours couverts (cf. _endCapState).
   // Le dimanche n'était rattaché à aucune règle avant v0.64 : le contrôle y était absent sans le dire.
   const _cap=_endCapMin(R,di);
@@ -4028,10 +4176,12 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   // zéro repos, même si chaque snack pris isolément paraît conforme. On compte donc les jours distincts
   // sur mineAll (tous restaurants).
   const offMin=R.num('jour_off_min',1);
-  const worked=new Set(mineAll.map(c=>c.date));
+  // v0.75 : un jour d'école/examen CFA est un jour TRAVAILLÉ (L6222-24), jamais un jour de repos.
+  const worked=new Set([...mineAll.map(c=>c.date), ...(typeof _ecoleDatesOf==='function'?_ecoleDatesOf(sid):[])]);
   if(!worked.has(date) && (worked.size+1)>(7-offMin)){
     const ailleurs=[...new Set(mineAll.filter(c=>c.restaurant_id!==SNACK.id).map(c=>c.date))].length;
-    return {cle:'jour_off_min',label:PLACE_RULES.jour_off_min,_off:{worked:worked.size,offMin,ailleurs}};
+    const ecole=(typeof _ecoleDatesOf==='function'?_ecoleDatesOf(sid):[]).filter(d=>!mineAll.some(c=>c.date===d)).length;
+    return {cle:'jour_off_min',label:PLACE_RULES.jour_off_min,_off:{worked:worked.size,offMin,ailleurs,ecole}};
   }
   // Fin tardive → pas de service du matin (SYMÉTRIQUE : indépendant de l'ordre de placement).
   // INTER-SNACK : la fermeture déclenchante peut être dans un AUTRE restaurant (une fermeture à 01:00 à
@@ -4077,10 +4227,14 @@ function checkPlacement(sid, shift, date, svc, di, opt){
   // séquentiel, sans ça, les heures déjà posées sur les autres snacks n'étaient pas comptées → heures_max
   // dépassé (même défaut que la coupure/repos avant f2eb648). excludeSelf : on retire le créneau en cours
   // de remplacement (restaurant_id=snack courant) pour ne pas le compter deux fois. Vrai mono : identique.
-  const plaf=plafondOf(sal, R)*60;
   const wk=weekMinutesOf(sid, {excludeSelf:opt.excludeSelf, date, svc, restaurant_id:SNACK.id});
+  // Jeune travailleur : 35 h par semaine au plus (L3162-1), école comprise — même total que le plafond
+  // (weekMinutesOf), testé AVANT lui pour que le motif cite la loi plutôt qu'un plafond de fiche plus haut.
+  if(_min && wk+_pdur(shift.deb,shift.fin) > MINEUR_SEMAINE_MAX_MIN+1e-6)
+    return {cle:'mineur_semaine', label:PLACE_RULES.mineur_semaine, _min:{...(_min), deja:wk/60, ecole:ecoleMinutesOf(sid)/60, ajout:_pdur(shift.deb,shift.fin)/60}};
+  const plaf=plafondOf(sal, R)*60;
   if(wk + _pdur(shift.deb,shift.fin) > plaf+1e-6) return {cle:'plafond',label:`${PLACE_RULES.plafond} (>${(plaf/60)}h)`,
-    _plaf:{deja:wk/60, ajout:_pdur(shift.deb,shift.fin)/60, max:plaf/60,
+    _plaf:{deja:wk/60, ajout:_pdur(shift.deb,shift.fin)/60, max:plaf/60, ecole:ecoleMinutesOf(sid)/60,   // v0.75 : dont école CFA
            // « (tous restaurants confondus) » dans le motif : dès que le total compté inclut un autre snack.
            multi:(S.allCreneauxWeek||[]).some(c=>c.salarie_id===sid && c.heure_debut && c.restaurant_id!==SNACK.id)}};
   return null; // ✅ aucune règle active violée
@@ -4643,7 +4797,7 @@ function _withSnack(rid, fn){
 }
 // Règles dont la violation porte sur la SEMAINE d'un salarié, pas sur un créneau : elles se déclencheraient
 // depuis chacun de ses créneaux (Youcef en produirait neuf). On n'en garde qu'une par salarié.
-const REVAL_SEMAINE=new Set(['jour_off_min','plafond','c_max_soirs','fermetures_tardives']);
+const REVAL_SEMAINE=new Set(['jour_off_min','plafond','c_max_soirs','fermetures_tardives','mineur_semaine']);
 // Identité stable d'un créneau, même sans id (harnais, ligne pas encore enregistrée).
 const _creKey=c=>(c&&c.id)||`${c&&c.date}|${c&&c.service}|${c&&c.restaurant_id}`;
 // Phrase de l'infraction. Pour les règles de SEMAINE, explainViolation parle d'un placement qu'on tente
@@ -4657,7 +4811,11 @@ function _revalPhrase(v, ctx){
   }
   if(v.cle==='plafond' && v._plaf){
     const tot=v._plaf.deja+v._plaf.ajout;
-    return `${name} totalise ${_fh(tot)} h du ${_dateFr(p1)} au ${_dateFr(p7)} (${restos}), au-delà du plafond de ${_fh(v._plaf.max)} h.`;
+    return `${name} totalise ${_fh(tot)} h ${v._plaf.ecole>0.01?'cette semaine':`du ${_dateFr(p1)} au ${_dateFr(p7)}`} (${restos}${v._plaf.ecole>0.01?`, dont ${_fh(v._plaf.ecole)} h d'école CFA`:''}), au-delà du plafond de ${_fh(v._plaf.max)} h.`;
+  }
+  if(v.cle==='mineur_semaine' && v._min){
+    const tot=v._min.deja+v._min.ajout;
+    return `${name} (mineur) totalise ${_fh(tot)} h ${v._min.ecole>0.01?'cette semaine':`du ${_dateFr(p1)} au ${_dateFr(p7)}`} (${restos}${v._min.ecole>0.01?`, dont ${_fh(v._min.ecole)} h d'école CFA`:''}) ; la loi limite un mineur à 35 h par semaine (art. L3162-1).`;
   }
   if(v.cle==='c_max_soirs' && v._contr) return `${name} : ${v._contr.fait} (maximum ${v._contr.valeur}).`;
   if(v.cle==='fermetures_tardives' && v._ft){
