@@ -334,7 +334,7 @@ const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
 // ⚠ Bumper cette constante à CHAQUE commit touchant ce fichier (repère « ma page est-elle à jour ? »,
 //    comme sw.js CACHE_VERSION côté kiosk).
-const VERSION='v0.75 · jours d\'école / examen CFA comptés comme temps de travail (réglage « Heures comptées pour un jour d\'école », défaut 7 h, 0 = ancien calcul) et comme jours travaillés · mineurs : pas de nuit, 8 h / jour et 35 h / semaine école comprise';
+const VERSION='v0.76 · date de naissance invraisemblable ignorée (garde-fou mineurs) · v0.75 : jours d\'école / examen CFA comptés comme temps de travail (réglage « Heures comptées pour un jour d\'école », défaut 7 h, 0 = ancien calcul) et comme jours travaillés · mineurs : pas de nuit, 8 h / jour et 35 h / semaine école comprise';
 let ME=null, ORG={};
 let POPUP_ALERTS=localStorage.getItem('pl_popups')!=='0';
 
@@ -1907,6 +1907,8 @@ function renderChecks(){
       const wk=weekMinutesOf(s.id);
       if(dates.some(d=>mineurAuJour(s,d)) && wk>MINEUR_SEMAINE_MAX_MIN+1e-6) minBad.push(`${nameOf(s.id)} : ${fmtH1(wk/60)} h dans la semaine${ecoleMinutesOf(s.id)?` dont ${fmtH1(ecoleMinutesOf(s.id)/60)} h d'école`:''} — maximum 35 h pour un mineur`);
     });
+    // Dates de naissance invraisemblables : âge NON contrôlé tant qu'elles ne sont pas corrigées.
+    list.forEach(s=>{ if(naissanceInvraisemblable(s, fmtDate(dateOfDay(0)))) minBad.push(`${nameOf(s.id)} : date de naissance invraisemblable (${String(s.date_naissance).slice(0,10)}) — âge non contrôlé, à corriger dans sa fiche`); });
     if(nMin || minBad.length) CHECKS.push({lbl:'Mineurs : nuit, 8 h / jour, 35 h / semaine (loi)',ok:minBad.length===0,details:minBad});
   }
 
@@ -3601,14 +3603,22 @@ function ecolePlageAbs(){ const d=heuresJourEcoleMin(); return d>0 ? [8*60, 8*60
 // Âge calculé à la DATE DU CRÉNEAU depuis date_naissance (un salarié qui a 18 ans mercredi n'est plus
 // mineur jeudi) ; sans date de naissance, on retombe sur la case « Mineur » de la fiche (supposé 16-17 ans).
 // Retour : null (majeur ou inconnu) | {age:Number|null, moins16:Boolean, source:'naissance'|'case'}.
+// Date INVRAISEMBLABLE (moins de 14 ans à la date, ou dans le futur — ex. « 2026-08-17 », année de
+// saisie tapée à la place de l'année de naissance) : ignorée, comme une date absente, et signalée par
+// le panneau Vérifications. Sans ce garde-fou, une faute de frappe transformait un salarié en « moins de
+// 16 ans » et lui interdisait tout service après 20:00. 14 ans = seuil de vraisemblance de la donnée,
+// pas une règle de droit.
+function _ageAuJour(sal, date){
+  const dn=sal && sal.date_naissance && /^\d{4}-\d{2}-\d{2}/.test(sal.date_naissance) ? sal.date_naissance.slice(0,10) : null;
+  if(!dn) return null;
+  const [y,m,d]=dn.split('-').map(Number), [Y,M,D]=String(date).slice(0,10).split('-').map(Number);
+  return Y-y-((M<m || (M===m && D<d))?1:0);
+}
+function naissanceInvraisemblable(sal, date){ const a=_ageAuJour(sal,date); return a!=null && a<14; }
 function mineurAuJour(sal, date){
   if(!sal) return null;
-  const dn=sal.date_naissance && /^\d{4}-\d{2}-\d{2}/.test(sal.date_naissance) ? sal.date_naissance.slice(0,10) : null;
-  if(dn){
-    const [y,m,d]=dn.split('-').map(Number), [Y,M,D]=String(date).slice(0,10).split('-').map(Number);
-    const age=Y-y-((M<m || (M===m && D<d))?1:0);
-    return age<18 ? {age, moins16:age<16, source:'naissance'} : null;
-  }
+  const age=_ageAuJour(sal, date);
+  if(age!=null && age>=14) return age<18 ? {age, moins16:age<16, source:'naissance'} : null;
   return sal.est_mineur ? {age:null, moins16:false, source:'case'} : null;
 }
 const MINEUR_JOUR_MAX_MIN=8*60, MINEUR_SEMAINE_MAX_MIN=35*60;

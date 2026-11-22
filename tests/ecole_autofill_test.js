@@ -162,5 +162,8 @@ t('mineur avec fin à 23:00 et 00:30 : ligne « Mineurs » en ⚠, 2 créneaux d
 ck=panneau([cre('alt',D(0),'midi','11:00','15:00')], [], {}); mn=find(ck,/^Mineurs/);
 t('mineur conforme : ligne verte', mn && mn.ok, mn&&JSON.stringify(mn.details));
 
+global.SAL={alt:sal('alt',{heures_min:0,heures_max:40,date_naissance:'2026-08-17'})};
+ck=panneau(R35b, [], {}); mn=find(ck,/^Mineurs/);
+t('date de naissance invraisemblable : AUCUN refus de nuit, mais ligne ⚠ « à corriger dans sa fiche »', mn && !mn.ok && mn.details.length===1 && /invraisemblable \(2026-08-17\)/.test(mn.details[0]), mn&&JSON.stringify(mn.details));
 console.log(`\n${n} vérifications`); console.log(ok?'ALL PASS':'SOME FAILED'); process.exit(ok?0:1);
 })().catch(e=>{ console.error(e); console.log('SOME FAILED'); process.exit(1); });

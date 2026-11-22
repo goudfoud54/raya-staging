@@ -51,7 +51,7 @@ const FNS = [
   // rowHoursCell et renderChecks.
   '_ecoleDatesOf', 'heuresJourEcoleMin', 'ecoleMinutesOf', 'ecoleMinutesDuJour', 'ecolePlageAbs',
   // Jeunes travailleurs (v0.75) : appelés par checkPlacement, explainViolation et renderChecks.
-  'mineurAuJour', '_mineurNuit', '_mineurQui',
+  '_ageAuJour', 'naissanceInvraisemblable', 'mineurAuJour', '_mineurNuit', '_mineurQui',
 ];
 // Objets `const X={…}` multi-lignes, extraits par équilibrage d'accolades.
 const OBJS = ['RULE_META', 'RULE_SETTING_OF', 'RULE_SOURCE_OF'];

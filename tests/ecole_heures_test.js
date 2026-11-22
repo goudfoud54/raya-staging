@@ -149,6 +149,9 @@ t('né le 10/02/2011 (15 ans) : moins de 16 ans', (mineurAuJour({date_naissance:
 t('sans date de naissance, case « Mineur » cochée → mineur (supposé 16-17 ans)', (mineurAuJour({est_mineur:true},'2026-11-17')||{}).source==='case');
 t('date de naissance d\'un majeur + case cochée → la DATE fait foi (la case ne se décoche jamais seule à 18 ans)', mineurAuJour({est_mineur:true,date_naissance:'2005-01-01'},'2026-11-17')===null);
 t('sans date ni case → non mineur (inconnu : aucun contrôle — signalé dans le rapport)', mineurAuJour({},'2026-11-17')===null);
+t('date INVRAISEMBLABLE (2026-08-17, 0 an) → ignorée : pas mineur (sans case)', mineurAuJour({date_naissance:'2026-08-17'},'2026-11-17')===null && naissanceInvraisemblable({date_naissance:'2026-08-17'},'2026-11-17'));
+t('… date invraisemblable + case « Mineur » cochée → la case reprend la main', (mineurAuJour({date_naissance:'2026-08-17',est_mineur:true},'2026-11-17')||{}).source==='case');
+t('… 14 ans pile = vraisemblable (moins de 16 ans)', (mineurAuJour({date_naissance:'2012-11-17'},'2026-11-17')||{}).moins16===true && !naissanceInvraisemblable({date_naissance:'2012-11-17'},'2026-11-17'));
 // Nuit
 SAL.min={id:'min',heures_min:0,heures_max:40,date_naissance:'2009-06-01'};   // 17 ans
 SAL.maj={id:'maj',heures_min:0,heures_max:40,date_naissance:'2000-06-01'};
